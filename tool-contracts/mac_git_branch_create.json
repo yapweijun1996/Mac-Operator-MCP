@@ -41,9 +41,10 @@
       },
       "branch_name": {
         "type": "string",
-        "minLength": 1,
-        "maxLength": 128,
-        "pattern": "^[A-Za-z0-9][A-Za-z0-9._/-]*$"
+        "description": "Task branch; must start with codex/ (for example codex/my-task).",
+        "minLength": 7,
+        "maxLength": 127,
+        "pattern": "^codex/[A-Za-z0-9][A-Za-z0-9._/-]*$"
       },
       "base_ref": {
         "type": "string",

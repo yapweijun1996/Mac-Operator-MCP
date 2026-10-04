@@ -6883,3 +6883,19 @@ tools by the signed policy (the runbook requires every ordinary root to deny the
 decision for the owner. Also unchanged: `mac_test_run` container start and staging overhead, empty
 `mac_job_status` stdout while a container job runs, and `mac_app_focus` raising the window (its contract says
 so). Owner cleanup: TextEdit Untitled window with probe text, branch `codex/claude-mba-probe`.
+
+## October 4, 2026: seventh MCP review triage (second development-tool probe; source only until deployed)
+
+Root cause of the "unexplained" build_run cancellation, from the MBA ledger: the job started 19:27:16 and was cancelled
+at 19:28:44, which is exactly the approval/token expiry (`expiresAtMs`). A task's authority is bound to the 5-minute
+access token (`ACCESS_SECONDS = 300`, documented in `oauth-login-design.md`), so a ~100 s build started with 88 s of
+token left was cancelled with reason "Active task authority ended"; the rerun with a fresh token (221 s left) succeeded.
+Not a defect in the binding (work must not outlive its grant) but it was unexplained: the job now reports that its
+access token expired (with the time) or that authority was revoked, and the accept receipt warns when the remaining
+token lifetime is shorter than the task budget. `mac_pr_prepare` test_evidence omitted the cancelled build because
+failure completions carry no worktree/task evidence; completions are now matched through the request id of the task's
+authorization row. `mac_git_worktree_create` / `mac_git_branch_create` input schemas now require the `codex/` prefix
+with a description. Not reproduced: the claimed `mac_job_status` lag (the ledger shows polls at 19:25:29 and 19:25:33
+running, finished 19:25:44, and the next poll at 19:26:20 completed). Unchanged by design or owner decision: worktree
+writes through the ordinary filesystem tools (denied by signed policy, see the sixth entry), the 120 s profile budgets
+(host-owned development runtime config; staging dominates), and a longer access-token lifetime.

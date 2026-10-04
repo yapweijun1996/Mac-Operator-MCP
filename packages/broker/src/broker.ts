@@ -4163,11 +4163,16 @@ export class Broker {
         const baseIndex = all.findIndex((entry) => entry.id === base);
         return baseIndex >= 0 ? index < baseIndex : commit.id !== base;
       }).map(({ id, subject }) => ({ id, subject }));
-      const evidence = this.options.store.executionAudit(request.principal.principalId, { project: plan.projectRoot, limit: 100 })
-        .filter((row) => ["mac_test_run", "mac_build_run", "mac_task_run"].includes(row.tool as string) &&
-          // Only outcomes of runs that actually executed count; intent and authorization records carry no result yet.
-          VALIDATION_OUTCOME_CLASSES.has(row.result_class as string) &&
-          isPlainDataRecord(row.evidence) && row.evidence.worktree === plan.worktree && row.evidence.taskId === record.taskId)
+      const auditRows = this.options.store.executionAudit(request.principal.principalId, { project: plan.projectRoot, limit: 100 })
+        .filter((row) => ["mac_test_run", "mac_build_run", "mac_task_run"].includes(row.tool as string));
+      // Authorization rows name the worktree and task; failure and cancellation completions carry no such evidence,
+      // so completions are matched to their task through the shared request id.
+      const taskRequestIds = new Set(auditRows
+        .filter((row) => isPlainDataRecord(row.evidence) && row.evidence.worktree === plan.worktree && row.evidence.taskId === record.taskId)
+        .map((row) => row.request_id as string));
+      const evidence = [...auditRows].reverse()
+        // Only outcomes of runs that actually executed count; intent and authorization records carry no result yet.
+        .filter((row) => taskRequestIds.has(row.request_id as string) && VALIDATION_OUTCOME_CLASSES.has(row.result_class as string))
         .map((row) => `${row.tool}: ${row.result_class}`).slice(0, 32);
       const changed = [...new Set([...diff.changedPaths, ...status.untrackedPaths])].slice(0, 256);
       const title = `Development task ${record.taskId}`;
@@ -4175,6 +4180,15 @@ export class Broker {
         description: `${title}\n\nChanged files: ${changed.length}\nLocal commits: ${commits.length}\nValidation: ${evidence.length ? evidence.join(", ") : "No completed validation run recorded"}`, test_evidence: evidence });
     }
     throw new BrokerError("UNSUPPORTED_CAPABILITY", "Development operation is unavailable");
+  }
+
+  /** A task is cancelled when the access token that authorized it expires; say so up front when the token is about to. */
+  private taskTokenLifetimeWarnings(request: BrokerRequest, execution: ExecutionPlan): string[] {
+    const budgetMs = execution.taskRun?.maxRuntimeMs ?? execution.taskRun?.resolvedProfile?.process.timeoutMs;
+    if (budgetMs === undefined) return [];
+    const remainingMs = request.principal.expiresAtMs - this.now();
+    if (remainingMs >= budgetMs) return [];
+    return [`The access token authorizing this task expires in ${Math.max(0, Math.ceil(remainingMs / 1000))}s but the task may run up to ${Math.ceil(budgetMs / 1000)}s; a task still running at expiry is cancelled with "authority ended". If it is cancelled, retry once the client has refreshed its token`];
   }
 
   private taskJobReceipt(request: BrokerRequest, execution: ExecutionPlan, startedAt: number, reused: boolean): BrokerResult {
@@ -4197,7 +4211,7 @@ export class Broker {
         reused,
         ...(execution.taskRun.taskId === undefined ? {} : { task_id: execution.taskRun.taskId })
       },
-      warnings: [],
+      warnings: this.taskTokenLifetimeWarnings(request, execution),
       truncated: false,
       verification: execution.development ? { required: true, status: "accepted", strategy: "exit_status_and_declared_task_verification" } :
         { required: true, status: "accepted", strategy: "exit_status_and_declared_task_verification" },
@@ -4359,17 +4373,21 @@ export class Broker {
       // Revocation can arrive after the executor has already verified removal.
       // Preserve that cleanup evidence, but never publish execution success.
       let authorityLost = false;
+      let authorityLostReason: string | undefined;
       try { this.ensureActiveAuthority(request, execution.target); }
       catch (error) {
         if (this.taskRunner.mechanism !== "docker-container" || taskResult.containerCleanupVerified !== true) throw error;
         authorityLost = true;
+        authorityLostReason = this.now() >= request.principal.expiresAtMs
+          ? `Task cancelled because the access token that authorized it expired at ${new Date(request.principal.expiresAtMs).toISOString()}; retry with a fresh token`
+          : "Task cancelled because its authority was revoked or the policy changed while it was running";
       }
       const rawOutputBytes = Buffer.byteLength(taskResult.stdout, "utf8") + Buffer.byteLength(taskResult.stderr, "utf8");
       const outputBudgetExceeded = taskResult.truncated || rawOutputBytes > resolved.process.outputCapBytes;
       const timeoutBudgetExceeded = taskResult.durationMs > Math.min(timeoutMs, resolved.process.timeoutMs);
       const streamCap = Math.max(1, Math.floor(outputCapBytes / 2));
       const stdout = redactBoundedText(taskResult.stdout, streamCap);
-      const stderr = redactBoundedText(taskResult.stderr, streamCap);
+      const stderr = redactBoundedText(authorityLostReason ?? taskResult.stderr, streamCap);
       const verificationSummary = taskResult.verification.summary === undefined
         ? undefined
         : redactBoundedText(taskResult.verification.summary, 512).text;
