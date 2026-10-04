@@ -124,3 +124,18 @@ failed 7 / unknown 25). Only the three unsigned Edge fields changed (original:
 Evidence: PM2 online, restart 0, Auth and Edge children on the new release, `/mcp` 401, both `.well-known` 200.
 Not verified through an authenticated MCP call. Still pending from the fifth deployment: `mac_read_file` on
 `~/.zshrc` should return `SECRET_PATH_ACCESS`.
+
+## Seventh deployment — release `v2-usability7-20261004-eb3a9c5`
+
+Source revision eb3a9c59bc1a8919cb8363d4e86317fbac7aee78 (token-expiry cancellation reason and warning, PR evidence
+matched by request id, `codex/` prefix in worktree/branch schemas). Previous release
+`v2-usability6-20261004-7187a81` retained. Copy of the running release plus `broker.js`, `broker.d.ts` and two tool
+contracts (`mac_git_worktree_create.json`, `mac_git_branch_create.json`). No queued/running jobs (completed 78 /
+cancelled 1 / failed 7 / unknown 25). Only the three unsigned Edge fields changed (original:
+`edge-service.json.before-usability7-20261004`, mode 0600). PM2 recreated from `mba-mcp.usability7.ecosystem.json`
+and saved. Rollback: restore that file, `pm2 delete mba-mcp`,
+`pm2 start mba-mcp.pre-usability7.ecosystem.json`, `pm2 save`.
+
+Evidence: PM2 online, restart 0, Auth and Edge children on the new release, `/mcp` 401, both `.well-known` 200.
+Not verified through an authenticated MCP call. Pending checks from an MBA connector: `mac_read_file` on `~/.zshrc`
+returns `SECRET_PATH_ACCESS`; a `mac_build_run` started near token expiry returns the token-lifetime warning.
