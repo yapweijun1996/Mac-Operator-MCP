@@ -24,7 +24,8 @@ not touched; no whole-state backup was made because none of them was modified.
 ## Evidence
 
 PM2 `mba-mcp` online, restart count 0, Auth and Edge children running from the new release.
-Edge/Auth status heartbeats return 200. Public checks: `/mcp` 401 unauthenticated, both
+(`/oauth/status` log lines are Edge grant lookups for authenticated MCP requests, not a timer, and the
+first check cited the pre-restart log file.) Public checks: `/mcp` 401 unauthenticated, both
 `.well-known` documents 200, `/register` with the Claude callback 201 (the Claude redirect
 URIs were added to `allowedRedirectUris` earlier today; backup `auth-config.json.bak-pre-claude-redirect`).
 
@@ -39,3 +40,26 @@ should return POLICY_DENIED.
 Run the previous release: stop PM2 `mba-mcp`, restore `edge-service.json.before-usability-20261004`
 into `personal/edge-service.json`, then `pm2 delete mba-mcp`,
 `pm2 start mba-mcp.pre-usability.ecosystem.json`, `pm2 save`. Do not restore full state.
+
+## Second deployment — release `v2-usability2-20261004-a7bb6b1`
+
+Source revision a7bb6b192a7d67aa755d845d9ddc854a5bbe9c95. Previous release `v2-usability-20261004-342d505`
+retained. Same procedure: copy of the running release plus nine compiled/contract files (hashes in
+`USABILITY-HOTFIX-2.json`), no queued/running jobs (73/6/24 before and after), only the three unsigned
+Edge fields changed (original saved as `edge-service.json.before-usability2-20261004`), PM2 recreated from
+`mba-mcp.usability2.ecosystem.json` and saved. Rollback: restore that file, `pm2 delete mba-mcp`,
+`pm2 start mba-mcp.pre-usability2.ecosystem.json`, `pm2 save`. PM2 now writes `~/.pm2/logs/mba-mcp-out.log`
+(the older `-0` files belong to the first process).
+
+Evidence: PM2 online, restart count 0; `/mcp` 401 unauthenticated, protected-resource metadata 200,
+`/register` with the Claude callback 201. During the first release authenticated clients made 49
+`tools/call`, 26 `server/discover` and 6 `tools/list` requests (all 200, protocol 2026-07-28), so MBA served
+real MCP traffic on the new code. No authenticated request has arrived since the second restart, so the new
+fixes themselves are not yet observed through MCP.
+
+## Open finding: Claude initialize is rejected
+
+In the same window 11 authenticated `POST /mcp initialize` requests with `protocolVersion: "2025-11-25"`
+(Cloudflare IAD) returned 400, each followed by a `GET /mcp` 405. The primary endpoint is modern-only by
+design (`legacy: "reject"`; only the owner-terminal endpoint accepts legacy 2025-06-18). Not changed by
+either deployment; whether this client is the Claude connector is not proven.
