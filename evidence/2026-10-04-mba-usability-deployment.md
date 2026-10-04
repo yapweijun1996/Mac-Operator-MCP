@@ -81,3 +81,17 @@ Verify from an MBA connector: `mac_capabilities` lists `authorized_log_sources`/
 `mac_log_tail` with `system/com.apple.logd` names the bad argument, `mac_policy_explain` returns
 `OUTSIDE_AUTHORIZED_ROOTS`/`ROOT_CAPABILITY_NOT_GRANTED`, and `mac_storage_analysis` without roots returns.
 Owner action recommended: add `Library/CloudStorage` to the signed policy's deny_relative_paths.
+
+## Fourth deployment — release `v2-usability4-20261004-8a73b71`
+
+Source revision 8a73b710360ac83215dd25840f01cb84b714df30. Previous release `v2-usability3-20261004-1e4f7b7`
+retained. Copy of the running release plus four compiled files (`broker.js`, `filesystem-inspector.js`,
+`filesystem-worker.js`, `log-inspector.js`; `.d.ts` and contracts unchanged). No queued/running jobs
+(completed 73 / failed 7 / unknown 24 before). Only the three unsigned Edge fields changed (original:
+`edge-service.json.before-usability4-20261004`, mode 0600 kept). PM2 recreated from
+`mba-mcp.usability4.ecosystem.json` and saved. Rollback: restore that file, `pm2 delete mba-mcp`,
+`pm2 start mba-mcp.pre-usability4.ecosystem.json`, `pm2 save`.
+
+Evidence: PM2 online, restart 0, Auth and Edge children running from the new release, Auth listener ready on
+3444, `/mcp` 401 unauthenticated, both `.well-known` documents checked. No authenticated MCP call has been
+made since the restart; verify from an MBA connector that a truncated `mac_find_files` carries a warning.
