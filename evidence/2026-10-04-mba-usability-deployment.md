@@ -95,3 +95,18 @@ retained. Copy of the running release plus four compiled files (`broker.js`, `fi
 Evidence: PM2 online, restart 0, Auth and Edge children running from the new release, Auth listener ready on
 3444, `/mcp` 401 unauthenticated, both `.well-known` documents checked. No authenticated MCP call has been
 made since the restart; verify from an MBA connector that a truncated `mac_find_files` carries a warning.
+
+## Fifth deployment — release `v2-usability5-20261004-2f85d59`
+
+Source revision 2f85d59deea642494444986c41000b7f91ff5663 (secret-policy fix for shell startup files and prefixed
+API key assignments, log window narrowing, git revision forms, job id message, macOS version). Previous release
+`v2-usability4-20261004-8a73b71` retained. Copy of the running release plus five compiled files
+(`secret-policy.js`, `log-inspector.js`, `broker.js`, `system-inspector.js`, `git-inspector.js`). No queued/running
+jobs (73 / 7 / 24). Only the three unsigned Edge fields changed (original:
+`edge-service.json.before-usability5-20261004`, mode 0600). PM2 recreated from
+`mba-mcp.usability5.ecosystem.json` and saved. Rollback: restore that file, `pm2 delete mba-mcp`,
+`pm2 start mba-mcp.pre-usability5.ecosystem.json`, `pm2 save`.
+
+Evidence: PM2 online, restart 0, Auth and Edge children on the new release, `/mcp` 401, both `.well-known` 200.
+Not yet verified end to end: from an MBA connector, `mac_read_file` on `~/.zshrc` should return
+`SECRET_PATH_ACCESS`.
