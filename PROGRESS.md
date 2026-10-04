@@ -6868,3 +6868,18 @@ storage stay unavailable behind warnings, the `Documents/GitHub` clone is a stal
 `include_tree` is set), `running_only` XPC helper noise. Owner action: rotate the exposed `KB_API_KEY`.
 Tests: 1620 pass; failures are the known baseline set plus the container-snapshot test, which fails
 identically without these changes.
+
+## October 4, 2026: sixth MCP review triage (development-tool probe; source only until deployed)
+
+Fixed: `mac_pr_prepare` listed `INTENT_RECORDED` / `AUTHORIZED` audit rows as test evidence before any run had a
+result; only outcome classes of runs that executed now count and the empty case reads "No completed validation run
+recorded". Error text now explains: the `codex/` branch prefix (with the full rule and an example), that UI
+`element_ref` values come from a fresh `mac_ui_observe` with a capture mode, are session-bound, and expire or are
+consumed after use, and that a focused-input approval is invalidated by an earlier `ui_type` or focus change.
+By design, not changed: managed worktrees under `DevelopmentWorktrees/MBA-MCP` are denied to ordinary filesystem
+tools by the signed policy (the runbook requires every ordinary root to deny the private worktree root), so
+`mac_write_file_atomic` / `mac_apply_patch` cannot write there; code changes inside a worktree belong to
+`mac_codex_run`, validated by `mac_test_run` / `mac_build_run`. Making worktrees writable would be a signed-policy
+decision for the owner. Also unchanged: `mac_test_run` container start and staging overhead, empty
+`mac_job_status` stdout while a container job runs, and `mac_app_focus` raising the window (its contract says
+so). Owner cleanup: TextEdit Untitled window with probe text, branch `codex/claude-mba-probe`.

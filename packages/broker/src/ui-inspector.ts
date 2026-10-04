@@ -617,7 +617,7 @@ export class UiSnapshotRegistry {
     const retained = key === undefined ? undefined : this.approvalSnapshots.get(key);
     const snapshot = retained ?? this.snapshots.get(elementRef);
     if (!snapshot || snapshot.elementRef !== elementRef || snapshot.ownerPrincipalId !== ownerPrincipalId || snapshot.ownerSessionId !== ownerSessionId) {
-      throw new BrokerError("TARGET_NOT_FOUND", "UI element snapshot is not available");
+      throw new BrokerError("TARGET_NOT_FOUND", "UI element snapshot is not available: element_ref values come from a fresh mac_ui_observe (capture_mode other than none), are bound to this session and expire or are consumed after use; observe again and use the new ref");
     }
     const expired = retained ? nowMs >= (snapshot.approvalRetainUntilMs ?? 0) : nowMs - snapshot.observedAtMs > UI_SNAPSHOT_TTL_MS;
     if (nowMs < snapshot.observedAtMs || expired) {
@@ -1163,7 +1163,7 @@ function assertRetainedUiTargetIdentityMatches(snapshot: UiSnapshotRecord, obser
     const node = observed.nodes[snapshot.elementIndex];
     if (!node || node.elementRef !== snapshot.elementRef || node.role !== snapshot.role ||
         node.label !== snapshot.label || (requireFocusedInput && !node.focused) || !node.enabled || node.secure) {
-      throw new BrokerError("TARGET_NOT_FOUND", "Approved focused input changed; observe it and request a new approval");
+      throw new BrokerError("TARGET_NOT_FOUND", "Approved focused input changed since the observation (an earlier ui_type or focus change invalidates it); observe again and request a new approval");
     }
   }
 }

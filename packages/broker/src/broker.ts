@@ -201,6 +201,9 @@ const DEFAULT_MAX_ACTIVE_REQUESTS_BY_FAMILY: Readonly<Record<CapabilityFamily, n
   privileged: 1
 };
 
+/** Audit result classes that mean a test, build or task run reached an outcome (not merely authorization or intent). */
+const VALIDATION_OUTCOME_CLASSES: ReadonlySet<string> = new Set(["SUCCEEDED", "FAILED", "TIMEOUT", "VERIFICATION_FAILED", "CANCELLED", "OUTPUT_LIMIT", "EXECUTION_FAILED", "UNKNOWN_OUTCOME"]);
+
 /** Explains a truncated tree scan: a hit on the result cap is expected, anything else means a fixed traversal budget ended the scan. */
 function scanTruncationWarnings(truncated: boolean, found: number, requestedLimit: number): { warnings: string[] } | Record<string, never> {
   if (!truncated) return {};
@@ -4162,12 +4165,14 @@ export class Broker {
       }).map(({ id, subject }) => ({ id, subject }));
       const evidence = this.options.store.executionAudit(request.principal.principalId, { project: plan.projectRoot, limit: 100 })
         .filter((row) => ["mac_test_run", "mac_build_run", "mac_task_run"].includes(row.tool as string) &&
+          // Only outcomes of runs that actually executed count; intent and authorization records carry no result yet.
+          VALIDATION_OUTCOME_CLASSES.has(row.result_class as string) &&
           isPlainDataRecord(row.evidence) && row.evidence.worktree === plan.worktree && row.evidence.taskId === record.taskId)
         .map((row) => `${row.tool}: ${row.result_class}`).slice(0, 32);
       const changed = [...new Set([...diff.changedPaths, ...status.untrackedPaths])].slice(0, 256);
       const title = `Development task ${record.taskId}`;
       return read({ project_root: plan.projectRoot, worktree: plan.worktree!, changed_files: changed, commits, title,
-        description: `${title}\n\nChanged files: ${changed.length}\nLocal commits: ${commits.length}\nValidation: ${evidence.length ? evidence.join(", ") : "No verified task evidence recorded"}`, test_evidence: evidence });
+        description: `${title}\n\nChanged files: ${changed.length}\nLocal commits: ${commits.length}\nValidation: ${evidence.length ? evidence.join(", ") : "No completed validation run recorded"}`, test_evidence: evidence });
     }
     throw new BrokerError("UNSUPPORTED_CAPABILITY", "Development operation is unavailable");
   }

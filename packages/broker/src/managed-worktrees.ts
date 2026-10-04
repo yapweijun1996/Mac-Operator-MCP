@@ -333,7 +333,7 @@ export function validateCreate(input: WorktreeCreateRequest): void {
   if (typeof input.branchName !== "string" || !/^codex\/[A-Za-z0-9][A-Za-z0-9._/-]{0,120}$/u.test(input.branchName) ||
       input.branchName.includes("..") || input.branchName.includes("//") || input.branchName.endsWith("/") ||
       input.branchName.split("/").some((part) => part.startsWith(".") || part.endsWith(".") || part.endsWith(".lock"))) {
-    throw new BrokerError("PRECONDITION_FAILED", "Task branch must be a valid codex/ branch");
+    throw new BrokerError("PRECONDITION_FAILED", "Task branch must start with codex/ followed by letters, digits, . _ - or / (no empty, dotted or .lock segments, at most 127 characters), for example codex/my-task");
   }
   if (typeof input.baseRef !== "string" || !/^[A-Za-z0-9][A-Za-z0-9._/-]{0,255}$/u.test(input.baseRef) ||
       input.baseRef.includes("..") || input.baseRef.includes("//")) {
