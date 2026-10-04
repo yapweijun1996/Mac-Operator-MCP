@@ -6838,3 +6838,17 @@ capabilities lists ignoring finite-set/deny refinements. Owner action for full p
 `Library/CloudStorage` to the signed policy's deny_relative_paths. Tests: 1606 pass; failures are
 the known baseline set (volume-identity pressure test, contract-conformance, four native
 virtualization tests) plus load-sensitive worktree tests that pass in isolation. Auth tests need Node 24.
+
+## October 4, 2026: fourth MCP review triage (40-call read-only report; source only until deployed)
+
+Verified six new claims against source. Fixed: `mac_find_files`, `mac_recent_files`, `mac_search_text` and
+`mac_project_discover` now return a warning whenever `truncated` is set (result limit reached versus a fixed
+traversal budget ending the breadth-first scan, which misses deep paths under a large root); `mac_log_tail`
+states that an output-limited `log show` returns the oldest records of the window and misses the newest
+(use a smaller `since_seconds`); `mac_read_file` with `encoding=metadata` no longer sets `truncated`;
+`mac_project_summary` trees cap each directory at 40 entries so one folder (for example `evidence/`) cannot
+starve siblings. Not changed: `mac_search_text` latency (a synchronous bounded content scan, not a defect),
+and `mac_storage_analysis` consumers deliberately list nested aggregates (`.git` and `.git/index`). The
+reporter's observations may also reflect an older build: CloudStorage skipping and recent-file ranking were
+already fixed in the previous entry. Tests: broker, inspector and log suites pass; the filesystem pressure
+test fails identically on the baseline.

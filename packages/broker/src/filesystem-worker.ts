@@ -36,7 +36,8 @@ try {
       ...(content !== undefined ? { content } : {}),
       sizeBytes: read.sizeBytes,
       sha256,
-      truncated: read.truncated,
+      // Metadata mode requests zero bytes by design; there is no cut-off content to flag.
+      truncated: command.encoding === "metadata" ? false : read.truncated,
       rootId: read.rootId,
       device: read.device,
       inode: read.inode,

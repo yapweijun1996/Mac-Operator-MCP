@@ -1339,6 +1339,25 @@ test("project summary stops the tree at its byte budget and flags truncation", a
   }
 });
 
+test("project summary tree gives each directory a fair share so a large folder cannot starve siblings", async () => {
+  const directory = await realpath(await mkdtemp(join(tmpdir(), "mac-operator-fs-tree-fair-")));
+  try {
+    await mkdir(join(directory, "evidence"));
+    await mkdir(join(directory, "scripts"));
+    for (let index = 0; index < 60; index += 1) await writeFile(join(directory, "evidence", `e-${String(index).padStart(2, "0")}.txt`), "x");
+    await writeFile(join(directory, "scripts", "run.sh"), "x");
+    const inspector = new FilesystemInspector([metadataRoot(directory)]);
+    const summary = inspector.summarizeProjectPlanned(inspector.planPath(directory, "metadata"), true, 2);
+    const paths = summary.treeEntries.map((entry) => entry.path);
+    assert.ok(paths.includes(join(directory, "scripts", "run.sh")));
+    assert.equal(paths.filter((path) => path.startsWith(join(directory, "evidence", "e-"))).length, 40);
+    assert.equal(summary.truncated, true);
+    assert.ok(summary.warnings.some((warning) => /at most 40 entries per directory/u.test(warning)));
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 test("recent files are ranked newest first, exclude directories and honor the limit", async () => {
   const directory = await realpath(await mkdtemp(join(tmpdir(), "mac-operator-fs-recent-order-")));
   try {

@@ -285,6 +285,8 @@ const MAX_PROJECT_DEPTH = 16;
 const MAX_PROJECT_DIRECTORIES = 10_000;
 const MAX_PROJECT_ENTRIES = 50_000;
 const MAX_PROJECT_SUMMARY_TREE_ENTRIES = 1_000;
+/** Per-directory share of the tree so one large folder cannot starve its siblings. */
+const MAX_PROJECT_SUMMARY_TREE_ENTRIES_PER_DIRECTORY = 40;
 /** Serialized tree budget, far below the 512 KiB tool cap: clients clip large payloads, losing the trailing truncated flag. */
 const MAX_PROJECT_SUMMARY_TREE_BYTES = 49_152;
 const MAX_STORAGE_DEPTH = 8;
@@ -791,6 +793,7 @@ export class FilesystemInspector {
     let visitedDirectoriesCount = 0;
     let truncated = false;
     let treeFull = false;
+    let treeDirectoryCapped = false;
     let treeBytes = 0;
     let hasGit = false;
 
@@ -799,6 +802,7 @@ export class FilesystemInspector {
       // A full tree stops descending; the root listing is still scanned for manifests and VCS.
       if (treeFull && current.depth > 0) break;
       let cursor: string | undefined;
+      let treeEntriesInDirectory = 0;
       while (!truncated) {
         const listing = this.listPlanned(current.plan, cursor, 500, true);
         if (visitedDirectories.has(listing.path) && cursor === undefined) break;
@@ -826,7 +830,13 @@ export class FilesystemInspector {
             if (PROJECT_SUMMARY_MANIFESTS.has(entry.name)) manifests.add(entry.name);
           }
           addProjectLanguage(languages, entry.name, entry.type);
+          if (includeTree && !treeFull && treeEntriesInDirectory >= MAX_PROJECT_SUMMARY_TREE_ENTRIES_PER_DIRECTORY) {
+            // Fair share exhausted for this directory: omit the entry and do not descend into it.
+            treeDirectoryCapped = true;
+            continue;
+          }
           if (includeTree && !treeFull) {
+            treeEntriesInDirectory += 1;
             const item = { path: childPath, type: entry.type, depth: current.depth };
             const itemBytes = Buffer.byteLength(JSON.stringify(item), "utf8") + 1;
             if (treeEntries.length >= MAX_PROJECT_SUMMARY_TREE_ENTRIES || treeBytes + itemBytes > treeByteBudget) {
@@ -845,6 +855,9 @@ export class FilesystemInspector {
     }
     if (hasGit) warnings.push("VCS branch and dirty state are omitted by the metadata-only summary");
     if (truncated) warnings.push("Project summary traversal was truncated by fixed metadata budgets");
+    if (treeDirectoryCapped) {
+      warnings.push(`Project summary tree lists at most ${MAX_PROJECT_SUMMARY_TREE_ENTRIES_PER_DIRECTORY} entries per directory; summarize a subdirectory to see the rest`);
+    }
     if (treeFull) {
       warnings.push(`Project summary tree was truncated after ${treeEntries.length} entries (limit ${MAX_PROJECT_SUMMARY_TREE_ENTRIES} entries / ${treeByteBudget} bytes); lower tree_depth or summarize a subdirectory`);
     }
@@ -855,7 +868,7 @@ export class FilesystemInspector {
       languages: [...languages].sort(),
       treeEntries,
       warnings: warnings.slice(0, 32),
-      truncated: truncated || treeFull
+      truncated: truncated || treeFull || treeDirectoryCapped
     };
   }
 

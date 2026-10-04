@@ -40,7 +40,7 @@ test("log inspector returns a redacted bounded prefix when the source exceeds it
   assert.equal(result.entries.length, 1);
   assert.equal(result.entries[0]?.message.includes("AKIA"), false);
   assert.equal(result.truncated, true);
-  assert.ok(result.warnings.includes("Log output was truncated by a fixed adapter budget"));
+  assert.ok(result.warnings.some((warning) => warning.includes("newest records are missing")));
 });
 
 test("log inspector does not infer a result from an unresolved process outcome", async () => {

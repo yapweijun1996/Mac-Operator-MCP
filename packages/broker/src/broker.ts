@@ -201,6 +201,13 @@ const DEFAULT_MAX_ACTIVE_REQUESTS_BY_FAMILY: Readonly<Record<CapabilityFamily, n
   privileged: 1
 };
 
+/** Explains a truncated tree scan: a hit on the result cap is expected, anything else means a fixed traversal budget ended the scan. */
+function scanTruncationWarnings(truncated: boolean, found: number, requestedLimit: number): { warnings: string[] } | Record<string, never> {
+  if (!truncated) return {};
+  if (found >= requestedLimit) return { warnings: [`Result limit of ${requestedLimit} reached; more matches may exist`] };
+  return { warnings: ["Scan stopped at a fixed traversal budget (entry count, depth or time) before covering every directory, so matches may be missing; breadth-first order reaches shallow paths first. Narrow roots to the directory you care about"] };
+}
+
 export class Broker {
   private readonly maxRequestAgeMs: number;
   private readonly allowedClockSkewMs: number;
@@ -3001,6 +3008,7 @@ export class Broker {
             strategy: "bounded_result_validation",
             evidence: { summary: "Matching paths were enumerated through descriptor-backed, secret-filtered directory traversal" }
           },
+          ...scanTruncationWarnings(workerResult.truncated, workerResult.matches.length, execution.find.maxResults),
           truncated: workerResult.truncated,
           ...(execution.auditTarget ? { auditTarget: execution.auditTarget } : {}),
           auditEvidence: {
@@ -3038,6 +3046,7 @@ export class Broker {
             strategy: "bounded_result_validation",
             evidence: { summary: "Recent paths were collected from descriptor-backed metadata without reading file contents" }
           },
+          ...scanTruncationWarnings(workerResult.truncated, workerResult.files.length, execution.recent.limit),
           truncated: workerResult.truncated,
           ...(execution.auditTarget ? { auditTarget: execution.auditTarget } : {}),
           auditEvidence: {
@@ -3077,6 +3086,7 @@ export class Broker {
             strategy: "bounded_result_validation",
             evidence: { summary: "Text matches were collected from content-authorized descriptor-backed files with secret filtering and fixed byte budgets" }
           },
+          ...scanTruncationWarnings(workerResult.truncated, workerResult.matches.length, execution.searchText.maxResults),
           truncated: workerResult.truncated,
           ...(execution.auditTarget ? { auditTarget: execution.auditTarget } : {}),
           auditEvidence: {
@@ -3111,6 +3121,7 @@ export class Broker {
             strategy: "safe_project_result_validation",
             evidence: { summary: "Project roots were discovered from bounded descriptor-backed metadata with protected-entry filtering and no content reads" }
           },
+          ...scanTruncationWarnings(workerResult.truncated, workerResult.projects.length, execution.projectDiscover.maxResults),
           truncated: workerResult.truncated,
           ...(execution.auditTarget ? { auditTarget: execution.auditTarget } : {}),
           auditEvidence: {

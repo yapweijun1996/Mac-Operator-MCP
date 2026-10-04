@@ -130,7 +130,9 @@ function parseLogResult(
   }
   const selected = entries.slice(Math.max(0, entries.length - lines));
   if (malformedLines > 0) warnings.push(`${malformedLines} malformed log record${malformedLines === 1 ? " was" : "s were"} omitted`);
-  if (result.truncated || outputLimited) warnings.push("Log output was truncated by a fixed adapter budget");
+  if (result.truncated || outputLimited) {
+    warnings.push("Log output hit the fixed adapter budget; `log show` emits oldest records first, so the returned entries are the start of the window and the newest records are missing. Use a smaller since_seconds to reach recent activity");
+  }
   if (partialTailDropped) warnings.push("The final partial log record was dropped");
   if (entries.length > lines) warnings.push("Log entries were limited to the requested line budget");
   if (requestedSinceSeconds > effectiveSinceSeconds) warnings.push("The requested log window was capped at 24 hours");
