@@ -1,5 +1,5 @@
 import type { ContainerTaskJobMetadata } from "./container-job-metadata.js";
-import { DevelopmentGateway, worktreeResult, type DevelopmentPlan } from "./development-gateway.js";
+import { DevelopmentGateway, encodeAuditCursor, worktreeResult, type DevelopmentPlan } from "./development-gateway.js";
 import { DEVELOPMENT_TOOL_NAMES, DEVELOPMENT_EXECUTION_TOOLS } from "./development-policy.js";
 import { GuiProcessSupervisor, guiApplicationExecutable, guiLauncherExecutable } from "./gui-process-supervisor.js";
 import {
@@ -203,6 +203,9 @@ const DEFAULT_MAX_ACTIVE_REQUESTS_BY_FAMILY: Readonly<Record<CapabilityFamily, n
 
 /** Audit result classes that mean a test, build or task run reached an outcome (not merely authorization or intent). */
 const VALIDATION_OUTCOME_CLASSES: ReadonlySet<string> = new Set(["SUCCEEDED", "FAILED", "TIMEOUT", "VERIFICATION_FAILED", "CANCELLED", "OUTPUT_LIMIT", "EXECUTION_FAILED", "UNKNOWN_OUTCOME"]);
+
+/** Tools whose runs count as validation evidence for mac_pr_prepare. */
+const VALIDATION_RUN_TOOLS: readonly string[] = ["mac_test_run", "mac_build_run", "mac_task_run"];
 
 /** Explains a truncated tree scan: a hit on the result cap is expected, anything else means a fixed traversal budget ended the scan. */
 function scanTruncationWarnings(truncated: boolean, found: number, requestedLimit: number): { warnings: string[] } | Record<string, never> {
@@ -4155,9 +4158,10 @@ export class Broker {
     }
     if (request.tool === "mac_execution_audit") {
       const auditLimit = (args.limit ?? 50) as number;
-      const rows = this.options.store.executionAudit(request.principal.principalId, { project: plan.projectRoot, limit: auditLimit });
-      const auditTruncated = rows.length >= auditLimit;
-      return read({ project_root: plan.projectRoot, events: rows.map((row) => ({ timestamp: new Date(row.timestamp_ms as number).toISOString(),
+      const page = this.options.store.executionAuditPage(request.principal.principalId, { project: plan.projectRoot, limit: auditLimit,
+        ...(plan.auditBeforeSequence === undefined ? {} : { beforeSequence: plan.auditBeforeSequence }) });
+      const auditTruncated = page.nextBeforeSequence !== null;
+      return read({ project_root: plan.projectRoot, events: page.events.map((row) => ({ timestamp: new Date(row.timestamp_ms as number).toISOString(),
         request_id: row.request_id, tool: row.tool, actor: request.principal.principalId, decision: row.decision, result: row.result_class,
         scope: isPlainDataRecord(row.evidence) && Array.isArray(row.evidence.scopes) ? row.evidence.scopes : [],
         target: row.target_ref,
@@ -4168,7 +4172,9 @@ export class Broker {
           ...(Array.isArray(row.evidence.changedPaths) ? { changed_paths: row.evidence.changedPaths.slice(0, 256) } : {}),
           ...(typeof row.evidence.commitId === "string" ? { commit_hash: row.evidence.commitId } : {})
         } : {}) })),
-        truncated: auditTruncated }, {}, auditTruncated ? [`Audit events may be limited to the newest ${auditLimit}; raise limit (maximum 100) to check for more`] : []);
+        truncated: auditTruncated,
+        ...(page.nextBeforeSequence === null ? {} : { next_cursor: encodeAuditCursor(page.nextBeforeSequence) }) }, {},
+      auditTruncated ? [`Audit events are limited to the newest ${page.events.length} per call; pass cursor=next_cursor for older events`] : []);
     }
     if (request.tool === "mac_pr_prepare") {
       const record = gateway.worktrees.require(plan.worktree!, plan.projectRoot, request.principal.principalId);
@@ -4184,17 +4190,11 @@ export class Broker {
         const baseIndex = all.findIndex((entry) => entry.id === base);
         return baseIndex >= 0 ? index < baseIndex : commit.id !== base;
       }).map(({ id, subject }) => ({ id, subject }));
-      const auditRows = this.options.store.executionAudit(request.principal.principalId, { project: plan.projectRoot, limit: 100 })
-        .filter((row) => ["mac_test_run", "mac_build_run", "mac_task_run"].includes(row.tool as string));
-      // Authorization rows name the worktree and task; failure and cancellation completions written before they carried
-      // that evidence do not, so completions are matched to their task through the shared request id.
-      const taskRequestIds = new Set(auditRows
-        .filter((row) => isPlainDataRecord(row.evidence) && row.evidence.worktree === plan.worktree && row.evidence.taskId === record.taskId)
-        .map((row) => row.request_id as string));
-      const evidence = [...auditRows].reverse()
-        // Only outcomes of runs that actually executed count; intent and authorization records carry no result yet.
-        .filter((row) => taskRequestIds.has(row.request_id as string) && VALIDATION_OUTCOME_CLASSES.has(row.result_class as string))
-        .map((row) => `${row.tool}: ${row.result_class}`).slice(0, 32);
+      // Outcomes are looked up per task, not in the audit view, so later project activity cannot push a finished run out of
+      // reach. Completions are matched to their task through the shared request id inside the store; the newest 32 are kept.
+      const evidence = this.options.store.validationOutcomes(request.principal.principalId, { worktree: plan.worktree!, taskId: record.taskId,
+        tools: VALIDATION_RUN_TOOLS, resultClasses: [...VALIDATION_OUTCOME_CLASSES], limit: 32 })
+        .reverse().map((row) => `${row.tool}: ${row.result_class}`);
       const changed = [...new Set([...diff.changedPaths, ...status.untrackedPaths])].slice(0, 256);
       const title = `Development task ${record.taskId}`;
       return read({ project_root: plan.projectRoot, worktree: plan.worktree!, changed_files: changed, commits, title,

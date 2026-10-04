@@ -38,6 +38,8 @@ export interface DevelopmentPlan {
   taskId?: string;
   profile?: string;
   execution: boolean;
+  /** mac_execution_audit only: the audit sequence a decoded cursor continues before. */
+  auditBeforeSequence?: number;
 }
 
 export interface DevelopmentGatewayOptions {
@@ -121,7 +123,7 @@ export class DevelopmentGateway {
       mac_build_run: ["project_root", "worktree", "task_id", "max_runtime", "idempotency_key", "profile"],
       mac_git_push: ["project_root", "worktree", "remote", "branch_name", "approval_id", "idempotency_key"],
       mac_pr_prepare: ["project_root", "worktree", "base_ref"],
-      mac_execution_audit: ["project_root", "limit"]
+      mac_execution_audit: ["project_root", "limit", "cursor"]
     };
     if (!isPlainDataRecord(args) || Object.keys(args).some((key) => !keys[tool]!.includes(key)) || typeof args.project_root !== "string") {
       throw new BrokerError("PRECONDITION_FAILED", "Development arguments are malformed");
@@ -170,6 +172,8 @@ export class DevelopmentGateway {
     if (args.limit !== undefined && (!Number.isSafeInteger(args.limit) || (args.limit as number) < 1 || (args.limit as number) > 100)) {
       throw new BrokerError("PRECONDITION_FAILED", "Audit limit must be between 1 and 100");
     }
+    const auditBeforeSequence = decodeAuditCursor(args.cursor);
+    if (auditBeforeSequence !== undefined) plan.auditBeforeSequence = auditBeforeSequence;
     return plan;
   }
 
@@ -262,6 +266,22 @@ export class DevelopmentGateway {
       throw new BrokerError("POLICY_DENIED", "Agent model is not provisioned");
     }
   }
+}
+
+/** Opaque audit paging cursor: the base64url form of the decimal audit sequence the next page continues before. */
+export function encodeAuditCursor(sequence: number): string {
+  return Buffer.from(String(sequence), "utf8").toString("base64url");
+}
+
+export function decodeAuditCursor(value: unknown): number | undefined {
+  if (value === undefined) return undefined;
+  const malformed = () => new BrokerError("PRECONDITION_FAILED", "cursor is malformed");
+  if (typeof value !== "string") throw malformed();
+  const decoded = Buffer.from(value, "base64url").toString("utf8");
+  if (Buffer.from(decoded, "utf8").toString("base64url") !== value || !/^[1-9][0-9]{0,15}$/u.test(decoded)) throw malformed();
+  const sequence = Number(decoded);
+  if (!Number.isSafeInteger(sequence)) throw malformed();
+  return sequence;
 }
 
 function identifier(value: string): boolean { return /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u.test(value); }

@@ -25,8 +25,8 @@
   "tool_delivery_wave": "wave_3",
   "implementation_status": "planned",
   "purpose": "Read bounded redacted audit events for an authorized project; never expose sensitive file contents or credentials.",
-  "input_summary": "project_root, limit",
-  "output_summary": "project_root, events, truncated",
+  "input_summary": "project_root, limit, cursor",
+  "output_summary": "project_root, events, truncated, next_cursor",
   "input_schema": {
     "$schema": "https://json-schema.org/draft/2020-12/schema",
     "title": "mac_execution_audit input",
@@ -42,7 +42,15 @@
       "limit": {
         "type": "integer",
         "minimum": 1,
-        "maximum": 100
+        "maximum": 100,
+        "description": "Events per page, newest first (default 50, maximum 100)."
+      },
+      "cursor": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 64,
+        "pattern": "^[A-Za-z0-9_-]+$",
+        "description": "The next_cursor of a previous result; returns the page of events older than that one."
       }
     },
     "required": [
@@ -190,6 +198,12 @@
           },
           "truncated": {
             "type": "boolean"
+          },
+          "next_cursor": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64,
+            "description": "Present only when older events remain (truncated is true); pass it as cursor to read them."
           }
         },
         "required": [

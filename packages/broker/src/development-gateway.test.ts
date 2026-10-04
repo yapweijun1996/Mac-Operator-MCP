@@ -9,7 +9,7 @@ import { dirname, join, resolve } from "node:path";
 import test from "node:test";
 import { BrokerError, canonicalJson, sha256, signRequest, type BrokerResult, type Scope, type UnsignedBrokerRequest } from "@mac-operator/contracts";
 import { Broker } from "./broker.js";
-import { DevelopmentGateway, type CodingAgentProvider } from "./development-gateway.js";
+import { DevelopmentGateway, decodeAuditCursor, encodeAuditCursor, type CodingAgentProvider } from "./development-gateway.js";
 import { DEVELOPMENT_TOOL_NAMES } from "./development-policy.js";
 import type { GitWriteInspector } from "./git-inspector.js";
 import { ManagedWorktrees } from "./managed-worktrees.js";
@@ -339,3 +339,102 @@ test("V2 a pre-spawn Git failure whose failed write is rejected falls back to th
     assert.equal(f.store.hasActiveWorktreeJobs(worktree, "job:git-preview"), true);
   } finally { await f.close(); }
 });
+
+const eventKey = (event: { request_id: string; result: string }) => `${event.request_id}:${event.result}`;
+
+test("V2 mac_execution_audit pages older events through an opaque cursor and every page satisfies the contract", async () => {
+  const f = await setup(); try {
+    await f.create();
+    for (let i = 0; i < 4; i++) data(await f.handle("mac_git_worktree_list", { project_root: f.project }));
+    const firstResult = await f.handle("mac_execution_audit", { project_root: f.project, limit: 3 });
+    const first = data(firstResult) as { events: { request_id: string; result: string }[]; truncated: boolean; next_cursor?: string };
+    assert.equal(first.events.length, 3); assert.equal(first.truncated, true); assert.match(first.next_cursor!, /^[A-Za-z0-9_-]{1,64}$/u);
+    const envelope = firstResult as unknown as { truncated: boolean; warnings: string[] };
+    assert.equal(envelope.truncated, true); assert.ok(envelope.warnings.some(w => /limited to the newest 3/u.test(w) && /cursor=next_cursor/u.test(w)));
+    // The cursor continues strictly before the last row of the page.
+    const ledger = f.store.auditRows();
+    const sequenceOf = (event: { request_id: string; result: string }) => ledger.find(row => row.request_id === event.request_id && row.result_class === event.result)!.sequence as number;
+    assert.equal(decodeAuditCursor(first.next_cursor), sequenceOf(first.events[2]!));
+    const contract = JSON.parse(await readFile(join(repositoryRoot, "tool-contracts", "mac_execution_audit.json"), "utf8"));
+    const acceptsInput = ajv.compile(contract.input_schema);
+    assert.equal(acceptsInput({ project_root: f.project, limit: 3, cursor: first.next_cursor }), true, ajv.errorsText(acceptsInput.errors));
+    assert.equal(acceptsInput({ project_root: f.project, cursor: "MQ==" }), false); assert.equal(acceptsInput({ project_root: f.project, cursor: "" }), false);
+    const newest = sequenceOf(first.events[0]!);
+    const collected = [...first.events]; let cursor = first.next_cursor, last = first;
+    for (let pages = 0; cursor !== undefined && pages < 40; pages++) {
+      last = data(await f.handle("mac_execution_audit", { project_root: f.project, limit: 3, cursor })) as typeof first;
+      collected.push(...last.events); cursor = last.next_cursor;
+    }
+    assert.equal(cursor, undefined); assert.equal(last.truncated, false); assert.equal("next_cursor" in last, false);
+    const keys = collected.map(eventKey);
+    assert.equal(new Set(keys).size, keys.length);
+    const expected = f.store.executionAudit("principal-1", { project: f.project, limit: 100 }).filter(row => (row.sequence as number) <= newest).map(row => `${row.request_id}:${row.result_class}`);
+    assert.deepEqual(keys, expected);
+    assert.ok(collected.length > 3);
+    // A page that ends exactly at the limit does not claim that more events exist.
+    const everything = data(await f.handle("mac_execution_audit", { project_root: f.project, limit: 100 })) as typeof first;
+    assert.equal(everything.truncated, false); assert.equal("next_cursor" in everything, false);
+  } finally { await f.close(); }
+});
+
+test("V2 mac_execution_audit rejects malformed cursors and unknown arguments", async () => {
+  const f = await setup(); try {
+    const valid = encodeAuditCursor(5);
+    assert.equal(decodeAuditCursor(valid), 5);
+    for (const cursor of ["not*base64", "", "MA", "MDE", "MS41", "MQ==", encodeAuditCursor(2 ** 53), Buffer.from("12345678901234567").toString("base64url"), 7, null, {}]) {
+      const refused = failure(await f.handle("mac_execution_audit", { project_root: f.project, cursor }));
+      assert.equal(refused.result_class, "PRECONDITION_FAILED", String(cursor)); assert.match(refused.error.message, /cursor is malformed/u);
+    }
+    assert.equal(failure(await f.handle("mac_execution_audit", { project_root: f.project, cursor: valid, offset: 1 })).result_class, "PRECONDITION_FAILED");
+    assert.equal(failure(await f.handle("mac_git_worktree_list", { project_root: f.project, cursor: valid })).result_class, "PRECONDITION_FAILED");
+    data(await f.handle("mac_execution_audit", { project_root: f.project, cursor: valid }));
+  } finally { await f.close(); }
+});
+
+async function settledRequest(f: Awaited<ReturnType<typeof setup>>, requestId: string) {
+  for (let i = 0; i < 400; i++) { if (f.store.requestRecord(requestId)?.state !== "RUNNING") return f.store.requestRecord(requestId); await new Promise<void>(resolve => setTimeout(resolve, 5)); }
+  assert.fail("Request did not settle");
+}
+async function runValidation(f: Awaited<ReturnType<typeof setup>>, worktree: string, task: string, key: string) {
+  const args = { project_root: f.project, worktree, task_id: task, max_runtime: 500, idempotency_key: key };
+  f.approve("mac_test_run", args); const started = await f.handle("mac_test_run", args); data(started);
+  await settledRequest(f, started.request_id); return started.request_id;
+}
+async function laterProjectActivity(f: Awaited<ReturnType<typeof setup>>, after: string[]) {
+  for (let i = 0; i < 60; i++) data(await f.handle("mac_git_status", { project_root: f.project }));
+  for (let i = 0; i < 3; i++) data(await f.handle("mac_execution_audit", { project_root: f.project, limit: 100 }));
+  // The newest-100 project view no longer reaches the runs, which is what used to blank the review evidence.
+  const window = f.store.executionAudit("principal-1", { project: f.project, limit: 100 });
+  for (const requestId of after) assert.equal(window.some(row => row.request_id === requestId), false, requestId);
+}
+
+test("V2 mac_pr_prepare keeps a finished run's test evidence after more than 100 later project rows and ignores other tasks", async () => {
+  const f = await setup(); try {
+    const worktree = (await f.create()).worktree as string; const other = (await f.create("task-2")).worktree as string;
+    const first = await runValidation(f, worktree, "task-1", "evidence-1"); const otherRun = await runValidation(f, other, "task-2", "evidence-2");
+    const second = await runValidation(f, worktree, "task-1", "evidence-3");
+    await laterProjectActivity(f, [first, otherRun, second]);
+    const review = data(await f.handle("mac_pr_prepare", { project_root: f.project, worktree }));
+    assert.deepEqual(review.test_evidence, ["mac_test_run: SUCCEEDED", "mac_test_run: SUCCEEDED"]);
+    assert.match(review.description as string, /Validation: mac_test_run: SUCCEEDED, mac_test_run: SUCCEEDED/u); assert.doesNotMatch(review.description as string, /No completed validation run recorded/u);
+    assert.deepEqual(data(await f.handle("mac_pr_prepare", { project_root: f.project, worktree: other })).test_evidence, ["mac_test_run: SUCCEEDED"]);
+    const untested = (await f.create("task-3")).worktree as string;
+    const bare = data(await f.handle("mac_pr_prepare", { project_root: f.project, worktree: untested }));
+    assert.deepEqual(bare.test_evidence, []); assert.match(bare.description as string, /No completed validation run recorded/u);
+  } finally { await f.close(); }
+});
+
+for (const [state, resultClass, exitCode] of [["failed", "EXECUTION_FAILED", 1], ["timed_out", "TIMEOUT", null]] as const) {
+  test(`V2 mac_pr_prepare keeps a ${resultClass} validation outcome after more than 100 later project rows`, async () => {
+    const f = await setup(async () => ({ state, resultClass, exitCode, stdout: "", stderr: "synthetic outcome", truncated: false, durationMs: 1, verification: { status: "verified" as const } }));
+    try {
+      const worktree = (await f.create()).worktree as string;
+      const run = await runValidation(f, worktree, "task-1", "evidence-failed");
+      assert.equal(f.store.requestRecord(run)?.state === "SUCCEEDED", false);
+      await laterProjectActivity(f, [run]);
+      const review = data(await f.handle("mac_pr_prepare", { project_root: f.project, worktree }));
+      assert.deepEqual(review.test_evidence, [`mac_test_run: ${resultClass}`]);
+      assert.doesNotMatch(review.description as string, /No completed validation run recorded/u);
+    } finally { await f.close(); }
+  });
+}

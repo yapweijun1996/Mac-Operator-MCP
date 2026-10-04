@@ -4309,33 +4309,54 @@ export class BrokerStore {
     project?: string;
     jobId?: string;
   } = {}): Array<Record<string, unknown>> {
-    if (!isPlainDataRecord(filters) || Object.keys(filters).some((key) => !["limit", "requestId", "taskId", "project", "jobId"].includes(key))) {
+    return this.executionAuditPage(principalId, filters).events;
+  }
+
+  /**
+   * One newest-first page of the audit view. `beforeSequence` continues after a previous page, and
+   * `nextBeforeSequence` is set exactly when older matching rows remain (past the limit or past the byte budget).
+   * A project view lists only `mac_` tools; internal ledger rows are not part of the tool contract.
+   */
+  executionAuditPage(principalId: string, filters: {
+    limit?: number;
+    requestId?: string;
+    taskId?: string;
+    project?: string;
+    jobId?: string;
+    beforeSequence?: number;
+  } = {}): { events: Array<Record<string, unknown>>; nextBeforeSequence: number | null } {
+    if (!isPlainDataRecord(filters) || Object.keys(filters).some((key) => !["limit", "requestId", "taskId", "project", "jobId", "beforeSequence"].includes(key))) {
       throw new BrokerError("PRECONDITION_FAILED", "Execution audit filters are malformed");
     }
     const limit = filters.limit ?? 50;
     if (typeof principalId !== "string" || !/^[A-Za-z0-9._:@/-]{1,128}$/u.test(principalId) ||
         !Number.isSafeInteger(limit) || limit < 1 || limit > 100 ||
+        (filters.beforeSequence !== undefined && (!Number.isSafeInteger(filters.beforeSequence) || filters.beforeSequence < 1)) ||
         (filters.requestId !== undefined && (typeof filters.requestId !== "string" || !/^[A-Za-z0-9._:@/+-]{1,128}$/u.test(filters.requestId))) ||
-        (filters.taskId !== undefined && (typeof filters.taskId !== "string" || !/^[A-Za-z0-9._:-]{1,128}$/u.test(filters.taskId))) ||
+        (filters.taskId !== undefined && !isAuditTaskId(filters.taskId)) ||
         (filters.jobId !== undefined && (typeof filters.jobId !== "string" || !/^job:[A-Za-z0-9._-]{1,240}$/u.test(filters.jobId))) ||
-        (filters.project !== undefined && (typeof filters.project !== "string" || !isAbsolute(filters.project) || resolve(filters.project) !== filters.project || filters.project.length > 4096 || filters.project.includes("\0")))) {
+        (filters.project !== undefined && !isCanonicalAbsolutePath(filters.project))) {
       throw new BrokerError("PRECONDITION_FAILED", "Execution audit filters are malformed");
     }
+    // One extra row tells whether older rows remain without a second query.
     const rows = this.database.prepare(`
       SELECT * FROM audit_events WHERE principal_id = ?
         AND (? IS NULL OR request_id = ?)
         AND (? IS NULL OR json_extract(evidence_json, '$.taskId') = ?)
         AND (? IS NULL OR target_ref = 'project:' || ? OR json_extract(evidence_json, '$.project') = ?)
+        AND (? IS NULL OR substr(tool, 1, 4) = 'mac_')
         AND (? IS NULL OR json_extract(evidence_json, '$.jobId') = ?)
+        AND (? IS NULL OR sequence < ?)
       ORDER BY sequence DESC LIMIT ?
     `).all(
       principalId, filters.requestId ?? null, filters.requestId ?? null,
       filters.taskId ?? null, filters.taskId ?? null, filters.project ?? null, filters.project ?? null, filters.project ?? null,
-      filters.jobId ?? null, filters.jobId ?? null, limit
+      filters.project ?? null, filters.jobId ?? null, filters.jobId ?? null,
+      filters.beforeSequence ?? null, filters.beforeSequence ?? null, limit + 1
     ) as unknown as AuditRow[];
     let outputBytes = 0;
     const output: Array<Record<string, unknown>> = [];
-    for (const row of rows) {
+    for (const row of rows.slice(0, limit)) {
       validateStoredAuditRow(row);
       const event = {
         sequence: row.sequence,
@@ -4348,11 +4369,50 @@ export class BrokerStore {
         policy_version: row.policy_version,
         evidence: parseJsonStrict(row.evidence_json)
       };
-      outputBytes += Buffer.byteLength(JSON.stringify(event), "utf8");
-      if (outputBytes > 64 * 1024) break;
+      const eventBytes = Buffer.byteLength(JSON.stringify(event), "utf8");
+      // The first row is always returned, so a page can never be empty while older rows remain and a cursor always advances.
+      if (output.length > 0 && outputBytes + eventBytes > 64 * 1024) break;
+      outputBytes += eventBytes;
       output.push(event);
     }
-    return output;
+    return { events: output, nextBeforeSequence: output.length < rows.length ? output[output.length - 1]!.sequence as number : null };
+  }
+
+  /**
+   * Newest-first outcomes of one worktree task's validation runs. Completions are matched to the task through the
+   * request id shared with their authorization row, because failure completions may carry nothing but scopes. The
+   * lookup is task-scoped, so it does not depend on how many unrelated rows were written after the run.
+   */
+  validationOutcomes(principalId: string, filters: {
+    worktree: string;
+    taskId: string;
+    tools: readonly string[];
+    resultClasses: readonly string[];
+    limit?: number;
+  }): Array<{ tool: string; result_class: string }> {
+    if (!isPlainDataRecord(filters) || Object.keys(filters).some((key) => !["worktree", "taskId", "tools", "resultClasses", "limit"].includes(key))) {
+      throw new BrokerError("PRECONDITION_FAILED", "Validation outcome filters are malformed");
+    }
+    const limit = filters.limit ?? 32;
+    const { tools, resultClasses } = filters;
+    if (typeof principalId !== "string" || !/^[A-Za-z0-9._:@/-]{1,128}$/u.test(principalId) ||
+        !isCanonicalAbsolutePath(filters.worktree) || !isAuditTaskId(filters.taskId) ||
+        !Number.isSafeInteger(limit) || limit < 1 || limit > 100 ||
+        !isBoundedStringList(tools, /^mac_[a-z0-9_]{1,123}$/u) || !isBoundedStringList(resultClasses, /^[A-Z][A-Z_]{0,63}$/u)) {
+      throw new BrokerError("PRECONDITION_FAILED", "Validation outcome filters are malformed");
+    }
+    const toolMarks = tools.map(() => "?").join(", ");
+    const classMarks = resultClasses.map(() => "?").join(", ");
+    const rows = this.database.prepare(`
+      SELECT tool, result_class FROM audit_events
+      WHERE principal_id = ? AND tool IN (${toolMarks}) AND result_class IN (${classMarks})
+        AND request_id IN (
+          SELECT request_id FROM audit_events
+          WHERE principal_id = ? AND tool IN (${toolMarks})
+            AND json_extract(evidence_json, '$.worktree') = ? AND json_extract(evidence_json, '$.taskId') = ?)
+      ORDER BY sequence DESC LIMIT ?
+    `).all(principalId, ...tools, ...resultClasses, principalId, ...tools, filters.worktree, filters.taskId, limit) as unknown as Array<{ tool: string; result_class: string }>;
+    return rows.map((row) => ({ tool: row.tool, result_class: row.result_class }));
   }
 
   auditEventExists(requestId: string, eventType: AuditEvent["eventType"]): boolean {
@@ -5426,6 +5486,20 @@ interface AuditRow {
   timestamp_ms: number;
   previous_hash: string;
   event_hash: string;
+}
+
+function isCanonicalAbsolutePath(value: unknown): value is string {
+  return typeof value === "string" && isAbsolute(value) && resolve(value) === value && value.length <= 4096 && !value.includes("\0");
+}
+
+function isAuditTaskId(value: unknown): value is string {
+  return typeof value === "string" && /^[A-Za-z0-9._:-]{1,128}$/u.test(value);
+}
+
+/** A short, non-empty list of plain strings that all match one pattern, safe to expand into SQL placeholders. */
+function isBoundedStringList(value: unknown, pattern: RegExp): value is readonly string[] {
+  return Array.isArray(value) && value.length >= 1 && value.length <= 32 && isPlainDataArray(value) &&
+    value.every((item) => typeof item === "string" && pattern.test(item));
 }
 
 function validateStoredAuditRow(row: AuditRow): void {
