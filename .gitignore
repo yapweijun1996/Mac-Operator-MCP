@@ -2,6 +2,7 @@
 node_modules/
 
 # TypeScript and build output
+/dist/
 packages/*/dist/
 *.tsbuildinfo
 *.node
@@ -10,6 +11,8 @@ packages/*/dist/
 # Test and coverage output
 coverage/
 .nyc_output/
+playwright-report/
+test-results/
 
 # Local runtime state
 *.sqlite
@@ -56,6 +59,12 @@ pnpm-debug.log*
 .cache/
 .runtime/
 .privileged-helper-build-*/
+/.gui-commit-validation*/
+
+# Editor temporary files
+*.swp
+*.swo
+*~
 
 # macOS metadata
 .DS_Store
