@@ -154,6 +154,13 @@
             "minLength": 1,
             "maxLength": 64
           },
+          "authorized_log_sources": {
+            "type": "array",
+            "minItems": 0,
+            "maxItems": 64,
+            "uniqueItems": false,
+            "items": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[A-Za-z0-9._:@/+-]+$" }
+          },
           "authorized_services": {
             "type": "array",
             "minItems": 0,

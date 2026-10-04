@@ -23,7 +23,7 @@
   "audit_class": "observe",
   "tool_delivery_wave": "wave_2",
   "implementation_status": "planned",
-  "purpose": "analyze authorized volumes/capacity and bounded top storage consumers.",
+  "purpose": "analyze authorized volumes/capacity and bounded top storage consumers. Without roots it analyzes the content-readable roots, not the whole disk; macOS Library/CloudStorage folders are skipped.",
   "input_summary": "roots?:string[], top_n?:1..100, max_depth?:0..8.",
   "output_summary": "capacity facts and ranked consumers; deny zones excluded.",
   "input_schema": {
@@ -155,6 +155,7 @@
                   "pattern": "^[^\\u0000]+$"
                 },
                 "size_bytes": {
+                  "description": "Apparent size in bytes: a sum of stat sizes (not allocated disk blocks), so it can differ from Finder or du for sparse files, APFS clones and compression. For a directory it is the sum over entries visited beneath it. Symlinks, protected zones, macOS Library/CloudStorage and other volumes are excluded. It is a lower bound when the result is truncated or a warning says traversal was cut short.",
                   "type": "integer",
                   "minimum": 0,
                   "maximum": 100000000000000

@@ -21,7 +21,8 @@ import {
   type BrokerResult,
   type BrokerRevocationEvent,
   type BrokerRevocationResult,
-  type CapabilityFamily
+  type CapabilityFamily,
+  type Scope
 } from "@mac-operator/contracts";
 import { randomUUID } from "node:crypto";
 import { dirname, isAbsolute, join } from "node:path";
@@ -2073,13 +2074,9 @@ export class Broker {
               : [],
             // Project-bound tools (git, build, agent, audit) accept only these project roots.
             authorized_projects: authorizedProjects(policy, request.principal.principalId, request.principal.scopes),
-            // Launchd service identifiers mac_service_status may inspect for this caller.
-            authorized_services: request.principal.scopes.includes("mac.service.read")
-              ? policy.targetRules
-                .filter((rule) => rule.principalId === request.principal.principalId && rule.effect === "allow" &&
-                  rule.scope === "mac.service.read" && rule.target.kind === "service")
-                .map((rule) => rule.target.reference).slice(0, 64)
-              : [],
+            // Launchd services and log sources the status/tail tools accept for this caller.
+            authorized_services: authorizedTargetReferences(policy, request.principal.principalId, request.principal.scopes, "mac.service.read", "service"),
+            authorized_log_sources: authorizedTargetReferences(policy, request.principal.principalId, request.principal.scopes, "mac.log.read", "log_source"),
             protocol_version: PROTOCOL_VERSION,
             contract_version: CONTRACT_VERSION,
             version: "0.1.0"
@@ -2800,10 +2797,7 @@ export class Broker {
             data: {
               decision: "deny", normalized_target: target, required_scopes: requiredScopes,
               missing_scopes: requiredScopes.filter((scope) => !request.principal.scopes.includes(scope)),
-              reason_codes: DEVELOPMENT_TOOL_NAMES.includes(candidate) ? [error.errorClass,
-                ...(error.message.includes("protected secret zone") ? ["SECRET_PATH_ACCESS"] :
-                  error.message.includes("escapes the worktree") ? ["WORKTREE_ESCAPE_DENIED"] :
-                  /^[A-Z_]+(?::|$)/u.test(error.message) ? [error.message.split(":")[0]!] : [])] : [error.errorClass], policy_version: policy.version
+              reason_codes: policyDenialReasonCodes(error, DEVELOPMENT_TOOL_NAMES.includes(candidate)), policy_version: policy.version
             },
             verification: { required: false, status: "not_required", strategy: "policy_decision_result_validation" }
           };
@@ -2865,6 +2859,10 @@ export class Broker {
             evidence: { summary: "Returned bytes hashed after descriptor identity readback", readback_hash: workerResult.sha256 }
           },
           truncated: workerResult.truncated,
+          // The digest covers only the returned window; say so whenever that is not the whole file.
+          ...(workerResult.bytesReturned !== workerResult.sizeBytes ? { warnings: [
+            `sha256 covers only the ${workerResult.bytesReturned} returned bytes (offset ${offset}) of this ${workerResult.sizeBytes}-byte file, not the whole file; mac_hash_file gives a whole-file digest when its scope is granted`
+          ] } : {}),
           auditTarget: `path:${workerResult.path}`,
           auditEvidence: {
             rootId: workerResult.rootId,
@@ -4087,8 +4085,10 @@ export class Broker {
     const args = request.arguments;
     const authority = () => this.ensureActiveAuthority(request, execution.target);
     const control = this.executionControl(request, execution.target, toolPolicy.timeoutMs);
-    const read = (data: unknown, evidence: Record<string, unknown> = {}): DispatchResult => ({ data,
-      verification: { required: true, status: "verified", strategy: "bounded_result_validation" }, auditEvidence: evidence });
+    // The envelope truncated flag mirrors data.truncated so a clipped payload cannot hide it.
+    const read = (data: unknown, evidence: Record<string, unknown> = {}, warnings: readonly string[] = []): DispatchResult => ({ data,
+      verification: { required: true, status: "verified", strategy: "bounded_result_validation" }, auditEvidence: evidence,
+      truncated: isPlainDataRecord(data) && data.truncated === true, ...(warnings.length > 0 ? { warnings } : {}) });
     if (request.tool === "mac_git_worktree_create" || request.tool === "mac_git_branch_create") {
       const result = await gateway.worktrees.create({ projectRoot: plan.projectRoot, branchName: args.branch_name as string,
         baseRef: args.base_ref as string, taskId: args.task_id as string, idempotencyKey: args.idempotency_key as string,
@@ -4119,7 +4119,9 @@ export class Broker {
       return read(data);
     }
     if (request.tool === "mac_execution_audit") {
-      const rows = this.options.store.executionAudit(request.principal.principalId, { project: plan.projectRoot, limit: (args.limit ?? 50) as number });
+      const auditLimit = (args.limit ?? 50) as number;
+      const rows = this.options.store.executionAudit(request.principal.principalId, { project: plan.projectRoot, limit: auditLimit });
+      const auditTruncated = rows.length >= auditLimit;
       return read({ project_root: plan.projectRoot, events: rows.map((row) => ({ timestamp: new Date(row.timestamp_ms as number).toISOString(),
         request_id: row.request_id, tool: row.tool, actor: request.principal.principalId, decision: row.decision, result: row.result_class,
         scope: isPlainDataRecord(row.evidence) && Array.isArray(row.evidence.scopes) ? row.evidence.scopes : [],
@@ -4131,7 +4133,7 @@ export class Broker {
           ...(Array.isArray(row.evidence.changedPaths) ? { changed_paths: row.evidence.changedPaths.slice(0, 256) } : {}),
           ...(typeof row.evidence.commitId === "string" ? { commit_hash: row.evidence.commitId } : {})
         } : {}) })),
-        truncated: rows.length >= ((args.limit ?? 50) as number) });
+        truncated: auditTruncated }, {}, auditTruncated ? [`Audit events may be limited to the newest ${auditLimit}; raise limit (maximum 100) to check for more`] : []);
     }
     if (request.tool === "mac_pr_prepare") {
       const record = gateway.worktrees.require(plan.worktree!, plan.projectRoot, request.principal.principalId);
@@ -6588,6 +6590,33 @@ function decodeWriteContent(argumentsValue: Readonly<Record<string, unknown>>): 
     throw new BrokerError("PRECONDITION_FAILED", "base64 content is malformed");
   }
   return bytes;
+}
+
+/**
+ * First code is always the error class. A typed reasonCode adds one static detail for any tool;
+ * Development tools additionally keep their documented leading UPPER_TOKEN message convention.
+ * Messages are never echoed for other tools, so no path, root id or rule content can leak.
+ */
+function policyDenialReasonCodes(error: BrokerError, developmentTool: boolean): string[] {
+  let detail: string | undefined = error.reasonCode;
+  if (detail === undefined && developmentTool) {
+    if (error.message.includes("escapes the worktree")) detail = "WORKTREE_ESCAPE_DENIED";
+    else if (/^[A-Z_]+(?::|$)/u.test(error.message)) detail = error.message.split(":")[0]!;
+  }
+  return detail === undefined || detail === error.errorClass ? [error.errorClass] : [error.errorClass, detail];
+}
+
+function authorizedTargetReferences(
+  policy: BrokerPolicy,
+  principalId: string,
+  callerScopes: readonly string[],
+  scope: Scope,
+  kind: NormalizedTarget["kind"]
+): string[] {
+  if (!callerScopes.includes(scope)) return [];
+  return policy.targetRules
+    .filter((rule) => rule.principalId === principalId && rule.effect === "allow" && rule.scope === scope && rule.target.kind === kind)
+    .map((rule) => rule.target.reference).slice(0, 64);
 }
 
 function authorizedProjects(

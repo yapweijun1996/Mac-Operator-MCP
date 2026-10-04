@@ -107,7 +107,7 @@ try {
     const summary = inspector.summarizeProjectPlanned(command.plan, command.includeTree, command.treeDepth);
     value = { operation: "project_summary", ...summary };
   } else if (command.operation === "storage_analysis") {
-    const analysis = inspector.analyzeStoragePlanned(command.plans, command.topN, command.maxDepth);
+    const analysis = inspector.analyzeStoragePlanned(command.plans, command.topN, command.maxDepth, command.traversalBudgetMs);
     value = { operation: "storage_analysis", ...analysis };
   } else if (command.operation === "write") {
     // Structured clone transports Buffer values as Uint8Array instances.

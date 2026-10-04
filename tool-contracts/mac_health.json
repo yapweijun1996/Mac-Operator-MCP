@@ -23,9 +23,9 @@
   "audit_class": "observe",
   "tool_delivery_wave": "wave_1",
   "implementation_status": "planned",
-  "purpose": "report Edge, Local Broker and optional helper health/version/reachability without secret material.",
+  "purpose": "Report the Local Broker's health and version. A successful call also shows the Edge-to-Broker path is working. Edge, OAuth and GUI helper status are not reported here; use mac_capabilities for enabled tools and, when GUI tools are enabled, GUI helper and macOS permission state.",
   "input_summary": "include_components?:boolean.",
-  "output_summary": "component states, versions, degraded reasons.",
+  "output_summary": "overall state plus one component entry for the Local Broker (name, status, version); components is empty when include_components is false.",
   "input_schema": {
     "$schema": "https://json-schema.org/draft/2020-12/schema",
     "title": "mac_health input",
@@ -33,6 +33,7 @@
     "additionalProperties": false,
     "properties": {
       "include_components": {
+        "description": "Default true. When false, components is returned as an empty array.",
         "type": "boolean"
       }
     },
@@ -69,6 +70,7 @@
         "additionalProperties": false,
         "properties": {
           "overall": {
+            "description": "Currently healthy whenever the Broker answered; it is not derived from probes of other components.",
             "enum": [
               "healthy",
               "degraded",

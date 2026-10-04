@@ -118,6 +118,7 @@
                   "maximum": 8
                 },
                 "size_bytes": {
+                  "description": "Size in bytes of this entry itself, as reported by stat. For type=file it is the file length. For type=directory it is only the size of the directory entry (for example 160 on APFS) and does NOT include the directory's contents; for an unfollowed symlink it is the length of the link target path. For the total space used by a directory use mac_storage_analysis.",
                   "type": "integer",
                   "minimum": 0,
                   "maximum": 1000000000000

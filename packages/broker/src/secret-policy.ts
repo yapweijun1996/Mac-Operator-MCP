@@ -148,7 +148,7 @@ export function assertContentPathAllowed(path: string): void {
   if (name === ".env" || name.startsWith(".env.") || DENIED_BASENAMES.has(name) ||
       DENIED_NAME_SUFFIXES.some((suffix) => name.endsWith(suffix)) ||
       DENIED_PATH_FRAGMENTS.some((fragment) => `${normalized}/`.includes(fragment))) {
-    throw new BrokerError("POLICY_DENIED", "Filesystem content is inside a protected secret zone");
+    throw new BrokerError("POLICY_DENIED", "Filesystem content is inside a protected secret zone", false, "SECRET_PATH_ACCESS");
   }
 }
 
@@ -156,7 +156,7 @@ export function assertContentPathAllowed(path: string): void {
 export function assertSourceWritePathAllowed(path: string): void {
   assertContentPathAllowed(path);
   if (path.normalize("NFKC").toLocaleLowerCase("en-US").split("/").includes(".git")) {
-    throw new BrokerError("POLICY_DENIED", "GIT_METADATA_WRITE_DENIED");
+    throw new BrokerError("POLICY_DENIED", "GIT_METADATA_WRITE_DENIED", false, "GIT_METADATA_WRITE_DENIED");
   }
 }
 

@@ -3834,21 +3834,23 @@ test("mac_capabilities lists authorized roots only for callers holding a filesys
   const root = { rootId: "test-root", path: directory, metadata: true, contentRead: true, denyRelativePaths: [] } as const;
   const broker = new Broker({
     store,
-    policy: createDefaultPolicy("edge-1", true, ["mac.control.read", "mac.files.read", "mac.git.read", "mac.service.read"], ["edge-key-1"], [root], ["system/com.example.svc"], [], ["/tmp/project-a"]),
+    policy: createDefaultPolicy("edge-1", true, ["mac.control.read", "mac.files.read", "mac.git.read", "mac.service.read", "mac.log.read"], ["edge-key-1"], [root], ["system/com.example.svc"], ["system", "process/codex"], ["/tmp/project-a"]),
     edgeAuthenticationKeys: testKeyring(key),
     now: () => NOW
   });
   try {
-    const withFiles = await broker.handle(signRequest(unsigned({ tool: "mac_capabilities" }, ["mac.control.read", "mac.files.read", "mac.git.read", "mac.service.read"]), key));
+    const withFiles = await broker.handle(signRequest(unsigned({ tool: "mac_capabilities" }, ["mac.control.read", "mac.files.read", "mac.git.read", "mac.service.read", "mac.log.read"]), key));
     assert.equal(withFiles.ok, true);
     assert.deepEqual((withFiles.data as { authorized_roots: unknown }).authorized_roots,
       [{ path: directory, metadata: true, content_read: true, write: false }]);
     assert.deepEqual((withFiles.data as { authorized_projects: unknown }).authorized_projects,
       [{ path: "/tmp/project-a", scopes: ["mac.git.read"] }]);
     assert.deepEqual((withFiles.data as { authorized_services: unknown }).authorized_services, ["system/com.example.svc"]);
+    assert.deepEqual((withFiles.data as { authorized_log_sources: unknown }).authorized_log_sources, ["system", "process/codex"]);
     const controlOnly = await broker.handle(signRequest(unsigned({ tool: "mac_capabilities", requestId: "request-2", nonce: "nonce-2" }, ["mac.control.read"]), key));
     assert.equal(controlOnly.ok, true);
     assert.deepEqual((controlOnly.data as { authorized_roots: unknown }).authorized_roots, []);
+    assert.deepEqual((controlOnly.data as { authorized_log_sources: unknown }).authorized_log_sources, []);
   } finally {
     store.close();
     await rm(directory, { recursive: true, force: true });
@@ -3953,6 +3955,44 @@ test("mac_policy_explain maps a proposed path to the Broker-owned filesystem roo
   }
 });
 
+test("mac_policy_explain gives a specific static reason code for denied paths", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "mac-operator-policy-explain-deny-"));
+  const store = new BrokerStore(join(directory, "broker.sqlite"));
+  const key = randomBytes(32);
+  const root = { rootId: "test-root", path: directory, metadata: true, contentRead: false, denyRelativePaths: ["private"] } as const;
+  const broker = new Broker({
+    store,
+    policy: createDefaultPolicy("edge-1", true, ["mac.policy.explain", "mac.files.read"], ["edge-key-1"], [root]),
+    edgeAuthenticationKeys: testKeyring(key),
+    now: () => NOW
+  });
+  const explain = async (index: number, tool: string, reference: string) => {
+    const request = unsigned({
+      requestId: `explain-${index}`,
+      nonce: `explain-nonce-${index}`,
+      tool: "mac_policy_explain",
+      arguments: { proposed_tool: tool, target: { kind: "path", reference } }
+    }, ["mac.policy.explain", "mac.files.read"]);
+    const result = await broker.handle(signRequest(request, key));
+    assert.equal(result.ok, true);
+    return (result as { data: { decision: string; reason_codes: string[] } }).data;
+  };
+  try {
+    const outside = await explain(1, "mac_stat_path", join(tmpdir(), "mac-operator-not-a-root", "x.txt"));
+    assert.deepEqual([outside.decision, outside.reason_codes], ["deny", ["POLICY_DENIED", "OUTSIDE_AUTHORIZED_ROOTS"]]);
+    const capability = await explain(2, "mac_read_file", join(directory, "readable.txt"));
+    assert.deepEqual(capability.reason_codes, ["POLICY_DENIED", "ROOT_CAPABILITY_NOT_GRANTED"]);
+    const zone = await explain(3, "mac_stat_path", join(directory, "private", "x.txt"));
+    assert.deepEqual(zone.reason_codes, ["POLICY_DENIED", "DENIED_ZONE"]);
+    const secret = await explain(4, "mac_read_file", join(directory, ".env"));
+    assert.deepEqual(secret.reason_codes, ["POLICY_DENIED", "SECRET_PATH_ACCESS"]);
+    assert.equal(JSON.stringify([outside, capability, zone, secret].map((item) => item.reason_codes)).includes("private"), false);
+  } finally {
+    store.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 test("mac_read_file returns a bounded descriptor-backed range", async () => {
   const directory = await mkdtemp(join(tmpdir(), "mac-operator-broker-read-"));
   const path = join(directory, "sample.txt");
@@ -3982,6 +4022,7 @@ test("mac_read_file returns a bounded descriptor-backed range", async () => {
       assert.match(data.sha256, /^[a-f0-9]{64}$/u);
       assert.equal(data.truncated, true);
       assert.equal(result.truncated, true);
+      assert.ok(result.warnings.some((warning) => /sha256 covers only the 3 returned bytes \(offset 6\) of this 11-byte file/u.test(warning)));
       assert.equal(result.verification.status, "verified");
     }
     assert.deepEqual(store.auditRows().map((row) => [row.event_type, row.target_ref]), [

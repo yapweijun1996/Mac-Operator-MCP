@@ -23,9 +23,9 @@
   "audit_class": "filesystem_read",
   "tool_delivery_wave": "wave_2",
   "implementation_status": "planned",
-  "purpose": "list recently modified allowed files using metadata only.",
+  "purpose": "list recently modified allowed files (everything except directories, such as regular files and symlinks) using metadata only, newest first; macOS Library/CloudStorage is not scanned.",
   "input_summary": "roots:string[], since_seconds:positive integer, limit?:1..1000.",
-  "output_summary": "canonical path, timestamps, size/type.",
+  "output_summary": "files sorted by modified_at descending, path ascending on ties; canonical path, timestamps, size/type. truncated=true means more matches than limit or the traversal time budget was reached, so the list is the newest N of what was scanned.",
   "input_schema": {
     "$schema": "https://json-schema.org/draft/2020-12/schema",
     "title": "mac_recent_files input",
@@ -112,6 +112,7 @@
                   "format": "date-time"
                 },
                 "size_bytes": {
+                  "description": "Size in bytes of this entry itself, as reported by stat. For a directory it is only the size of the directory entry and does NOT include its contents; use mac_storage_analysis for aggregate sizes.",
                   "type": "integer",
                   "minimum": 0,
                   "maximum": 1000000000000

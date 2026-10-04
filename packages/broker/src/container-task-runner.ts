@@ -244,7 +244,7 @@ export class ContainerTaskRunner implements TaskRunner {
         });
       }
     } catch (error) {
-      result = mapError(error, abort.signal.aborted ? reason ?? "cancel" : undefined, phase);
+      result = mapError(error, abort.signal.aborted ? reason ?? "cancel" : undefined, phase, timeoutMs);
     } finally {
       clearTimeout(timer); clearInterval(monitor);
       abort.abort();
@@ -367,9 +367,13 @@ function mapCoding(result: CodexControllerResult, cap: number): TaskExecutionRes
   const output = redactBoundedText(result.output, cap);
   return { ...outcome(result.status, classes[result.status], result.status === "completed" ? 0 : null, output.text, result.reasonCodes.join(","), 0), truncated: output.truncated };
 }
-function mapError(error: unknown, aborted?: "timeout" | "cancel", phase?: string): TaskExecutionResult {
+function mapError(error: unknown, aborted?: "timeout" | "cancel", phase?: string, timeoutMs?: number): TaskExecutionResult {
   const name = aborted === "timeout" ? "TIMEOUT" : aborted === "cancel" ? "CANCELLED" : error instanceof BrokerError ? error.errorClass : "UNKNOWN_OUTCOME";
-  if (name === "TIMEOUT") return outcome("timed_out", "TIMEOUT", null, "", "Container task exceeded its deadline", 0);
+  if (name === "TIMEOUT") {
+    // The deadline covers Engine checks, start, staging and the command; naming the phase shows which one consumed it.
+    const detail = timeoutMs === undefined ? "" : ` of ${timeoutMs} ms in phase "${phase ?? "unknown"}"; it covers Engine checks, container start, workspace staging and the command, so if max_runtime is below the profile's approved maximum, raising it may help`;
+    return outcome("timed_out", "TIMEOUT", null, "", `Container task exceeded its deadline${detail}`, 0);
+  }
   if (name === "CANCELLED") return outcome("cancelled", "CANCELLED", null, "", "Container task was cancelled", 0);
   if (name === "OUTPUT_LIMIT") return outcome("failed", "OUTPUT_LIMIT", null, "", "Container task exceeded its output limit", 0);
   if (name === "UNKNOWN_OUTCOME" || name === "AUDIT_UNAVAILABLE") return outcome("unknown", "UNKNOWN_OUTCOME", null, "", "Container task outcome could not be verified", 0);

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { execFileSync, spawn } from "node:child_process";
 import { appendFileSync } from "node:fs";
-import { link, lstat, mkdtemp, mkdir, readFile, readlink, readdir, realpath, rename, rm, symlink, writeFile } from "node:fs/promises";
+import { link, lstat, mkdtemp, mkdir, readFile, readlink, readdir, realpath, rename, rm, symlink, utimes, writeFile, chmod } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import { createRequire } from "node:module";
 import { createServer } from "node:net";
@@ -477,7 +477,12 @@ test("atomic write rejects final symlinks, intermediate escapes, and non-write r
       /escaped its authorized root/u
     );
     const readOnly = new FilesystemInspector([root(directory)]);
-    assert.throws(() => readOnly.planPath(join(directory, "new.txt"), "write"), /outside authorized roots/u);
+    assert.throws(() => readOnly.planPath(join(directory, "new.txt"), "write"),
+      (error: unknown) => error instanceof Error && /does not grant write/u.test(error.message) &&
+        (error as { reasonCode?: string }).reasonCode === "ROOT_CAPABILITY_NOT_GRANTED");
+    assert.throws(() => readOnly.planPath(join(parent, "elsewhere.txt"), "write"),
+      (error: unknown) => error instanceof Error && /outside authorized roots/u.test(error.message) &&
+        (error as { reasonCode?: string }).reasonCode === "OUTSIDE_AUTHORIZED_ROOTS");
   } finally {
     await rm(parent, { recursive: true, force: true });
   }
@@ -736,7 +741,7 @@ test("content read requires independent root enablement", async () => {
   await writeFile(file, "hello");
   try {
     const inspector = new FilesystemInspector([{ ...root(directory), contentRead: false }]);
-    assert.throws(() => inspector.planPath(file, "content_read"), /outside authorized roots/u);
+    assert.throws(() => inspector.planPath(file, "content_read"), /does not grant content_read/u);
     assert.equal(inspector.statPath(file).type, "file");
   } finally {
     await rm(directory, { recursive: true, force: true });
@@ -1307,4 +1312,108 @@ test("native write requires synchronous authorization before temporary creation 
     assert.equal(await readFile(target, "utf8"), "original");
     assert.deepEqual(await readdir(directory), ["source.txt"]);
   } finally { await rm(directory, { recursive: true, force: true }); }
+});
+
+function metadataRoot(path: string) {
+  return { rootId: "test-root", path, metadata: true, contentRead: true, denyRelativePaths: [] } as const;
+}
+
+test("project summary stops the tree at its byte budget and flags truncation", async () => {
+  const directory = await realpath(await mkdtemp(join(tmpdir(), "mac-operator-fs-tree-budget-")));
+  try {
+    await writeFile(join(directory, "package.json"), "{}");
+    for (let index = 0; index < 8; index += 1) await writeFile(join(directory, `file-${index}.txt`), "x");
+    const inspector = new FilesystemInspector([metadataRoot(directory)]);
+    const plan = inspector.planPath(directory, "metadata");
+    const full = inspector.summarizeProjectPlanned(plan, true, 1);
+    assert.equal(full.truncated, false);
+    assert.equal(full.treeEntries.length, 9);
+    const clipped = inspector.summarizeProjectPlanned(plan, true, 1, 300);
+    assert.ok(clipped.treeEntries.length > 0 && clipped.treeEntries.length < 9);
+    assert.ok(Buffer.byteLength(JSON.stringify(clipped.treeEntries)) <= 300 + clipped.treeEntries.length);
+    assert.equal(clipped.truncated, true);
+    assert.ok(clipped.warnings.some((warning) => /tree was truncated after \d+ entries/u.test(warning)));
+    assert.deepEqual(clipped.manifests, ["package.json"]);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("recent files are ranked newest first, exclude directories and honor the limit", async () => {
+  const directory = await realpath(await mkdtemp(join(tmpdir(), "mac-operator-fs-recent-order-")));
+  try {
+    await mkdir(join(directory, "nested"));
+    const now = Date.now();
+    const stamp = async (path: string, ageSeconds: number) => {
+      await writeFile(path, "x");
+      const when = new Date(now - ageSeconds * 1000);
+      await utimes(path, when, when);
+    };
+    await stamp(join(directory, "old.txt"), 3000);
+    await stamp(join(directory, "nested", "newest.txt"), 10);
+    await stamp(join(directory, "mid.txt"), 500);
+    const inspector = new FilesystemInspector([metadataRoot(directory)]);
+    const plan = inspector.planPath(directory, "metadata");
+    const all = inspector.recentFilesPlanned([plan], 86_400, 10, now);
+    assert.deepEqual(all.files.map((file) => file.path.slice(directory.length + 1)), ["nested/newest.txt", "mid.txt", "old.txt"]);
+    assert.ok(all.files.every((file) => file.type !== "directory"));
+    assert.equal(all.truncated, false);
+    const limited = inspector.recentFilesPlanned([plan], 86_400, 2, now);
+    assert.deepEqual(limited.files.map((file) => file.path.slice(directory.length + 1)), ["nested/newest.txt", "mid.txt"]);
+    assert.equal(limited.truncated, true);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("storage analysis never opens a Library/CloudStorage folder", async () => {
+  const directory = await realpath(await mkdtemp(join(tmpdir(), "mac-operator-fs-cloudstorage-")));
+  try {
+    await mkdir(join(directory, "Library", "CloudStorage", "OneDrive-test"), { recursive: true });
+    await writeFile(join(directory, "Library", "CloudStorage", "OneDrive-test", "remote.bin"), "remote");
+    await mkdir(join(directory, "Library", "Caches"));
+    await writeFile(join(directory, "Library", "Caches", "cache.bin"), "cache");
+    const inspector = new FilesystemInspector([metadataRoot(directory)]);
+    const plan = inspector.planPath(directory, "metadata");
+    const storage = inspector.analyzeStoragePlanned([plan], 20, 4);
+    const paths = storage.consumers.map((consumer) => consumer.path);
+    assert.ok(paths.some((path) => path.endsWith("/Library/Caches/cache.bin")));
+    assert.equal(paths.some((path) => path.includes("/CloudStorage/OneDrive-test")), false);
+    assert.ok(storage.warnings.some((warning) => /CloudStorage/u.test(warning)));
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("recent files keep a bounded candidate pool, skip CloudStorage and survive an unreadable directory", async () => {
+  const directory = await realpath(await mkdtemp(join(tmpdir(), "mac-operator-fs-recent-bounded-")));
+  try {
+    const now = Date.now();
+    await mkdir(join(directory, "locked"));
+    await writeFile(join(directory, "locked", "hidden.txt"), "x");
+    await mkdir(join(directory, "Library", "CloudStorage", "Drive-test"), { recursive: true });
+    await writeFile(join(directory, "Library", "CloudStorage", "Drive-test", "remote.bin"), "x");
+    for (let index = 0; index < 12; index += 1) {
+      const path = join(directory, `f-${String(index).padStart(2, "0")}.txt`);
+      await writeFile(path, "x");
+      const when = new Date(now - (100 - index) * 1000);
+      await utimes(path, when, when);
+    }
+    const inspector = new FilesystemInspector([metadataRoot(directory)]);
+    const plan = inspector.planPath(directory, "metadata");
+    const bounded = inspector.recentFilesPlanned([plan], 86_400, 3, now);
+    assert.deepEqual(bounded.files.map((file) => file.path.slice(directory.length + 1)), ["f-11.txt", "f-10.txt", "f-09.txt"]);
+    assert.equal(bounded.truncated, true);
+    assert.equal(bounded.files.some((file) => file.path.includes("CloudStorage")), false);
+    await chmod(join(directory, "locked"), 0o000);
+    try {
+      const tolerant = inspector.recentFilesPlanned([plan], 86_400, 3, now);
+      assert.equal(tolerant.files.length, 3);
+      assert.equal(tolerant.truncated, true);
+    } finally {
+      await chmod(join(directory, "locked"), 0o700);
+    }
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
 });

@@ -7,7 +7,7 @@ Source: KBID `mac-operator-mcp`, item `65554efe-6a0a-404c-af6a-7670777944b4`
 ## Control and Broker introspection
 
 1. [`mac_capabilities`](tool-contracts/mac_capabilities.json) — enabled capabilities, scopes, and host permission state.
-2. [`mac_health`](tool-contracts/mac_health.json) — bounded Edge, Broker, and helper health.
+2. [`mac_health`](tool-contracts/mac_health.json) — bounded Local Broker health and version (Edge and helper status are not reported; see `mac_capabilities`).
 3. [`mac_policy_explain`](tool-contracts/mac_policy_explain.json) — non-executing policy decision for a proposed action.
 
 ## L0 Observe

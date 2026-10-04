@@ -279,6 +279,7 @@ for (const mode of ["timeout", "cancel"] as const) {
     if (mode === "cancel") setTimeout(() => { cancelled = true; }, 30);
     const result = await pending;
     assert.equal(result.state, mode === "timeout" ? "timed_out" : "cancelled"); assert.equal(result.containerCleanupVerified, true);
+    if (mode === "timeout") assert.match(result.stderr, /^Container task exceeded its deadline of 40 ms in phase "[a-z]+"; it covers Engine checks, container start, workspace staging and the command/u);
     assert.ok(engine.events.includes("remove")); assert.ok(!engine.events.includes("download"));
   });
 }

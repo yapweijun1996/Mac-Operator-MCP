@@ -285,11 +285,15 @@ const MAX_PROJECT_DEPTH = 16;
 const MAX_PROJECT_DIRECTORIES = 10_000;
 const MAX_PROJECT_ENTRIES = 50_000;
 const MAX_PROJECT_SUMMARY_TREE_ENTRIES = 1_000;
+/** Serialized tree budget, far below the 512 KiB tool cap: clients clip large payloads, losing the trailing truncated flag. */
+const MAX_PROJECT_SUMMARY_TREE_BYTES = 49_152;
 const MAX_STORAGE_DEPTH = 8;
 const MAX_STORAGE_ENTRIES = 50_000;
 const MAX_STORAGE_DIRECTORIES = 10_000;
 /** Stops traversal before the 30 s tool deadline so a large tree yields a partial result instead of TIMEOUT. */
 const MAX_STORAGE_TRAVERSAL_MS = 20_000;
+/** Recent-file scans visit the whole allowed tree to rank by recency; stop before the 20 s tool deadline. */
+const MAX_RECENT_TRAVERSAL_MS = 12_000;
 const TEMPORARY_WRITE_NAME_PATTERN = /^\.mac-operator-write-[A-Za-z0-9._-]{1,96}$/u;
 const MIN_UNLINK_RECOVERY_AGE_MS = 1_000;
 const MAX_UNLINK_RECOVERY_AGE_MS = 604_800_000;
@@ -353,14 +357,21 @@ export class FilesystemInspector {
     const lexicalPath = resolve(requestedPath);
     if (capability === "content_read" || capability === "write") assertContentPathAllowed(lexicalPath);
     if (capability === "write") assertSourceWritePathAllowed(lexicalPath);
-    const candidates = this.roots
-      .filter((root) => (capability === "metadata" ? root.metadata : capability === "content_read" ? root.contentRead === true : root.write === true) && isContained(root.path, lexicalPath))
+    const containing = this.roots.filter((root) => isContained(root.path, lexicalPath));
+    const candidates = containing
+      .filter((root) => capability === "metadata" ? root.metadata : capability === "content_read" ? root.contentRead === true : root.write === true)
       .sort((left, right) => right.path.length - left.path.length);
-    if (candidates.length === 0) throw new BrokerError("POLICY_DENIED", "Filesystem path is outside authorized roots; mac_capabilities lists authorized_roots");
+    if (candidates.length === 0) {
+      // A root that contains the path but lacks this capability is not "outside": say which one it is.
+      if (containing.length === 0) {
+        throw new BrokerError("POLICY_DENIED", "Filesystem path is outside authorized roots; mac_capabilities lists authorized_roots", false, "OUTSIDE_AUTHORIZED_ROOTS");
+      }
+      throw new BrokerError("POLICY_DENIED", `Filesystem root does not grant ${capability} for this path; mac_capabilities lists authorized_roots`, false, "ROOT_CAPABILITY_NOT_GRANTED");
+    }
     const root = candidates[0]!;
     const lexicalRelative = relative(root.path, lexicalPath);
     if (root.denyRelativePaths.some((denied) => isRelativeContained(denied, lexicalRelative))) {
-      throw new BrokerError("POLICY_DENIED", "Filesystem path is inside a denied zone");
+      throw new BrokerError("POLICY_DENIED", "Filesystem path is inside a denied zone", false, "DENIED_ZONE");
     }
     let volume: NativeStorageVolume;
     let rootMetadata: NativePathMetadata;
@@ -409,7 +420,7 @@ export class FilesystemInspector {
       throw new BrokerError("POLICY_DENIED", "Filesystem file escaped its authorized root or volume");
     }
     if (plan.root.denyRelativePaths.some((denied) => isRelativeContained(denied, resolvedRelative))) {
-      throw new BrokerError("POLICY_DENIED", "Filesystem path is inside a denied zone");
+      throw new BrokerError("POLICY_DENIED", "Filesystem path is inside a denied zone", false, "DENIED_ZONE");
     }
     assertContentPathAllowed(read.path);
     return { rootId: plan.rootId, path: read.path, content: read.content, sizeBytes: read.sizeBytes,
@@ -437,7 +448,7 @@ export class FilesystemInspector {
       throw new BrokerError("POLICY_DENIED", "Filesystem file escaped its authorized root or volume");
     }
     if (plan.root.denyRelativePaths.some((denied) => isRelativeContained(denied, resolvedRelative))) {
-      throw new BrokerError("POLICY_DENIED", "Filesystem path is inside a denied zone");
+      throw new BrokerError("POLICY_DENIED", "Filesystem path is inside a denied zone", false, "DENIED_ZONE");
     }
     assertContentPathAllowed(hash.path);
     return {
@@ -502,7 +513,7 @@ export class FilesystemInspector {
       throw new BrokerError("POLICY_DENIED", "Filesystem directory escaped its authorized root or volume");
     }
     if (plan.root.denyRelativePaths.some((denied) => isRelativeContained(denied, resolvedRelative))) {
-      throw new BrokerError("POLICY_DENIED", "Filesystem path is inside a denied zone");
+      throw new BrokerError("POLICY_DENIED", "Filesystem path is inside a denied zone", false, "DENIED_ZONE");
     }
     assertContentPathAllowed(listing.path);
     return {
@@ -579,7 +590,8 @@ export class FilesystemInspector {
     plans: readonly FilesystemPathPlan[],
     sinceSeconds: number,
     limit: number,
-    nowMs: number
+    nowMs: number,
+    traversalBudgetMs: number = MAX_RECENT_TRAVERSAL_MS
   ): SafeRecentFiles {
     if (!Number.isSafeInteger(sinceSeconds) || sinceSeconds < 1 || sinceSeconds > 31_536_000) {
       throw new BrokerError("PRECONDITION_FAILED", "Recent-file window is outside the supported range");
@@ -588,11 +600,30 @@ export class FilesystemInspector {
       throw new BrokerError("PRECONDITION_FAILED", "Recent-file clock value is malformed");
     }
     const cutoffMs = nowMs - sinceSeconds * 1000;
+    // Rank by recency instead of traversal order: collect every in-window file, then keep the newest `limit`.
+    // Directories are skipped; their mtime only mirrors child churn and duplicates the files that caused it.
+    const candidates = new Map<string, { entry: SafeFileMatch; modifiedAtMs: number }>();
+    const rank = (left: { entry: SafeFileMatch; modifiedAtMs: number }, right: { entry: SafeFileMatch; modifiedAtMs: number }): number =>
+      right.modifiedAtMs - left.modifiedAtMs || (left.entry.path < right.entry.path ? -1 : left.entry.path > right.entry.path ? 1 : 0);
+    let dropped = false;
+    const deadlineMs = Date.now() + traversalBudgetMs;
     const result = this.traverseMetadata(plans, limit, (entry) => {
-      const modifiedAtMs = entry.modifiedAt === null ? Number.NaN : Date.parse(entry.modifiedAt);
-      return Number.isFinite(modifiedAtMs) && modifiedAtMs >= cutoffMs ? entry : undefined;
-    }, (entry) => entry.path);
-    return { files: result.matches, truncated: result.truncated };
+      if (entry.type === "directory" || entry.modifiedAt === null) return undefined;
+      const modifiedAtMs = Date.parse(entry.modifiedAt);
+      if (Number.isFinite(modifiedAtMs) && modifiedAtMs >= cutoffMs) {
+        candidates.set(entry.path, { entry, modifiedAtMs });
+        // Keep memory bounded for the 32 MB worker: prune to the newest `limit` whenever the pool doubles.
+        if (candidates.size >= limit * 2) {
+          const kept = [...candidates.values()].sort(rank).slice(0, limit);
+          dropped = true;
+          candidates.clear();
+          for (const candidate of kept) candidates.set(candidate.entry.path, candidate);
+        }
+      }
+      return undefined;
+    }, undefined, () => Date.now() > deadlineMs, true);
+    const ranked = [...candidates.values()].sort(rank);
+    return { files: ranked.slice(0, limit).map((candidate) => candidate.entry), truncated: result.truncated || dropped || ranked.length > limit };
   }
 
   searchTextPlanned(
@@ -738,7 +769,8 @@ export class FilesystemInspector {
   summarizeProjectPlanned(
     plan: FilesystemPathPlan,
     includeTree: boolean,
-    treeDepth: number
+    treeDepth: number,
+    treeByteBudget: number = MAX_PROJECT_SUMMARY_TREE_BYTES
   ): SafeProjectSummary {
     if (typeof includeTree !== "boolean") {
       throw new BrokerError("PRECONDITION_FAILED", "include_tree must be a boolean");
@@ -758,10 +790,14 @@ export class FilesystemInspector {
     let visitedEntries = 0;
     let visitedDirectoriesCount = 0;
     let truncated = false;
+    let treeFull = false;
+    let treeBytes = 0;
     let hasGit = false;
 
     while (pending.length > 0 && !truncated) {
       const current = pending.shift()!;
+      // A full tree stops descending; the root listing is still scanned for manifests and VCS.
+      if (treeFull && current.depth > 0) break;
       let cursor: string | undefined;
       while (!truncated) {
         const listing = this.listPlanned(current.plan, cursor, 500, true);
@@ -790,13 +826,17 @@ export class FilesystemInspector {
             if (PROJECT_SUMMARY_MANIFESTS.has(entry.name)) manifests.add(entry.name);
           }
           addProjectLanguage(languages, entry.name, entry.type);
-          if (includeTree && treeEntries.length < MAX_PROJECT_SUMMARY_TREE_ENTRIES) {
-            treeEntries.push({ path: childPath, type: entry.type, depth: current.depth });
-          } else if (includeTree) {
-            truncated = true;
-            break;
+          if (includeTree && !treeFull) {
+            const item = { path: childPath, type: entry.type, depth: current.depth };
+            const itemBytes = Buffer.byteLength(JSON.stringify(item), "utf8") + 1;
+            if (treeEntries.length >= MAX_PROJECT_SUMMARY_TREE_ENTRIES || treeBytes + itemBytes > treeByteBudget) {
+              treeFull = true;
+            } else {
+              treeBytes += itemBytes;
+              treeEntries.push(item);
+            }
           }
-          if (!includeTree || entry.type !== "directory" || current.depth >= treeDepth || PROJECT_SKIP_DIRECTORIES.has(entry.name)) continue;
+          if (!includeTree || treeFull || entry.type !== "directory" || current.depth >= treeDepth || PROJECT_SKIP_DIRECTORIES.has(entry.name)) continue;
           pending.push({ plan: { ...current.plan, requestedPath: childPath }, depth: current.depth + 1 });
         }
         if (truncated || listing.nextCursor === null) break;
@@ -805,6 +845,9 @@ export class FilesystemInspector {
     }
     if (hasGit) warnings.push("VCS branch and dirty state are omitted by the metadata-only summary");
     if (truncated) warnings.push("Project summary traversal was truncated by fixed metadata budgets");
+    if (treeFull) {
+      warnings.push(`Project summary tree was truncated after ${treeEntries.length} entries (limit ${MAX_PROJECT_SUMMARY_TREE_ENTRIES} entries / ${treeByteBudget} bytes); lower tree_depth or summarize a subdirectory`);
+    }
     return {
       projectRoot: root.path,
       vcs: { system: hasGit ? "git" : "none" },
@@ -812,7 +855,7 @@ export class FilesystemInspector {
       languages: [...languages].sort(),
       treeEntries,
       warnings: warnings.slice(0, 32),
-      truncated
+      truncated: truncated || treeFull
     };
   }
 
@@ -832,6 +875,7 @@ export class FilesystemInspector {
       throw new BrokerError("PRECONDITION_FAILED", "Storage max_depth must be an integer between 0 and 8");
     }
 
+    const deadlineMs = Date.now() + traversalBudgetMs;
     const volumes = new Map<string, SafeStorageVolume>();
     const analyzedRoots: string[] = [];
     const warnings: string[] = [];
@@ -867,7 +911,6 @@ export class FilesystemInspector {
     const addWarning = (warning: string): void => {
       if (!warnings.includes(warning) && warnings.length < 32) warnings.push(warning);
     };
-    const deadlineMs = Date.now() + traversalBudgetMs;
     const budgetExpired = (): boolean => {
       if (Date.now() <= deadlineMs) return false;
       truncated = true;
@@ -903,6 +946,14 @@ export class FilesystemInspector {
             truncated = true;
             addWarning("Storage traversal encountered a path outside the contract limit");
             break;
+          }
+          if (entry.type === "directory" && isPrivacyGatedProviderFolder(childPath)) {
+            // Opening File Provider domains can block on a macOS privacy prompt, parking the worker past its deadline.
+            typeByPath.set(childPath, "directory");
+            parentByPath.set(childPath, listing.path);
+            sizeByPath.set(childPath, entry.sizeBytes);
+            addWarning("Skipped macOS cloud-provider folder Library/CloudStorage: reading File Provider data can block on a macOS privacy prompt; pass a specific folder in roots to analyze it");
+            continue;
           }
           const childPlan = { ...current.plan, requestedPath: childPath };
           let child: SafePathMetadata;
@@ -973,7 +1024,8 @@ export class FilesystemInspector {
     maxResults: number,
     select: (entry: SafeFileMatch, plan: FilesystemPathPlan) => T | readonly T[] | undefined,
     keyOf?: (value: T) => string,
-    shouldStop?: () => boolean
+    shouldStop?: () => boolean,
+    tolerateUnreadableDirectories = false
   ): { roots: string[]; matches: T[]; truncated: boolean } {
     if (plans.length < 1 || plans.length > 32) {
       throw new BrokerError("PRECONDITION_FAILED", "Filesystem search requires between 1 and 32 roots");
@@ -1000,7 +1052,15 @@ export class FilesystemInspector {
       const current = pending.shift()!;
       let cursor: string | undefined;
       while (!truncated) {
-        const listing = this.listPlanned(current.plan, cursor, 500, false);
+        let listing: SafeDirectoryListing;
+        try {
+          listing = this.listPlanned(current.plan, cursor, 500, false);
+        } catch (error) {
+          // A whole-tree scan must not die on one unreadable directory; report it as a partial result.
+          if (!tolerateUnreadableDirectories || !(error instanceof BrokerError) || error.errorClass !== "POLICY_DENIED") throw error;
+          truncated = true;
+          break;
+        }
         if (!visitedDirectories.has(listing.path)) visitedDirectories.add(listing.path);
         else if (cursor === undefined) break;
         for (const entry of listing.entries) {
@@ -1040,6 +1100,11 @@ export class FilesystemInspector {
             break;
           }
           if (entry.type === "directory") {
+            if (isPrivacyGatedProviderFolder(childPath)) {
+              // Opening File Provider domains can block on a macOS privacy prompt; never descend into them.
+              truncated = true;
+              continue;
+            }
             if (current.depth >= MAX_SEARCH_DEPTH) {
               truncated = true;
               break;
@@ -1069,7 +1134,7 @@ export class FilesystemInspector {
       throw new BrokerError("POLICY_DENIED", "Filesystem target escaped its authorized root or volume");
     }
     if (plan.root.denyRelativePaths.some((denied) => isRelativeContained(denied, resolvedRelative))) {
-      throw new BrokerError("POLICY_DENIED", "Filesystem path is inside a denied zone");
+      throw new BrokerError("POLICY_DENIED", "Filesystem path is inside a denied zone", false, "DENIED_ZONE");
     }
     if (!Number.isSafeInteger(metadata.sizeBytes) || metadata.sizeBytes < 0 || metadata.sizeBytes > 1_000_000_000_000) {
       throw new BrokerError("OUTPUT_LIMIT", "Filesystem metadata exceeds the contract limit");
@@ -1155,7 +1220,7 @@ export class FilesystemInspector {
           const canonicalRelative = relative(plan.rootIdentity.rootPath, canonicalPath);
           if (!isContained(plan.rootIdentity.rootPath, canonicalPath) ||
               plan.root.denyRelativePaths.some((denied) => isRelativeContained(denied, canonicalRelative))) {
-            throw new BrokerError("POLICY_DENIED", "Filesystem write target is inside a denied zone");
+            throw new BrokerError("POLICY_DENIED", "Filesystem write target is inside a denied zone", false, "DENIED_ZONE");
           }
         }
       );
@@ -1667,6 +1732,11 @@ function sanitizeSearchSnippet(value: string): string {
   return value
     .replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/gu, "�")
     .slice(0, 2_000);
+}
+
+/** macOS File Provider domain roots (Google Drive, OneDrive, iCloud Drive) live directly under Library/CloudStorage. */
+function isPrivacyGatedProviderFolder(path: string): boolean {
+  return /\/Library\/CloudStorage$/u.test(path);
 }
 
 function isContained(root: string, target: string): boolean {

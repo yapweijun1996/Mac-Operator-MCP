@@ -8,6 +8,9 @@ import type { FilesystemWorkerCommand, FilesystemWorkerResult } from "./filesyst
 import { isPlainDataRecord } from "./plain-record.js";
 import { BoundedWorkerExecutor, type WorkerPreMutationGate } from "./worker-executor.js";
 
+/** Storage traversal stops this long before the tool deadline so it can still return a partial result. */
+const STORAGE_DEADLINE_MARGIN_MS = 15_000;
+
 export interface FilesystemExecutionControl {
   timeoutMs: number;
   shouldCancel: () => boolean;
@@ -233,8 +236,17 @@ export class WorkerFilesystemExecutor implements FilesystemExecutor {
     maxDepth: number,
     control: FilesystemExecutionControl
   ): Promise<FilesystemWorkerResult> {
-    return this.executor.run({ operation: "storage_analysis", plans, topN, maxDepth }, control.timeoutMs, control.shouldCancel)
-      .then(validateFilesystemWorkerResult);
+    // Keep the traversal clear of the tool deadline so a large tree returns a partial result instead of TIMEOUT.
+    const traversalBudgetMs = Math.max(1_000, control.timeoutMs - STORAGE_DEADLINE_MARGIN_MS);
+    return this.executor.run({ operation: "storage_analysis", plans, topN, maxDepth, traversalBudgetMs }, control.timeoutMs, control.shouldCancel)
+      .then(validateFilesystemWorkerResult)
+      .catch((error: unknown) => {
+        if (error instanceof BrokerError && error.errorClass === "TIMEOUT") {
+          throw new BrokerError("TIMEOUT",
+            "Storage analysis did not finish before its deadline; a filesystem call did not return (on macOS usually a pending privacy prompt for the Broker process). Retry with narrower roots", true);
+        }
+        throw error;
+      });
   }
 
   write(

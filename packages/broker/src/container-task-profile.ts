@@ -79,7 +79,7 @@ export class ContainerTaskProfileRegistry extends TaskProfileRegistry {
     const safe = snapshotRequest(request);
     const entry = this.entries.get(safe.profile);
     if (!entry) throw new BrokerError("TARGET_NOT_FOUND", "Named container task profile was not found");
-    if (safe.maxRuntimeMs !== undefined && safe.maxRuntimeMs > entry.timeoutMs) deny("Task runtime exceeds the approved budget");
+    if (safe.maxRuntimeMs !== undefined && safe.maxRuntimeMs > entry.timeoutMs) deny(`Task runtime ${safe.maxRuntimeMs} ms exceeds the approved budget of ${entry.timeoutMs} ms for profile ${entry.profile}; max_runtime is in milliseconds and the budget includes workspace staging`);
     const owner = await this.authorize(safe.cwd, entry.projectRoot, safe.taskId!);
     await validateManifest(entry.projectRoot, entry);
     if (safe.cwd !== entry.projectRoot) await validateManifest(safe.cwd, entry);

@@ -23,7 +23,7 @@
   "audit_class": "observe",
   "tool_delivery_wave": "wave_2",
   "implementation_status": "planned",
-  "purpose": "bounded tail from an allowlisted log source.",
+  "purpose": "bounded tail from an allowlisted log source: \"system\" or \"process/<name>\" (not a launchd service id); mac_capabilities lists authorized_log_sources.",
   "input_summary": "source:string, lines?:1..2000, since_seconds?:integer.",
   "output_summary": "sanitized log entries plus truncation state.",
   "input_schema": {
@@ -33,17 +33,20 @@
     "additionalProperties": false,
     "properties": {
       "source": {
+        "description": "Log source: \"system\" or \"process/<name>\" (name 1-120 chars of A-Z a-z 0-9 . _ + -). Only sources listed in mac_capabilities authorized_log_sources are readable. A launchd service id like system/<label> is NOT a log source.",
         "type": "string",
         "minLength": 1,
         "maxLength": 128,
         "pattern": "^[A-Za-z0-9._:@/+-]+$"
       },
       "lines": {
+        "description": "Maximum number of entries returned, 1-2000 (the newest of the entries captured within the window).",
         "type": "integer",
         "minimum": 1,
         "maximum": 2000
       },
       "since_seconds": {
+        "description": "Look-back window in seconds, 0-31536000; the effective window is capped at 86400 (24 h).",
         "type": "integer",
         "minimum": 0,
         "maximum": 31536000

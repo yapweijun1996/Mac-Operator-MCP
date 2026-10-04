@@ -167,7 +167,9 @@ test("missing immutable image runtime and invalid resource budgets deny executio
   try {
     const registry = new ContainerTaskProfileRegistry({ ...f.options, validateRuntime: async () => false });
     await assert.rejects(registry.resolve(f.request), errorClass("POLICY_DENIED"));
-    await assert.rejects(registry.resolve({ ...f.request, maxRuntimeMs: 10_001 }), errorClass("POLICY_DENIED"));
+    await assert.rejects(registry.resolve({ ...f.request, maxRuntimeMs: 10_001 }), (error: unknown) =>
+      error instanceof BrokerError && error.errorClass === "POLICY_DENIED" &&
+      /Task runtime 10001 ms exceeds the approved budget of 10000 ms for profile fixture\.test; max_runtime is in milliseconds/u.test(error.message));
     await assert.rejects(registry.resolve({ ...f.request, maxRuntimeMs: 600_001 }), errorClass("PRECONDITION_FAILED"));
     assert.throws(() => new ContainerTaskProfileRegistry({ ...f.options, entries: [{ ...f.entry, outputCapBytes: 2_097_153 }] }));
     const reduced = await new ContainerTaskProfileRegistry(f.options).resolve({ ...f.request, maxRuntimeMs: 1000 });

@@ -61,10 +61,15 @@ const MAX_MESSAGE_LENGTH = 8192;
 
 export function validateLogRequest(source: string, lines: number, sinceSeconds: number): void {
   if (typeof source !== "string" || source.length < 1 || source.length > 128 || !SOURCE_PATTERN.test(source) ||
-      source.includes("..") || source.includes("\\") ||
-      !Number.isSafeInteger(lines) || lines < 1 || lines > MAX_LINES ||
-      !Number.isSafeInteger(sinceSeconds) || sinceSeconds < 0 || sinceSeconds > MAX_SINCE_SECONDS) {
-    throw new BrokerError("PRECONDITION_FAILED", "Log tail arguments are outside the supported range");
+      source.includes("..") || source.includes("\\")) {
+    throw new BrokerError("PRECONDITION_FAILED",
+      'source must be "system" or "process/<name>" (name: 1-120 characters from A-Z a-z 0-9 . _ + -); mac_capabilities lists authorized_log_sources. A launchd id such as system/<label> is a service id for mac_service_status, not a log source');
+  }
+  if (!Number.isSafeInteger(lines) || lines < 1 || lines > MAX_LINES) {
+    throw new BrokerError("PRECONDITION_FAILED", `lines must be an integer between 1 and ${MAX_LINES}`);
+  }
+  if (!Number.isSafeInteger(sinceSeconds) || sinceSeconds < 0 || sinceSeconds > MAX_SINCE_SECONDS) {
+    throw new BrokerError("PRECONDITION_FAILED", `since_seconds must be an integer between 0 and ${MAX_SINCE_SECONDS}`);
   }
 }
 
@@ -115,12 +120,12 @@ function parseLogResult(
   }
   for (const draft of drafts) {
     if (draft.text.length === 0) continue;
-    const redacted = redactLogText(draft.text.slice(0, MAX_MESSAGE_LENGTH));
+    const redacted = redactLogText(draft.text);
     const parsedTimestamp = Date.parse(draft.timestamp);
     entries.push({
       timestamp: Number.isNaN(parsedTimestamp) ? null : new Date(parsedTimestamp).toISOString(),
       level: draft.level.slice(0, 64),
-      message: redacted.text
+      message: redacted.text.slice(0, MAX_MESSAGE_LENGTH)
     });
   }
   const selected = entries.slice(Math.max(0, entries.length - lines));

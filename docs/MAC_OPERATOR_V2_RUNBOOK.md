@@ -247,7 +247,22 @@ job, and clean status including ignored files. Dirty deletion is unavailable;
 no request boolean overrides it. The primary repository is never a valid target.
 Removal verifies checkout/metadata absence and unchanged primary state. It keeps
 a removal tombstone; an exact completed retry succeeds only while the removed
-paths remain absent. Branch history is not automatically deleted.
+paths remain absent. Branch history is not automatically deleted: the branch a
+removed worktree was created on survives, and the owner deletes it from the owner
+terminal with `git branch -d <name>` (never `-D` or `git worktree prune`).
+
+### Gateway development clone
+
+The registered development project (for example `DevelopmentProjects/Mac-Operator-MCP`)
+is a separate clone with its own object store and is never updated automatically. The
+scope difference from the owner project (`Documents/GitHub/...`) is intentional: only
+registered development projects receive the V2 project, agent, audit and task scopes.
+Update the clone with fast-forward only, after confirming `git status --short` is empty,
+no managed worktree or job is active, and that `package.json` and the profile scripts
+still hash to the registered `manifestSha256`:
+
+    git -C <clone> fetch <source-repo> main
+    git -C <clone> merge --ff-only FETCH_HEAD
 
 ## Rollback and acceptance
 

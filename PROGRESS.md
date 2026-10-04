@@ -6812,3 +6812,29 @@ listeners and Docker storage facts stay unavailable behind their existing warnin
 `mac_project_summary` only returns a tree when `include_tree` is set. Focused tests pass;
 the remaining failures are the existing native/virtualization and volume-identity ones that
 also fail on the unmodified baseline, plus timing-flaky snapshot tests. Not deployed.
+
+## October 4, 2026: third MCP review fixes (full-test report; source only until deployed)
+
+Triaged a 12-item mba-mcp full-test report with ten read-only investigators, implemented the
+confirmed fixes and had six adversarial lenses (47 agents) review them; every confirmed
+finding that mattered was fixed before commit. Fixed: `mac_storage_analysis` timeouts were not slow traversal
+but macOS privacy prompts (TCC) raised when the Broker opened `Library/CloudStorage` File
+Provider domains, parking the worker thread past its deadline; every traversal (storage, find,
+recent, search, discover) now skips `Library/CloudStorage`, the storage budget derives from the
+tool timeout, and a timeout now explains the likely cause. `mac_project_summary` trees are capped at
+48 KiB serialized (flag and warning set), `mac_recent_files` ranks newest first, excludes
+directories, keeps a bounded pool for the 32 MB worker and tolerates an unreadable directory,
+`mac_policy_explain` adds static reason codes (OUTSIDE_AUTHORIZED_ROOTS, ROOT_CAPABILITY_NOT_GRANTED,
+DENIED_ZONE, SECRET_PATH_ACCESS, TARGET_NOT_AUTHORIZED, ...) via `BrokerError.reasonCode`, and the
+direct "outside authorized roots" error no longer mislabels a path inside a root that lacks the
+capability. `mac_log_tail` validation names the bad argument; capabilities lists
+`authorized_log_sources`; `mac_execution_audit` mirrors data.truncated; `mac_read_file` warns that
+sha256 covers only returned bytes; `mac_test_run` rejections state the profile budget in ms and
+deadline failures state the phase. Contract text for health, size_bytes, recent files and
+max_runtime was corrected. Not done (decisions or larger work): worker progress snapshots for any
+blocked native call, optional max_runtime, real network listeners and Docker storage, deletion of
+leftover task branches and syncing the DevelopmentProjects clone (documented in the runbook), and
+capabilities lists ignoring finite-set/deny refinements. Owner action for full protection: add
+`Library/CloudStorage` to the signed policy's deny_relative_paths. Tests: 1606 pass; failures are
+the known baseline set (volume-identity pressure test, contract-conformance, four native
+virtualization tests) plus load-sensitive worktree tests that pass in isolation. Auth tests need Node 24.

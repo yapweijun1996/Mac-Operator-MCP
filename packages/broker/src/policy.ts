@@ -341,7 +341,7 @@ export function authorizeTool(
   if (store.isSwitchDisabled("global") || policy.killSwitches.global) throw new BrokerError("REVOKED", "Broker admission is disabled");
   const tool = policy.tools.get(toolName);
   if (!tool || !tool.implemented) throw new BrokerError("UNSUPPORTED_CAPABILITY", "Tool is not implemented");
-  if (!tool.enabled) throw new BrokerError("POLICY_DENIED", "Tool is not enabled");
+  if (!tool.enabled) throw new BrokerError("POLICY_DENIED", "Tool is not enabled", false, "TOOL_DISABLED");
   if (contractVersion !== tool.contractVersion) throw new BrokerError("UNSUPPORTED_CAPABILITY", "Contract version is not supported");
   for (const scope of tool.requiredScopes) {
     if (!principalScopes.includes(scope)) throw new BrokerError("SCOPE_DENIED", `Required scope is missing: ${scope}`);
@@ -353,6 +353,13 @@ export function authorizeTool(
     }
   }
   return tool;
+}
+
+/** Which mac_capabilities list tells a caller what it may target (static names only). */
+function authorizedListFor(kind: NormalizedTarget["kind"]): string {
+  if (kind === "log_source") return "authorized_log_sources";
+  if (kind === "service") return "authorized_services";
+  return "authorized_roots and authorized_projects";
 }
 
 export function authorizeTarget(
@@ -385,11 +392,11 @@ export function authorizeTarget(
         (rule.target.kind === "docker_object" && rule.target.reference === "all" && target.kind === "docker_object"))
   );
   if (matchingRules.some((rule) => rule.effect === "deny")) {
-    throw new BrokerError("POLICY_DENIED", "Target is explicitly denied");
+    throw new BrokerError("POLICY_DENIED", "Target is explicitly denied", false, "TARGET_EXPLICITLY_DENIED");
   }
   for (const scope of scopes) {
     if (!matchingRules.some((rule) => rule.scope === scope && rule.effect === "allow")) {
-      throw new BrokerError("POLICY_DENIED", "Target is not allowed for every required scope; mac_capabilities lists authorized_roots and authorized_projects");
+      throw new BrokerError("POLICY_DENIED", `Target is not allowed for every required scope; mac_capabilities lists ${authorizedListFor(target.kind)}`, false, "TARGET_NOT_AUTHORIZED");
     }
   }
 }

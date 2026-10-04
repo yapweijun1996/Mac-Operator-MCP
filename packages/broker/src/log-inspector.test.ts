@@ -74,8 +74,11 @@ test("log inspector rejects arbitrary sources and unbounded windows", () => {
     ["system", 10, 31_536_001]
   ];
   for (const args of invalid) {
-    assert.throws(() => validateLogRequest(...args), /outside the supported range/u);
+    assert.throws(() => validateLogRequest(...args), /source must be|lines must be|since_seconds must be/u);
   }
+  assert.throws(() => validateLogRequest("system/com.apple.logd", 10, 60), /service id for mac_service_status/u);
+  assert.throws(() => validateLogRequest("system", 0, 60), /lines must be an integer between 1 and 2000/u);
+  assert.throws(() => validateLogRequest("system", 10, 31_536_001), /since_seconds must be an integer between 0 and 31536000/u);
 });
 
 test("log inspector folds continuation lines into their record and drops a cut-off final line", async () => {

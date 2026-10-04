@@ -131,6 +131,7 @@
                   ]
                 },
                 "size_bytes": {
+                  "description": "Size in bytes of this entry itself, as reported by stat. For a directory it is only the size of the directory entry and does NOT include its contents; use mac_storage_analysis for aggregate sizes.",
                   "type": "integer",
                   "minimum": 0,
                   "maximum": 1000000000000

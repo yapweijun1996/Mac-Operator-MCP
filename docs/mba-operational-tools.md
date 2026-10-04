@@ -68,6 +68,12 @@ development repository; they run in an owned container with network denied.
 The build profile writes its artifact in the disposable container's `/tmp`, so
 validation cannot import generated files into a coding worktree.
 
+`mac_test_run` and `mac_build_run` take `max_runtime` in **milliseconds**. The approved
+maximum is set per profile (currently 120000 ms for the catalog profiles) and is reported
+in the rejection message when exceeded. The deadline covers Engine checks, container start,
+workspace staging and the command, so source staging, not the test body, dominates wall
+time; a deadline failure reports the phase that was running.
+
 These named profiles do not claim a full TypeScript or macOS native build.
 The initial full TypeScript container probe remains failed; secret-content
 filtering and the existing resource limits remain enforced. Full host-native

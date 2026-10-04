@@ -53,6 +53,7 @@
         "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$"
       },
       "max_runtime": {
+        "description": "Execution deadline in MILLISECONDS (1-600000, not seconds). It covers container start, source staging and the command, so staging time counts. The approved maximum is set per profile and may be lower than 600000; a larger value is rejected with the profile's approved budget.",
         "type": "integer",
         "minimum": 1,
         "maximum": 600000
