@@ -7,10 +7,11 @@ import { fileURLToPath } from "node:url";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import test from "node:test";
-import { canonicalJson, sha256, signRequest, type BrokerResult, type Scope, type UnsignedBrokerRequest } from "@mac-operator/contracts";
+import { BrokerError, canonicalJson, sha256, signRequest, type BrokerResult, type Scope, type UnsignedBrokerRequest } from "@mac-operator/contracts";
 import { Broker } from "./broker.js";
 import { DevelopmentGateway, type CodingAgentProvider } from "./development-gateway.js";
 import { DEVELOPMENT_TOOL_NAMES } from "./development-policy.js";
+import type { GitWriteInspector } from "./git-inspector.js";
 import { ManagedWorktrees } from "./managed-worktrees.js";
 import { createDefaultPolicy } from "./default-policy.js";
 import { EdgeKeyring } from "./edge-keyring.js";
@@ -39,7 +40,7 @@ const scopes: Scope[] = ["mac.control.read", "mac.policy.explain", "mac.project.
 function git(cwd: string, args: string[]): string {
   return execFileSync("/usr/bin/git", args, { cwd, encoding: "utf8", env: { GIT_CONFIG_NOSYSTEM: "1", GIT_CONFIG_GLOBAL: "/dev/null", GIT_CONFIG_SYSTEM: "/dev/null", GIT_TERMINAL_PROMPT: "0" } });
 }
-async function setup(run?: TaskRunner["run"], agent = false) {
+async function setup(run?: TaskRunner["run"], agent = false, gitWriteInspector?: GitWriteInspector) {
   const root = await realpath(await mkdtemp(join(tmpdir(), "mac-v2-broker-")));
   const project = join(root, "project"), state = join(root, "state"), trees = join(root, "trees");
   for (const path of [project, state, trees]) await mkdir(path, { mode: 0o700 });
@@ -59,7 +60,7 @@ async function setup(run?: TaskRunner["run"], agent = false) {
   const tools = new Map([...base.tools].map(([name, p]) => [name, { ...p, enabled: DEVELOPMENT_TOOL_NAMES.includes(name) || ["mac_git_stage", "mac_git_commit"].includes(name) ? true : p.enabled }]));
   const policy = { ...base, tools, targetRules: [...base.targetRules, ...scopes.map((scope, i) => ({ ruleId: `v2-project-${i}`, effect: "allow" as const, principalId: "principal-1", scope, target: { kind: "project" as const, reference: project } }))] };
   const store = new BrokerStore(join(root, "broker.sqlite")); const key = randomBytes(32);
-  const broker = new Broker({ store, policy, developmentGateway: gateway, taskRunner: runner, taskProfileRegistry: profiles, now: () => NOW, edgeAuthenticationKeys: new EdgeKeyring([{ edgeId: "edge-1", keyId: "edge-key-1", key, notBeforeMs: NOW - 1000, expiresAtMs: NOW + 120_000 }]) });
+  const broker = new Broker({ store, policy, developmentGateway: gateway, ...(gitWriteInspector ? { gitWriteInspector } : {}), taskRunner: runner, taskProfileRegistry: profiles, now: () => NOW, edgeAuthenticationKeys: new EdgeKeyring([{ edgeId: "edge-1", keyId: "edge-key-1", key, notBeforeMs: NOW - 1000, expiresAtMs: NOW + 120_000 }]) });
   let index = 0;
   const request = (tool: string, args: Record<string, unknown>): UnsignedBrokerRequest => ({ protocolVersion: "0.1", requestId: `v2-request-${++index}`, contractVersion: "0.1", tool, arguments: args, principal: { principalId: "principal-1", sessionId: "session-1", issuer: "test-issuer", audience: "mac-operator-broker", scopes, issuedAtMs: NOW - 1000, expiresAtMs: NOW + 60_000, edgeId: "edge-1" }, timestampMs: NOW, nonce: `v2-nonce-${index}`, policyAudience: "mac-operator-broker", policyVersion: "policy-0.1", authenticationKeyId: "edge-key-1" });
   const handle = async (tool: string, args: Record<string, unknown>) => checkContract(await broker.handle(signRequest(request(tool, args), key)));
@@ -231,5 +232,110 @@ test("V2 worktree list warns about pending and removing records that no other to
     assert.deepEqual((listed as unknown as { warnings: string[] }).warnings, [
       "Worktree for task task-stuck is removing and is not usable; needs operator reconciliation",
       "Worktree for task task-pending is pending and is not usable; needs operator reconciliation"]);
+  } finally { await f.close(); }
+});
+
+function requestRows(f: Awaited<ReturnType<typeof setup>>, requestId: string) { return f.store.auditRows().filter(row => row.request_id === requestId); }
+function gitJobOf(f: Awaited<ReturnType<typeof setup>>, requestId: string) { const jobId = f.store.requestRecord(requestId)?.jobId; assert.ok(jobId, `request ${requestId} has no job`); return f.store.ownedJob(jobId, "principal-1")!; }
+
+test("V2 a Git mutation refused before git ran settles its job as failed, keeps a visible failure row and leaves the worktree usable", async () => {
+  const f = await setup(); try {
+    const worktree = (await f.create()).worktree as string;
+    const commitArgs = { project_root: worktree, message: "Nothing to commit" };
+    f.approve("mac_git_commit", commitArgs, worktree);
+    const refused = failure(await f.handle("mac_git_commit", commitArgs));
+    assert.equal(refused.result_class, "PRECONDITION_FAILED");
+    assert.match(refused.error.message, /Nothing is staged to commit; stage the intended paths with mac_git_stage first/u);
+    const rows = requestRows(f, refused.request_id);
+    assert.deepEqual(rows.map(row => [row.event_type, row.result_class]), [["decision", "AUTHORIZED"], ["intent", "INTENT_RECORDED"], ["completion", "PRECONDITION_FAILED"]]);
+    const record = f.store.requestRecord(refused.request_id)!, job = gitJobOf(f, refused.request_id);
+    assert.deepEqual([record.state, record.resultClass], ["FAILED", "PRECONDITION_FAILED"]);
+    assert.deepEqual([job.state, job.resultClass], ["failed", "failed"]);
+    const completion = JSON.parse(rows[2]!.evidence_json as string) as Record<string, unknown>;
+    assert.deepEqual({ project: completion.project, worktree: completion.worktree, taskId: completion.taskId, jobId: completion.jobId }, { project: f.project, worktree, taskId: "task-1", jobId: job.jobId });
+    assert.ok(Array.isArray(completion.scopes));
+    // The failed job no longer pins the worktree or its project, and the failure row is readable by project.
+    assert.equal(f.store.hasActiveWorktreeJobs(worktree, "job:git-preview"), false); assert.equal(f.store.hasActiveProjectJobs(worktree), false); assert.equal(f.store.hasActiveProjectJobs(f.project), false);
+    const audit = data(await f.handle("mac_execution_audit", { project_root: f.project, limit: 100 })).events as { request_id: string; result: string; worktree?: string; task_id?: string }[];
+    assert.deepEqual(audit.filter(event => event.request_id === refused.request_id).map(event => event.result), ["PRECONDITION_FAILED", "INTENT_RECORDED", "AUTHORIZED"]);
+    const failureEvent = audit.find(event => event.request_id === refused.request_id && event.result === "PRECONDITION_FAILED");
+    assert.deepEqual([failureEvent?.worktree, failureEvent?.task_id], [worktree, "task-1"]);
+    // A stage refused before git ran (missing parent directory) settles the same way.
+    const missingArgs = { project_root: worktree, paths: ["missing/file.txt"] };
+    f.approve("mac_git_stage", missingArgs, worktree);
+    const missing = failure(await f.handle("mac_git_stage", missingArgs));
+    assert.equal(missing.result_class, "TARGET_NOT_FOUND"); assert.deepEqual([gitJobOf(f, missing.request_id).state, gitJobOf(f, missing.request_id).resultClass], ["failed", "failed"]);
+    assert.equal(f.store.hasActiveWorktreeJobs(worktree, "job:git-preview"), false);
+    // The next stage is admitted and the worktree can be removed without any unresolved job.
+    const stageArgs = { project_root: worktree, paths: ["source.txt"] };
+    f.approve("mac_git_stage", stageArgs, worktree); data(await f.handle("mac_git_stage", stageArgs));
+    const removeArgs = { project_root: f.project, worktree, task_id: "task-1", idempotency_key: "remove-after-refusal" };
+    f.approve("mac_git_worktree_remove", removeArgs); assert.equal(data(await f.handle("mac_git_worktree_remove", removeArgs)).removed, true);
+    // The extra evidence keys must not make the ledger unreadable at startup.
+    new BrokerStore(join(f.root, "broker.sqlite")).close();
+  } finally { await f.close(); }
+});
+
+for (const [tool, error] of [
+  ["mac_git_commit", new BrokerError("TIMEOUT", "Git process timed out")],
+  ["mac_git_commit", new BrokerError("VERIFICATION_FAILED", "Git commit did not advance HEAD")],
+  ["mac_git_commit", new Error("unexpected inspector failure")],
+  ["mac_git_stage", new Error("unexpected inspector failure")]
+] as const) {
+  test(`V2 a ${tool} failure after the mutation boundary (${error instanceof BrokerError ? error.errorClass : "plain error"}) keeps its job unknown and the worktree pinned`, async () => {
+    const crossing: GitWriteInspector = {
+      async stage(_root, _paths, control) { control.beforeMutation?.(); throw error; },
+      async commit(_root, _message, _digest, control) { control.beforeMutation?.(); throw error; }
+    };
+    const f = await setup(undefined, false, crossing); try {
+      const worktree = (await f.create()).worktree as string;
+      const args = tool === "mac_git_commit" ? { project_root: worktree, message: "May have committed" } : { project_root: worktree, paths: ["source.txt"] };
+      f.approve(tool, args, worktree);
+      const failed = failure(await f.handle(tool, args));
+      assert.deepEqual([gitJobOf(f, failed.request_id).state, gitJobOf(f, failed.request_id).resultClass], ["unknown", "unknown"]);
+      assert.equal(f.store.hasActiveWorktreeJobs(worktree, "job:git-preview"), true);
+      const rows = requestRows(f, failed.request_id);
+      assert.deepEqual(rows.map(row => row.event_type), ["decision", "intent", "completion"]);
+      assert.equal(rows[2]!.result_class, failed.result_class);
+      assert.equal((JSON.parse(rows[2]!.evidence_json as string) as Record<string, unknown>).worktree, worktree);
+      const next = failure(await f.handle("mac_git_stage", { project_root: worktree, paths: ["source.txt"] }));
+      assert.equal(next.result_class, "CONFLICT"); assert.match(next.error.message, /must wait for the worktree job to settle/u);
+    } finally { await f.close(); }
+  });
+}
+
+test("V2 a Git mutation whose authority is revoked before the spawn fails its job without having run git", async () => {
+  let approvalId = "", reached = false;
+  const revoking: GitWriteInspector = {
+    async stage() { throw new Error("stage is not used"); },
+    async commit(_root, _message, _digest, control) { f.store.revokeApproval(approvalId, "TEST_REVOKED", NOW); control.beforeMutation?.(); reached = true; throw new Error("unreachable after revocation"); }
+  };
+  const f = await setup(undefined, false, revoking); try {
+    const worktree = (await f.create()).worktree as string;
+    const args = { project_root: worktree, message: "Revoked before spawn" };
+    approvalId = f.approve("mac_git_commit", args, worktree).approvalId;
+    const cancelled = failure(await f.handle("mac_git_commit", args));
+    assert.equal(cancelled.result_class, "CANCELLED"); assert.equal(reached, false);
+    assert.deepEqual([gitJobOf(f, cancelled.request_id).state, gitJobOf(f, cancelled.request_id).resultClass], ["failed", "failed"]);
+    assert.equal(f.store.requestRecord(cancelled.request_id)!.state, "CANCELLED");
+    assert.equal(f.store.hasActiveWorktreeJobs(worktree, "job:git-preview"), false);
+  } finally { await f.close(); }
+});
+
+test("V2 a pre-spawn Git failure whose failed write is rejected falls back to the unknown outcome", async () => {
+  let worktree = "";
+  const racing: GitWriteInspector = {
+    async stage() { throw new Error("stage is not used"); },
+    // A cancellation request bumps the job revision, so the failed write is rejected and only the unknown write is tolerated.
+    async commit() { const pinned = f.store.projectPinningJobs([worktree], "principal-1").own[0]!; f.store.requestJobCancellation(pinned.jobId, "principal-1", "TEST_STOP", NOW); throw new BrokerError("PRECONDITION_FAILED", "Nothing is staged to commit; stage the intended paths with mac_git_stage first"); }
+  };
+  const f = await setup(undefined, false, racing); try {
+    worktree = (await f.create()).worktree as string;
+    const args = { project_root: worktree, message: "Cancelled while refused" };
+    f.approve("mac_git_commit", args, worktree);
+    const refused = failure(await f.handle("mac_git_commit", args));
+    assert.equal(refused.result_class, "PRECONDITION_FAILED");
+    assert.deepEqual([gitJobOf(f, refused.request_id).state, gitJobOf(f, refused.request_id).resultClass], ["unknown", "unknown"]);
+    assert.equal(f.store.hasActiveWorktreeJobs(worktree, "job:git-preview"), true);
   } finally { await f.close(); }
 });

@@ -60,6 +60,12 @@ export type GitMetadataResolver = (projectRoot: string) => ManagedGitMetadata;
 export interface GitExecutionControl {
   timeoutMs: number;
   shouldCancel: () => boolean;
+  /**
+   * Revalidate Broker authority immediately before a mutating Git process is spawned. It is also the proof boundary:
+   * a failure raised before this call provably changed nothing, a failure after it may have. Write implementations
+   * must call it once, after every precondition check and directly before the mutating spawn.
+   */
+  beforeMutation?: () => void;
 }
 
 export interface GitInspector {
@@ -354,7 +360,7 @@ export class GitWriteInspectorImpl implements GitWriteInspector {
     const identity = canonicalProjectRoot(projectRoot, this.managedMetadata);
     const pathIdentities = captureGitWritePathIdentities(identity.path, paths);
     const before = await this.readStagedSnapshot(identity.path, identity.identity, control);
-    const result = await this.runGit(identity.path, [
+    const addArguments = [
       "--no-pager",
       "--no-optional-locks",
       "--literal-pathspecs",
@@ -365,7 +371,9 @@ export class GitWriteInspectorImpl implements GitWriteInspector {
       "add",
       "--",
       ...paths
-    ], control, MAX_WRITE_PROCESS_OUTPUT_BYTES);
+    ];
+    control.beforeMutation?.();
+    const result = await this.runGit(identity.path, addArguments, control, MAX_WRITE_PROCESS_OUTPUT_BYTES);
     assertGitMutationResult(result, "Git staging");
     assertProjectIdentity(identity.path, identity.identity, this.managedMetadata);
     assertGitWritePathIdentitiesUnchanged(identity.path, pathIdentities);
@@ -394,12 +402,14 @@ export class GitWriteInspectorImpl implements GitWriteInspector {
     const identity = canonicalProjectRoot(projectRoot, this.managedMetadata);
     const beforeHead = await this.readHead(identity.path, control);
     const before = await this.readStagedSnapshot(identity.path, identity.identity, control);
-    if (before.paths.length === 0) throw new BrokerError("PRECONDITION_FAILED", "Git commit requires staged content");
+    if (before.paths.length === 0) {
+      throw new BrokerError("PRECONDITION_FAILED", "Nothing is staged to commit; stage the intended paths with mac_git_stage first");
+    }
     const expected = expectedStagedDiffSha256 ?? null;
     if (expected !== null && expected.toLowerCase() !== before.sha256) {
       throw new BrokerError("PRECONDITION_FAILED", "Staged Git content does not match the expected digest");
     }
-    const result = await this.runGit(identity.path, [
+    const commitArguments = [
       "--no-pager",
       "--no-optional-locks",
       `--git-dir=${canonicalProjectRoot(projectRoot, this.managedMetadata).gitArgument}`,
@@ -411,7 +421,9 @@ export class GitWriteInspectorImpl implements GitWriteInspector {
       "--no-verify",
       "--no-gpg-sign",
       "-m", message
-    ], control, MAX_WRITE_PROCESS_OUTPUT_BYTES);
+    ];
+    control.beforeMutation?.();
+    const result = await this.runGit(identity.path, commitArguments, control, MAX_WRITE_PROCESS_OUTPUT_BYTES);
     assertGitMutationResult(result, "Git commit");
     assertProjectIdentity(identity.path, identity.identity, this.managedMetadata);
     const afterHead = await this.readHead(identity.path, control);

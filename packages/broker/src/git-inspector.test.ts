@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { spawn } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import { mkdir, mkdtemp, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -383,6 +383,66 @@ test("Git write inspector performs a real bounded temporary-repository stage and
     assert.equal(committed.precondition.matched, true);
     assert.equal(committed.workingTreeState, "clean");
     assert.equal((await runFixtureGit(projectRoot, ["status", "--porcelain"])).trim(), "");
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("Git write inspector reaches the mutation boundary only after every precondition passed", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "mac-operator-git-boundary-"));
+  try {
+    const projectRoot = await realpath(directory);
+    const fixtureEnvironment = { GIT_CONFIG_NOSYSTEM: "1", GIT_CONFIG_GLOBAL: "/dev/null", GIT_CONFIG_SYSTEM: "/dev/null", GIT_TERMINAL_PROMPT: "0" };
+    const gitNow = (...args: string[]): string => execFileSync("/usr/bin/git", args, { cwd: projectRoot, encoding: "utf8", env: fixtureEnvironment }).trim();
+    await runFixtureGit(projectRoot, ["init", "--quiet", "--initial-branch=main"]);
+    await runFixtureGit(projectRoot, ["config", "user.name", "Mac Operator Fixture"]);
+    await runFixtureGit(projectRoot, ["config", "user.email", "fixture@example.invalid"]);
+    const sourcePath = join(projectRoot, "main.ts");
+    await writeFile(sourcePath, "export const value = 1;\n", { mode: 0o600 });
+    await runFixtureGit(projectRoot, ["add", "--", "main.ts"]);
+    await runFixtureGit(projectRoot, ["commit", "--quiet", "--no-verify", "--no-gpg-sign", "-m", "fixture initial"]);
+    const initialHead = gitNow("rev-parse", "HEAD");
+    // The spy records what the repository looked like at the moment the boundary was crossed.
+    const crossings: { head: string; staged: string }[] = [];
+    const control = {
+      timeoutMs: 5_000,
+      shouldCancel: () => false,
+      beforeMutation: () => { crossings.push({ head: gitNow("rev-parse", "HEAD"), staged: gitNow("diff", "--cached", "--name-only") }); }
+    };
+    const inspector = new GitWriteInspectorImpl();
+
+    // Nothing staged: the precondition fails before the boundary and HEAD stays put.
+    await assert.rejects(inspector.commit(projectRoot, "empty", undefined, control), (error: unknown) =>
+      error instanceof BrokerError && error.errorClass === "PRECONDITION_FAILED" &&
+      /^Nothing is staged to commit; stage the intended paths with mac_git_stage first$/u.test(error.message));
+    assert.equal(crossings.length, 0);
+    assert.equal(gitNow("rev-parse", "HEAD"), initialHead);
+
+    // Stage paths the checks reject: validation, missing parent directory and symlink all fail before the boundary.
+    await symlink(sourcePath, join(projectRoot, "link.ts"));
+    await assert.rejects(inspector.stage(projectRoot, [".env"], control), BrokerError);
+    await assert.rejects(inspector.stage(projectRoot, ["missing/file.ts"], control), (error: unknown) => error instanceof BrokerError && error.errorClass === "TARGET_NOT_FOUND");
+    await assert.rejects(inspector.stage(projectRoot, ["link.ts"], control), (error: unknown) => error instanceof BrokerError && error.errorClass === "POLICY_DENIED");
+    assert.equal(crossings.length, 0);
+    assert.equal(gitNow("diff", "--cached", "--name-only"), "");
+
+    // A successful stage crosses the boundary once, before the index changes.
+    await writeFile(sourcePath, "export const value = 2;\n", { mode: 0o600 });
+    const staged = await inspector.stage(projectRoot, ["main.ts"], control);
+    assert.deepEqual(crossings, [{ head: initialHead, staged: "" }]);
+    assert.equal(gitNow("diff", "--cached", "--name-only"), "main.ts");
+
+    // A stale digest fails before the boundary: nothing is committed and the staged content is untouched.
+    await assert.rejects(inspector.commit(projectRoot, "stale", "0".repeat(64), control), (error: unknown) =>
+      error instanceof BrokerError && error.errorClass === "PRECONDITION_FAILED" && /does not match the expected digest/u.test(error.message));
+    assert.equal(crossings.length, 1);
+    assert.equal(gitNow("rev-parse", "HEAD"), initialHead);
+
+    // The matching digest crosses the boundary exactly once, while HEAD has not advanced yet.
+    await inspector.commit(projectRoot, "fixture governed commit", staged.stagedDiffSha256, control);
+    assert.equal(crossings.length, 2);
+    assert.deepEqual(crossings[1], { head: initialHead, staged: "main.ts" });
+    assert.notEqual(gitNow("rev-parse", "HEAD"), initialHead);
   } finally {
     await rm(directory, { recursive: true, force: true });
   }

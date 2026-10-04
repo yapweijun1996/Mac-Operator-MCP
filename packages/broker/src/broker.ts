@@ -1100,6 +1100,7 @@ export class Broker {
     let authorized = false;
     let uiApprovalConsumed = false;
     let plannedAuditTarget: string | undefined;
+    let failureEvidence: Record<string, unknown> = {};
     let sessionReserved = false;
     try {
       if (this.closing) throw new BrokerError("CANCELLED", "Broker is shutting down");
@@ -1220,6 +1221,12 @@ export class Broker {
       // Preserve the Broker-normalized target for any later failure. Raw tool
       // arguments are never copied into audit records.
       plannedAuditTarget = execution.auditTarget ?? `${target.kind}:${target.reference}`;
+      // A failure row correlates to the project, worktree and task exactly like the decision row, so a project-scoped
+      // audit read finds it even when its target is a managed worktree.
+      failureEvidence = { ...execution.auditContext,
+        ...(execution.development === undefined ? {} : { project: execution.development.projectRoot,
+          ...(execution.development.worktree === undefined ? {} : { worktree: execution.development.worktree }),
+          ...(execution.development.taskId === undefined ? {} : { taskId: execution.development.taskId }) }) };
       if (request.tool === "mac_write_file_atomic") {
         const existingWriteJob = this.options.store.ownedJobByIdempotencyKey(
           execution.write!.idempotencyKey,
@@ -1752,7 +1759,7 @@ export class Broker {
             });
           } catch (error) {
             const brokerError = error instanceof BrokerError ? error : new BrokerError("UNKNOWN_OUTCOME", "Managed task completion could not be persisted", true);
-            this.auditFailure(request!, brokerError, this.now(), true, plannedAuditTarget);
+            this.auditFailure(request!, brokerError, this.now(), true, plannedAuditTarget, failureEvidence);
           }
         }).finally(() => { this.activeAsyncTasks.delete(execution.taskJob!.jobId); });
         this.activeAsyncTasks.set(execution.taskJob!.jobId, continuation);
@@ -1778,7 +1785,7 @@ export class Broker {
           });
         }).catch((error: unknown) => {
           const brokerError = error instanceof BrokerError ? error : new BrokerError("UNKNOWN_OUTCOME", "Terminal session completion could not be persisted", true);
-          this.auditFailure(request!, brokerError, this.now(), true, plannedAuditTarget);
+          this.auditFailure(request!, brokerError, this.now(), true, plannedAuditTarget, failureEvidence);
         }).finally(() => { this.activeAsyncTasks.delete(sessionJob.jobId); });
         this.activeAsyncTasks.set(sessionJob.jobId, continuation);
         this.ensureActiveAuthority(request, execution.target);
@@ -1824,7 +1831,7 @@ export class Broker {
         ? error
         : new BrokerError("EXECUTION_FAILED", "Broker request failed");
       if (request && admitted) {
-        this.auditFailure(request, brokerError, this.now(), authorized, plannedAuditTarget);
+        this.auditFailure(request, brokerError, this.now(), authorized, plannedAuditTarget, failureEvidence);
       }
       return this.failure(request, brokerError, startedAt);
     } finally {
@@ -3908,11 +3915,13 @@ export class Broker {
     if (job.state === "unknown") throw new BrokerError("UNKNOWN_OUTCOME", "Git stage outcome is unresolved; inspect its Broker job", true);
     if (job.state === "cancelled") throw new BrokerError("CANCELLED", "Git stage was cancelled before execution");
     if (job.state !== "running") throw new BrokerError("EXECUTION_FAILED", "Git stage job is not running");
+    let mutationStarted = false;
     try {
+      const control = this.executionControl(request, execution.target, timeoutMs, job.jobId, [], execution.jobLease);
       const stage = await this.gitWriteInspector.stage(
         execution.gitStage.projectRoot,
         execution.gitStage.paths,
-        this.executionControl(request, execution.target, timeoutMs, job.jobId, [], execution.jobLease)
+        { ...control, beforeMutation: () => { control.beforeMutation(); mutationStarted = true; } }
       );
       this.ensureActiveAuthority(request, execution.target);
       const data = {
@@ -3955,15 +3964,8 @@ export class Broker {
       };
     } catch (error) {
       const brokerError = error instanceof BrokerError ? error : new BrokerError("EXECUTION_FAILED", "Git stage failed");
-      try {
-        execution.gitStageJob = this.options.store.finishJob(job.jobId, request.principal.principalId, job.revision, {
-          state: "unknown",
-          resultClass: "unknown",
-          finishedAtMs: this.now()
-        }, execution.jobLease, this.now());
-      } catch {
-        // Preserve the original error; the index mutation has no trusted terminal readback.
-      }
+      // Preserve the original error; a Job that cannot be settled stays running until restart reconciliation.
+      execution.gitStageJob = this.finishFailedGitJob(request, execution, job, mutationStarted) ?? execution.gitStageJob;
       throw brokerError;
     }
   }
@@ -3981,12 +3983,14 @@ export class Broker {
     if (job.state === "unknown") throw new BrokerError("UNKNOWN_OUTCOME", "Git commit outcome is unresolved; inspect its Broker job", true);
     if (job.state === "cancelled") throw new BrokerError("CANCELLED", "Git commit was cancelled before execution");
     if (job.state !== "running") throw new BrokerError("EXECUTION_FAILED", "Git commit job is not running");
+    let mutationStarted = false;
     try {
+      const control = this.executionControl(request, execution.target, timeoutMs, job.jobId, [], execution.jobLease);
       const commit = await this.gitWriteInspector.commit(
         execution.gitCommit.projectRoot,
         execution.gitCommit.message,
         execution.gitCommit.expectedStagedDiffSha256,
-        this.executionControl(request, execution.target, timeoutMs, job.jobId, [], execution.jobLease)
+        { ...control, beforeMutation: () => { control.beforeMutation(); mutationStarted = true; } }
       );
       this.ensureActiveAuthority(request, execution.target);
       const data = {
@@ -4033,17 +4037,30 @@ export class Broker {
       };
     } catch (error) {
       const brokerError = error instanceof BrokerError ? error : new BrokerError("EXECUTION_FAILED", "Git commit failed");
-      try {
-        execution.gitCommitJob = this.options.store.finishJob(job.jobId, request.principal.principalId, job.revision, {
-          state: "unknown",
-          resultClass: "unknown",
-          finishedAtMs: this.now()
-        }, execution.jobLease, this.now());
-      } catch {
-        // Preserve the original error; the commit may have occurred without a trusted readback.
-      }
+      // Preserve the original error; a Job that cannot be settled stays running until restart reconciliation.
+      execution.gitCommitJob = this.finishFailedGitJob(request, execution, job, mutationStarted) ?? execution.gitCommitJob;
       throw brokerError;
     }
+  }
+
+  /**
+   * Settle a Git mutation Job after an error. A failure before the inspector's spawn boundary changed nothing, so the
+   * Job is failed and no longer pins its worktree; any failure after it may have changed the repository and stays
+   * unknown. A failed write the store rejects (expired lease, cancel race) falls back to the unknown write, the one
+   * outcome it tolerates there.
+   */
+  private finishFailedGitJob(request: BrokerRequest, execution: ExecutionPlan, job: BrokerJob, mutationStarted: boolean): BrokerJob | undefined {
+    const failed = { state: "failed", resultClass: "failed" } as const;
+    const unknown = { state: "unknown", resultClass: "unknown" } as const;
+    for (const outcome of mutationStarted ? [unknown] : [failed, unknown]) {
+      try {
+        return this.options.store.finishJob(job.jobId, request.principal.principalId, job.revision,
+          { ...outcome, finishedAtMs: this.now() }, execution.jobLease, this.now());
+      } catch {
+        // Fall back to the next, more conservative outcome.
+      }
+    }
+    return undefined;
   }
 
   private inspectWritePostcondition(job: BrokerJob, policy: BrokerPolicy): WriteRecoveryStatus | undefined {
@@ -4169,8 +4186,8 @@ export class Broker {
       }).map(({ id, subject }) => ({ id, subject }));
       const auditRows = this.options.store.executionAudit(request.principal.principalId, { project: plan.projectRoot, limit: 100 })
         .filter((row) => ["mac_test_run", "mac_build_run", "mac_task_run"].includes(row.tool as string));
-      // Authorization rows name the worktree and task; failure and cancellation completions carry no such evidence,
-      // so completions are matched to their task through the shared request id.
+      // Authorization rows name the worktree and task; failure and cancellation completions written before they carried
+      // that evidence do not, so completions are matched to their task through the shared request id.
       const taskRequestIds = new Set(auditRows
         .filter((row) => isPlainDataRecord(row.evidence) && row.evidence.worktree === plan.worktree && row.evidence.taskId === record.taskId)
         .map((row) => row.request_id as string));
@@ -5417,9 +5434,11 @@ export class Broker {
     error: BrokerError,
     timestampMs: number,
     authorized: boolean,
-    targetRef?: string
+    targetRef?: string,
+    evidence: Record<string, unknown> = {}
   ): void {
     try {
+      const jobId = this.options.store.requestRecord(request.requestId)?.jobId;
       this.options.store.failRequest({
         requestId: request.requestId,
         principalId: request.principal.principalId,
@@ -5429,7 +5448,8 @@ export class Broker {
         resultClass: error.errorClass,
         targetRef: targetRef ?? "unresolved",
         policyVersion: request.policyVersion,
-        evidence: { scopes: [...(this.currentPolicy().tools.get(request.tool)?.requiredScopes ?? [])] },
+        evidence: { scopes: [...(this.currentPolicy().tools.get(request.tool)?.requiredScopes ?? [])], ...evidence,
+          ...(jobId ? { jobId } : {}) },
         timestampMs
       });
     } catch {
