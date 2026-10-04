@@ -203,9 +203,14 @@ verification before calling a task successful. Use `mac_job_status` with a
 small `tail_bytes` for bounded sanitized output, exit/result class and evidence;
 there is no automatic bulk log return. `mac_job_cancel` requests termination
 through owned job control. Check status afterward; cancellation uncertainty must
-not be reported as proven process termination.
+not be reported as proven process termination. Cancelling a job that has already
+finished, failed, been cancelled or is unknown returns `CONFLICT` before any approval is
+requested; only queued and running jobs can be cancelled. A failed job's
+`outcome_class` (`TIMEOUT`, `OUTPUT_LIMIT`, `VERIFICATION_FAILED`, `EXECUTION_FAILED`)
+is read best-effort from its request; the job state stays `failed`.
 
-Keep the same retry key and exact payload for a delivery retry. Owner, payload,
+Keep the same retry key and exact payload for a delivery retry. A job cancelled
+because its access token expired is replayed under the same key; a re-run needs a new key. Owner, payload,
 tool, target and policy bindings prevent a different action from inheriting an
 existing job. A changed task, profile or policy needs a newly reviewed request;
 an uncertain job must be reconciled before execution is retried.
@@ -216,6 +221,11 @@ replays coding or validation tasks. Existing host recovery may inspect or drain
 an exactly owned process/guest where supported; it must not promote unknown
 outcomes to success without evidence. Queued, running and unknown jobs block
 worktree deletion, including relevant jobs owned by another principal.
+
+`mac_git_stage` and `mac_git_commit` jobs that fail before the Git process is spawned end
+`failed` and release the worktree. A failure after the spawn stays UNKNOWN and pins the
+worktree until the owner reconciles it; there is no MCP reconciliation tool and records
+must not be hand-edited.
 
 ## Inventory reconciliation and removal
 
@@ -247,9 +257,15 @@ job, and clean status including ignored files. Dirty deletion is unavailable;
 no request boolean overrides it. The primary repository is never a valid target.
 Removal verifies checkout/metadata absence and unchanged primary state. It keeps
 a removal tombstone; an exact completed retry succeeds only while the removed
-paths remain absent. Branch history is not automatically deleted: the branch a
-removed worktree was created on survives, and the owner deletes it from the owner
-terminal with `git branch -d <name>` (never `-D` or `git worktree prune`).
+paths remain absent. Branch history is deleted conservatively: after the worktree is removed the Broker runs
+`git branch -d` on the managed task branch, so a branch with unmerged commits is kept and
+reported with `branch_deleted: false`. The owner deletes such a branch from the owner
+terminal with `git branch -d <name>` once merged (never `git worktree prune`). A removal
+retry with the completing key only re-attempts that cleanup. A refused removal lists
+status counts (never file names): commit changes with `mac_git_stage` and `mac_git_commit`,
+because ignored files cannot be removed by any tool. A task id can be created again after
+removal with a new idempotency key. Cancelling blocking queued or running jobs needs an
+explicit owner approval; unknown jobs stay until the owner reconciles the ledger.
 
 ### Gateway development clone
 

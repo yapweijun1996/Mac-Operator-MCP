@@ -49,8 +49,8 @@ Source: KBID `mac-operator-mcp`, item `65554efe-6a0a-404c-af6a-7670777944b4`
 
 ## L2 Controlled Writes
 
-32. [`mac_apply_patch`](tool-contracts/mac_apply_patch.json) — bounded patch under an approved project root.
-33. [`mac_write_file_atomic`](tool-contracts/mac_write_file_atomic.json) — atomic file create or replace under an approved root.
+32. [`mac_apply_patch`](tool-contracts/mac_apply_patch.json) — bounded patch under an approved project root. Not available inside Broker-managed worktrees; those are changed only by `mac_codex_run`.
+33. [`mac_write_file_atomic`](tool-contracts/mac_write_file_atomic.json) — atomic file create or replace under an approved root. Not available inside Broker-managed worktrees; those are changed only by `mac_codex_run`.
 34. [`mac_git_stage`](tool-contracts/mac_git_stage.json) — stage explicit approved paths only.
 35. [`mac_git_commit`](tool-contracts/mac_git_commit.json) — local commit from preconditioned staged content.
 
@@ -86,10 +86,10 @@ These additive source contracts do not enable the live personal deployment. Prod
 | --- | --- |
 | [mac_git_worktree_create](tool-contracts/mac_git_worktree_create.json) | Create one Broker-owned isolated worktree using a task-bound idempotency key. |
 | [mac_git_worktree_list](tool-contracts/mac_git_worktree_list.json) | List only Broker-owned worktrees for one authorized project. |
-| [mac_git_worktree_remove](tool-contracts/mac_git_worktree_remove.json) | Remove a clean Broker-owned worktree with ownership checks and read-back verification; never delete the primary repository. |
+| [mac_git_worktree_remove](tool-contracts/mac_git_worktree_remove.json) | Remove a clean Broker-owned worktree with ownership checks and read-back verification, then delete its task branch with git branch -d (kept with a warning when it has unmerged commits); never delete the primary repository. |
 | [mac_git_branch_create](tool-contracts/mac_git_branch_create.json) | Create a task branch together with a Broker-owned worktree without switching the primary working copy. |
 | [mac_codex_preflight](tool-contracts/mac_codex_preflight.json) | Inspect coding-agent and project readiness without executing a development task or returning credentials. |
-| [mac_codex_run](tool-contracts/mac_codex_run.json) | Submit a bounded coding-agent job in one authorized isolated worktree; enforce filesystem, process, secret, Git, and explicit network boundaries. |
+| [mac_codex_run](tool-contracts/mac_codex_run.json) | Submit a bounded coding-agent job in one authorized isolated worktree; enforce filesystem, process, secret, Git, and explicit network boundaries. The only tool that changes files in a managed worktree; inspect the result with mac_git_diff, mac_git_status or mac_pr_prepare. |
 | [mac_test_run](tool-contracts/mac_test_run.json) | Submit one approved existing test profile as a bounded Broker-managed worktree job; never accept an arbitrary shell command. |
 | [mac_build_run](tool-contracts/mac_build_run.json) | Submit one approved existing build profile as a bounded Broker-managed worktree job; never accept an arbitrary shell command. |
 | [mac_git_push](tool-contracts/mac_git_push.json) | Reserved high-risk push boundary, denied until a separate explicit approval workflow is supported; never force-push. |

@@ -6908,3 +6908,82 @@ removed and recorded. `-d` refuses unmerged commits, so work is never lost: such
 the same idempotency key only re-attempts the cleanup. The contract output gained optional `branch_name` and
 `branch_deleted`. Existence is read with `for-each-ref` so a Git failure is not mistaken for an absent branch.
 New tests cover deleted, kept-unmerged and retry. Not deployed.
+
+## October 4, 2026: eighth MCP review triage (nine-claim report; source only until deployed)
+
+Verdicts. C1 true: a worktree could not be removed because of four mechanisms, namely an unfinished job pinning the
+whole project (including other principals' jobs and unknown jobs nobody can cancel), a clean-status rule that counts
+ignored files with no tool able to discard them, a removed task id whose key and record could not be reused, and a
+single opaque refusal message for all of these. C2 by design, with the message fixed: ordinary file tools stay out of
+managed worktrees. C3 partial: the token-expiry cause was already explained in the seventh entry; that staging
+dominates wall time was never measured, so the sixth and seventh entries' "staging dominates / unchanged" rationale is
+corrected here and phase timing was added. C4 true (cancel of a finished job). C5 true, stated precisely: the outcome
+row of the failed git run was written but invisible to project-scoped audit reads, and the real defect was a git Job
+stranded as `unknown` that pins the worktree. C6 true (failed job without a failure cause). C7 stale or partial
+(branch and `base_ref` schema drift). C8 true, including the `mac_pr_prepare` window bug (finished runs could fall out
+of the audit window and the oldest 32 outcomes were kept). C9 partial (idempotency key behaviour).
+
+Fixed (commits on `triage/eighth-mcp-review`): `176e6cf` worktree removal resolved by record state, state-specific
+create/remove conflict messages, branch pre-check, status counts instead of file names, job-pin message naming the
+caller's jobs, list warnings for pending/removing records. `6561952` git stage/commit Jobs fail cleanly before the
+spawn boundary, failure rows carry project/worktree/task/job, clearer empty-index text. `178dfbba` `mac_execution_audit`
+cursor paging with a correct `truncated`, task-scoped `mac_pr_prepare` test evidence (newest 32, chronological).
+`346c009` cancel of a finished job is `CONFLICT` before approval; optional `outcome_class` on `mac_job_status`.
+`590e96f` token-expiry warning and cancel text with new-key advice, `IDEMPOTENT_REUSE` warning on replayed task
+receipts. `f58b194` the managed-worktree denial names the cause (reason code `MANAGED_WORKTREE_PATH`). `42d167b`
+idempotency conflicts name the holding job and the first differing binding; `idempotency_key` descriptions in 12
+contracts. `fa54b2b` `phase_ms` on completed container runs in `mac_execution_audit`. `8fc263c` branch_name rules and a
+narrowed `base_ref` pattern in the input schemas.
+
+Correction to the sixth entry: lifting the worktree denial is not only "a signed-policy decision". The denial is
+derived by `v2FilesystemRoots` / `assertV2Policy` (`packages/auth/src/v2-policy.ts`) and enforced by
+`DevelopmentGateway.assertProtectedStorage` at startup and in every plan, so it also needs code changes, a
+per-principal/per-task path authorization and a new signed policy revision. The denial also applies to reads, not only writes.
+
+Deliberately not changed: remove() still does not accept pending records and pending/removing records are not
+auto-healed; no tool discards ignored files or uncommitted changes; the 256-record inventory cap still counts removed
+records; no stderr marker for timeouts; no change to timeout/teardown accounting; no JobState/JobResultClass widening
+and no persisted job column; no schema migration (`BROKER_SCHEMA_VERSION` unchanged); no advisory empty-index
+pre-check before approval, so a single-use approval is still consumed by a pre-spawn precondition failure; no
+session/Edge comparison in the write/terminal pre-checks. Git failures after the spawn (a missing untracked path in an
+existing directory, a staged-secret denial after `git add`, a non-zero `git commit`, "did not advance HEAD") still
+strand the Job as `unknown`, so C5 is not fully closed. Runtime behaviour of `base_ref` is unchanged (`HEAD~1` not accepted).
+
+Owner decisions: (1) discard path for dirty or ignored worktree contents; (2) auto-reconcile of removing/pending
+worktree records, which would relax the runbook's "no MCP reconciliation" rule, and whether remove() may accept
+pending records; (3) the delegated approver in `personal-development-approval.ts` approves only active-record
+removal and does not approve `mac_job_cancel`, so completed-removal retries and the cancel advice need explicit owner
+approval unless the approver changes; (4) pruning or raising the 256 inventory cap, and relaxing startup validation for removed
+records; (5) releasing git Jobs already stranded as `unknown` on the MBA ledger (reviewed host repair per Job, or a
+reviewed git-Job reconcile such as the unimplemented `FAILED_RECOVERED`) and a read-only ledger query for the
+project-wide unknown-job pin given in the C1 triage; owner-only resolution of metadata-less unknown task jobs; (6) staging-reduction levers
+(per-profile input scope, runner-wide exclusions, larger staging payload) only after `phase_ms` data exists; (7) making
+worktree contents readable through a worktree-scoped tool; (8) whether `phase_ms` is persisted on the job
+for `mac_job_status` and recorded for failed/timed-out/cancelled runs; (9) idempotency key lifetime (keys are permanent
+today) and an additive `reused` field on development receipts.
+
+Follow-ups: raw ENOENT from `list()`/`verify()` for a missing checkout is not mapped; session/Edge comparison before the
+approval is consumed for write and terminal replays (and a clearer `linkRequestJob` mismatch text); teardown time still
+counts against the task timeout budget; `mac_policy_explain` discrepancies (`mac_apply_patch` on a worktree target,
+git tools on a worktree target); `mac_capabilities.authorized_roots` omits `deny_relative_paths`; historical failure
+rows stay invisible in `mac_execution_audit(project_root)`; `assertGitMutationResult` discards stderr; a read-back of
+HEAD and the staged digest after a failed git spawn could settle more Jobs as `failed`; pre-existing bug found while
+testing: rotating a Job whose Request stays live makes the store unopenable (`Stored Request Job linkage is missing`,
+`verifyRequestLedgerIntegrity` / `rotateLedgerArchive`), needs its own change; a second cancel of an already-cancelling
+running job still consumes an approval.
+
+Deployment: nothing is deployed. Edge loads `tool-contracts/` at startup, so restart Edge and Broker together and
+ship the contracts before or with `broker.js`. Ship together: compiled `broker.js`, `managed-worktrees.js`,
+`development-gateway.js`, `git-inspector.js`, `persistence.js`, `task-runner.js`, `container-task-runner.js`,
+`idempotency-conflict.js`, `owner-terminal-dispatch.js` and `packages/contracts/dist/errors.js` plus `errors.d.ts`; and
+these contracts: `mac_execution_audit`, `mac_job_status`, `mac_git_worktree_create`, `mac_git_branch_create`,
+`mac_pr_prepare`, `mac_write_file_atomic`, `mac_apply_patch`, `mac_codex_run` and the 12 contracts with the new
+`idempotency_key` description. `phase_ms` needs `broker.js`, `container-task-runner.js`, `task-runner.js` and
+`mac_execution_audit.json` rolled out and back together. An old Broker with the new audit contract is compatible. The
+first authenticated verification of this set is still pending, and `evidence/` is not updated until then.
+
+Tests: the implementation agents reported their new suites passing (worktree lifecycle, git classification, audit
+paging, job cancel/status, token wording, managed-worktree denial, conflict messages, phase timing, contract/branch
+parity) but gave no suite totals. Known environment failures that are not caused by these changes:
+`filesystem-inspector.test` "traversal stays within bounded pressure budgets" fails on a clean HEAD under Node 23, and
+`contract-conformance.test.ts` aborts at its first failing tool, masking later checks. `packages/auth` tests need Node 24 and were not run.

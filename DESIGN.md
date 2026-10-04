@@ -121,10 +121,13 @@ Mutations carry an idempotency key, normalized target, expected precondition, an
 ```text
 QUEUED -> RUNNING -> SUCCEEDED
                   -> FAILED
-                  -> TIMED_OUT
                   -> CANCELLED
                   -> UNKNOWN
 ```
+
+`TIMED_OUT` is a Request state, not a Job state. A timed-out or output-limited Job ends
+`FAILED`; `mac_job_status` reports an optional `outcome_class` (`TIMEOUT`, `OUTPUT_LIMIT`,
+`VERIFICATION_FAILED`, `EXECUTION_FAILED`) read from the originating Request.
 
 Revocation and kill switches reject new work, cancel queued work, and request termination of active cancellable work. The operation contract declares whether interruption is supported and how post-termination verification determines final state.
 
