@@ -351,3 +351,34 @@ test("project Job pinning checks every owner and audit lookup includes prior pro
     assert.throws(() => fixture.store.hasActiveProjectJobs(`${fixture.root}/../escape`), /malformed/u);
   } finally { await fixture.close(); }
 });
+
+test("project pinning Jobs name only the caller's own Jobs, worst first, and only count the rest", async () => {
+  const fixture = await setup(async () => terminal());
+  try {
+    const pin = (jobId: string, owner: string, createdAtMs: number) => fixture.store.createJob({
+      jobId, ownerPrincipalId: owner, ownerSessionId: `${owner}-session`, tool: "mac_test_run", targetRef: `project:${fixture.root}`,
+      policyVersion: "policy-0.1", payloadDigest: "a".repeat(64), idempotencyKey: jobId, createdAtMs
+    });
+    assert.deepEqual(fixture.store.projectPinningJobs([fixture.root], "principal-1"), { own: [], others: 0 });
+    pin("job:other", "another-owner", NOW);
+    assert.deepEqual(fixture.store.projectPinningJobs([fixture.root], "principal-1"), { own: [], others: 1 });
+    fixture.store.requestJobCancellation("job:other", "another-owner", "synthetic-stop", NOW);
+    pin("job:unknown", "principal-1", NOW + 1);
+    fixture.store.startJob("job:unknown", "principal-1", 0, NOW + 1);
+    fixture.store.reconcileInterruptedJobs(NOW + 1);
+    pin("job:running", "principal-1", NOW + 2);
+    fixture.store.startJob("job:running", "principal-1", 0, NOW + 2);
+    pin("job:queued-1", "principal-1", NOW + 3);
+    pin("job:queued-2", "principal-1", NOW + 4);
+    pin("job:another", "another-owner", NOW + 5);
+    const pinning = fixture.store.projectPinningJobs([fixture.root], "principal-1");
+    assert.deepEqual(pinning, { own: [
+      { jobId: "job:unknown", tool: "mac_test_run", state: "unknown" },
+      { jobId: "job:running", tool: "mac_test_run", state: "running" },
+      { jobId: "job:queued-1", tool: "mac_test_run", state: "queued" }], others: 2 });
+    assert.deepEqual(fixture.store.projectPinningJobs([fixture.root, fixture.root, `${fixture.root}-other`], "principal-1"), pinning);
+    assert.deepEqual(fixture.store.projectPinningJobs([`${fixture.root}-other`], "principal-1"), { own: [], others: 0 });
+    assert.equal(fixture.store.hasActiveProjectJobs(fixture.root), true);
+    assert.throws(() => fixture.store.projectPinningJobs([`${fixture.root}/../escape`], "principal-1"), /malformed/u);
+  } finally { await fixture.close(); }
+});

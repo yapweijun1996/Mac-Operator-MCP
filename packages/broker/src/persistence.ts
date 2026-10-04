@@ -550,6 +550,22 @@ export const DEFAULT_AUDIT_RETENTION: Readonly<AuditRetentionPolicy> = Object.fr
   maxBytes: 128 * 1024 * 1024
 });
 
+/** Unfinished Jobs pin their project (or worktree): queued, running and unknown ones block worktree removal. */
+const PROJECT_PINNING_JOB_SQL = `job.state IN ('queued', 'running', 'unknown')
+  AND (job.target_ref = ? OR EXISTS (
+    SELECT 1 FROM audit_events AS intent WHERE intent.event_type = 'intent'
+      AND json_extract(intent.evidence_json, '$.jobId') = job.job_id
+      AND json_extract(intent.evidence_json, '$.project') = ?
+  ))`;
+interface PinningJobRow { job_id: string; tool: string; state: string; owner_principal_id: string; created_at_ms: number }
+/** Up to three of the caller's pinning Jobs (worst first) plus how many other pinning Jobs are not named. */
+export interface ProjectPinningJobs { own: readonly { jobId: string; tool: string; state: string }[]; others: number }
+function assertProjectJobQuery(project: string): void {
+  if (typeof project !== "string" || !isAbsolute(project) || resolve(project) !== project ||
+      project.length > 4096 || project.includes("\0")) {
+    throw new BrokerError("PRECONDITION_FAILED", "Project Job query is malformed");
+  }
+}
 const MAX_AUDIT_RETENTION_EVENTS = 1_000_000;
 const MAX_AUDIT_RETENTION_BYTES = 1024 * 1024 * 1024;
 
@@ -2789,19 +2805,28 @@ export class BrokerStore {
 
   /** Removal safety is global: another owner's unresolved Job also pins a project. */
   hasActiveProjectJobs(project: string): boolean {
-    if (typeof project !== "string" || !isAbsolute(project) || resolve(project) !== project ||
-        project.length > 4096 || project.includes("\0")) {
-      throw new BrokerError("PRECONDITION_FAILED", "Project Job query is malformed");
-    }
-    const row = this.database.prepare(`
-      SELECT 1 FROM jobs AS job WHERE job.state IN ('queued', 'running', 'unknown')
-        AND (job.target_ref = ? OR EXISTS (
-          SELECT 1 FROM audit_events AS intent WHERE intent.event_type = 'intent'
-            AND json_extract(intent.evidence_json, '$.jobId') = job.job_id
-            AND json_extract(intent.evidence_json, '$.project') = ?
-        )) LIMIT 1
-    `).get(`project:${project}`, project);
+    assertProjectJobQuery(project);
+    const row = this.database.prepare(`SELECT 1 FROM jobs AS job WHERE ${PROJECT_PINNING_JOB_SQL} LIMIT 1`).get(`project:${project}`, project);
     return row !== undefined;
+  }
+
+  /**
+   * Names what hasActiveProjectJobs counted for the same projects. The pin stays global, but ids, tools and states are
+   * returned only for the caller's own Jobs (unknown first: they cannot be cancelled); the rest are only counted.
+   */
+  projectPinningJobs(projects: readonly string[], principalId: string): ProjectPinningJobs {
+    const pinning = new Map<string, PinningJobRow>();
+    for (const project of projects) {
+      assertProjectJobQuery(project);
+      const rows = this.database.prepare(`SELECT job.job_id, job.tool, job.state, job.owner_principal_id, job.created_at_ms
+        FROM jobs AS job WHERE ${PROJECT_PINNING_JOB_SQL}`).all(`project:${project}`, project) as unknown as PinningJobRow[];
+      for (const row of rows) pinning.set(row.job_id, row);
+    }
+    const rank = (state: string): number => state === "unknown" ? 0 : state === "running" ? 1 : 2;
+    const own = [...pinning.values()].filter((row) => row.owner_principal_id === principalId)
+      .sort((a, b) => rank(a.state) - rank(b.state) || a.created_at_ms - b.created_at_ms || (a.job_id < b.job_id ? -1 : 1)).slice(0, 3)
+      .map((row) => ({ jobId: row.job_id, tool: row.tool, state: row.state }));
+    return { own, others: pinning.size - own.length };
   }
 
   /** Exact checkout pin; unrelated task worktrees may run concurrently. */

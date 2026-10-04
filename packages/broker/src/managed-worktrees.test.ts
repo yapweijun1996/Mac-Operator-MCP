@@ -1,9 +1,11 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
+import { existsSync, readFileSync } from "node:fs";
 import { mkdir, mkdtemp, realpath, rm, symlink, writeFile, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
+import { BrokerError } from "@mac-operator/contracts";
 import { ManagedWorktrees } from "./managed-worktrees.js";
 import { GitStatusInspector, GitWriteInspectorImpl } from "./git-inspector.js";
 
@@ -199,6 +201,16 @@ test("revocation after worktree add retains pending quarantine rather than in-me
       () => { if (++checks >= 3) throw new Error("Authority revoked"); }), /revoked/u);
     assert.equal(f.registry.list(f.project, "owner").length, 0);
     await assert.rejects(f.create("revoked", { idempotencyKey: "revoked-key" }), /different operation|reconciliation/u);
+    // The refusal names the task and state and stays UNKNOWN_OUTCOME: the pending checkout may still exist.
+    await assert.rejects(f.create("revoked", { idempotencyKey: "revoked-key" }), (error: unknown) => {
+      assert.ok(error instanceof BrokerError);
+      assert.equal(error.errorClass, "UNKNOWN_OUTCOME");
+      assert.match(error.message, /reconciliation.*task revoked.*is pending/u);
+      return true;
+    });
+    await assert.rejects(f.create("revoked", { idempotencyKey: "other-key" }), /already has a managed worktree: task revoked \(branch codex\/revoked, state pending\)/u);
+    assert.deepEqual(f.registry.unresolved(f.project, "owner"), [{ taskId: "revoked", state: "pending" }]);
+    assert.deepEqual(f.registry.unresolved(f.project, "intruder"), []);
   } finally { await f.cleanup(); }
 });
 
@@ -234,5 +246,154 @@ test("repeated close cannot release a restarted inventory lock", async () => {
     await f.registry.close(); const restarted = new ManagedWorktrees(f.state, f.trees);
     try { await f.registry.close(); assert.throws(() => new ManagedWorktrees(f.state, f.trees), /live or unknown/u); }
     finally { await restarted.close(); }
+  } finally { await f.cleanup(); }
+});
+
+function inventory(f: Awaited<ReturnType<typeof worktreeFixture>>): Array<{ idempotencyKey: string; state: string; removalKey: string }> {
+  return JSON.parse(readFileSync(join(f.state, "worktrees.json"), "utf8"));
+}
+function brokerFailure(errorClass: string, pattern: RegExp) {
+  return (error: unknown): boolean => {
+    assert.ok(error instanceof BrokerError);
+    assert.equal(error.errorClass, errorClass);
+    assert.match(error.message, pattern);
+    assert.ok(error.message.length < 512, `message is ${error.message.length} characters`);
+    return true;
+  };
+}
+
+test("a task re-created after removal is removable again and stale removal keys never reach it", async () => {
+  const f = await worktreeFixture();
+  try {
+    const remove = (worktree: string, key: string) => f.registry.remove(f.project, worktree, "owner", "task-1", control, authority, () => false, key);
+    const first = await f.create("task-1");
+    assert.deepEqual(await remove(first.record.worktree, "rm-1"), { branchName: "codex/task-1", branchDeleted: true });
+    // Before any re-create, a retry of the completed removal only re-attempts the branch cleanup.
+    assert.deepEqual(await remove(first.record.worktree, "rm-1"), { branchName: "codex/task-1", branchDeleted: true });
+    const second = await f.create("task-1", { idempotencyKey: "key-task-1-again" });
+    assert.equal(second.reused, false);
+    assert.equal(second.record.worktree, first.record.worktree);
+    // The path is deterministic per task, so the stale key now points at a checkout that was created after it.
+    const stale = brokerFailure("CONFLICT", /^IDEMPOTENCY_KEY_IN_USE: .*earlier worktree for task task-1.*created later.*new idempotency_key/u);
+    await assert.rejects(remove(second.record.worktree, "rm-1"), stale);
+    assert.throws(() => f.registry.removalRetry(f.project, second.record.worktree, "owner", "task-1", "rm-1"), stale);
+    assert.equal(existsSync(second.record.worktree), true);
+    assert.equal(f.registry.list(f.project, "owner").length, 1);
+    assert.deepEqual(inventory(f).map((entry) => entry.state), ["removed", "active"]);
+    // A fresh key removes the new checkout and leaves the first record's tombstone untouched.
+    assert.equal(f.registry.removalRetry(f.project, second.record.worktree, "owner", "task-1", "rm-2"), false);
+    assert.deepEqual(await remove(second.record.worktree, "rm-2"), { branchName: "codex/task-1", branchDeleted: true });
+    assert.equal(existsSync(second.record.worktree), false);
+    assert.equal(f.registry.list(f.project, "owner").length, 0);
+    assert.deepEqual(inventory(f).map((entry) => [entry.idempotencyKey, entry.state, entry.removalKey]),
+      [["key-task-1", "removed", "rm-1"], ["key-task-1-again", "removed", "rm-2"]]);
+    // With nothing live at the path, each key replays only its own completed removal.
+    assert.equal(f.registry.removalRetry(f.project, second.record.worktree, "owner", "task-1", "rm-1"), true);
+    assert.equal(f.registry.removalRetry(f.project, second.record.worktree, "owner", "task-1", "rm-2"), true);
+    await assert.rejects(remove(second.record.worktree, "rm-3"), /another retry key/u);
+  } finally { await f.cleanup(); }
+});
+
+test("a removal that did not finish blocks every key for the task and is reported as unresolved", async () => {
+  const f = await worktreeFixture();
+  try {
+    const remove = (worktree: string, key: string) => f.registry.remove(f.project, worktree, "owner", "task-1", control, authority, () => false, key);
+    const first = await f.create("task-1");
+    await remove(first.record.worktree, "rm-1");
+    const second = await f.create("task-1", { idempotencyKey: "key-task-1-again" });
+    // A locked worktree makes `git worktree remove` fail after the record was persisted as removing.
+    git(f.project, ["worktree", "lock", second.record.worktree]);
+    await assert.rejects(remove(second.record.worktree, "rm-2"), /Fixed worktree Git operation failed/u);
+    assert.deepEqual(inventory(f).map((entry) => entry.state), ["removed", "removing"]);
+    // Rule (i) looks at every record: even the key that completed the earlier removal reports the unresolved outcome.
+    for (const key of ["rm-1", "rm-2", "rm-3"]) {
+      await assert.rejects(remove(second.record.worktree, key), brokerFailure("UNKNOWN_OUTCOME", /requires operator reconciliation/u));
+    }
+    assert.deepEqual(f.registry.unresolved(f.project, "owner"), [{ taskId: "task-1", state: "removing" }]);
+    await assert.rejects(f.create("task-1", { idempotencyKey: "key-task-1-again" }),
+      brokerFailure("UNKNOWN_OUTCOME", /reconciliation.*task task-1 \(branch codex\/task-1\) is removing/u));
+  } finally { await f.cleanup(); }
+});
+
+test("duplicate create keys name the holder and a removed worktree's key is a conflict, not an unknown outcome", async () => {
+  const f = await worktreeFixture();
+  try {
+    const created = await f.create("task-1");
+    await assert.rejects(f.create("task-1", { branchName: "codex/different" }),
+      brokerFailure("CONFLICT", /retry key.*held by task task-1 \(branch codex\/task-1, state active\)/u));
+    await assert.rejects(f.create("task-1", { idempotencyKey: "new-key" }),
+      brokerFailure("CONFLICT", /already has a managed worktree: task task-1 \(branch codex\/task-1, state active\)/u));
+    await f.registry.remove(f.project, created.record.worktree, "owner", "task-1", control, authority, () => false, "rm-1");
+    const reuse = brokerFailure("CONFLICT", /^IDEMPOTENCY_KEY_IN_USE: .*created the worktree for task task-1 \(branch codex\/task-1\).*later removed.*new idempotency_key.*can be created again/u);
+    await assert.rejects(f.create("task-1"), reuse);
+    await assert.rejects(f.create("task-1", { branchName: "codex/different" }), brokerFailure("CONFLICT", /retry key.*state removed/u));
+    // The task id and branch name are free again under a new key.
+    assert.equal((await f.create("task-1", { idempotencyKey: "key-task-1-again" })).reused, false);
+  } finally { await f.cleanup(); }
+});
+
+test("create refuses an existing branch before any pending record or inventory slot exists", async () => {
+  const f = await worktreeFixture();
+  try {
+    git(f.project, ["branch", "codex/task-taken"]);
+    await assert.rejects(f.create("task-taken"), brokerFailure("CONFLICT", /^Branch codex\/task-taken already exists; choose another branch_name$/u));
+    assert.equal(existsSync(join(f.state, "worktrees.json")), false);
+    assert.deepEqual(f.registry.unresolved(f.project, "owner"), []);
+    // Same key and task succeed once the branch is gone, which a leftover pending record would have blocked.
+    git(f.project, ["branch", "-D", "codex/task-taken"]);
+    assert.equal((await f.create("task-taken")).reused, false);
+    assert.deepEqual(inventory(f).map((entry) => entry.state), ["active"]);
+  } finally { await f.cleanup(); }
+});
+
+test("removal refusals for unclean worktrees report path counts and the commit remedy without naming files", async () => {
+  const f = await worktreeFixture();
+  try {
+    const { record } = await f.create();
+    const remove = () => f.registry.remove(f.project, record.worktree, "owner", record.taskId, control, authority, () => false, "rm-clean");
+    const refused = (counts: string) => (error: unknown): boolean => {
+      brokerFailure("POLICY_DENIED", /clean status/u)(error);
+      const message = (error as BrokerError).message;
+      assert.match(message, /including ignored/u);
+      assert.ok(message.includes(`Paths found: ${counts} (names are not shown)`), message);
+      assert.match(message, /committed with mac_git_stage and mac_git_commit \(the task branch is then kept\); ignored files cannot be removed by any tool/u);
+      assert.doesNotMatch(message, /source\.txt|\.env|ignored\.txt|Fixed worktree Git operation failed/u);
+      return true;
+    };
+    await writeFile(join(record.worktree, "source.txt"), "dirty\n");
+    await assert.rejects(remove(), refused("staged 0, unstaged 1, untracked 0, ignored 0"));
+    git(record.worktree, ["add", "--", "source.txt"]);
+    await assert.rejects(remove(), refused("staged 1, unstaged 0, untracked 0, ignored 0"));
+    git(record.worktree, ["reset", "-q", "--", "source.txt"]);
+    await writeFile(join(record.worktree, "source.txt"), "original\n");
+    await writeFile(join(record.worktree, ".env.local"), "SECRET=1\n");
+    await assert.rejects(remove(), refused("staged 0, unstaged 0, untracked 1, ignored 0"));
+    await rm(join(record.worktree, ".env.local"));
+    await writeFile(join(record.worktree, "ignored.txt"), "preserve me\n");
+    await assert.rejects(remove(), refused("staged 0, unstaged 0, untracked 0, ignored 1"));
+    await rm(join(record.worktree, "ignored.txt"));
+    assert.equal((await remove()).branchDeleted, true);
+  } finally { await f.cleanup(); }
+});
+
+test("listings beyond the Git output cap are the same refusal instead of a generic Git failure", async () => {
+  const f = await worktreeFixture();
+  try {
+    const { record } = await f.create();
+    const remove = () => f.registry.remove(f.project, record.worktree, "owner", record.taskId, control, authority, () => false, "rm-big");
+    const refused = (counts: string) => (error: unknown): boolean => {
+      brokerFailure("POLICY_DENIED", /clean status.*including ignored/u)(error);
+      assert.ok((error as BrokerError).message.includes(`Paths found: ${counts} (names are not shown)`), (error as BrokerError).message);
+      assert.doesNotMatch((error as BrokerError).message, /Fixed worktree Git operation failed/u);
+      return true;
+    };
+    // 1100 directories with 240-character names push each listing past its cap (131072 bytes for ignored, 262144 for status).
+    const directories = Array.from({ length: 1100 }, (_, index) => join(record.worktree, `${String(index).padStart(4, "0")}${"d".repeat(236)}`));
+    for (const directory of directories) { await mkdir(directory); await writeFile(join(directory, "ignored.txt"), "x"); }
+    await assert.rejects(remove(), refused("staged 0, unstaged 0, untracked 0, ignored over the output limit"));
+    for (const directory of directories) await writeFile(join(directory, "untracked.txt"), "x");
+    await assert.rejects(remove(), refused("staged over the output limit, unstaged over the output limit, untracked over the output limit, ignored over the output limit"));
+    assert.equal(existsSync(record.worktree), true);
+    assert.deepEqual(inventory(f).map((entry) => entry.state), ["active"]);
   } finally { await f.cleanup(); }
 });

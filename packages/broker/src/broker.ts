@@ -27,7 +27,7 @@ import {
 import { randomUUID } from "node:crypto";
 import { dirname, isAbsolute, join } from "node:path";
 import { isPlainDataRecord } from "./plain-record.js";
-import { GUI_SESSION_PREVIEW_TTL_MS, APPROVAL_PREVIEW_TTL_MS, privilegedHelperPayloadTarget, validatePrivilegedHelperPayload, TASK_JOB_TOOLS, type ArchivedJobRecord, type ApprovalConsumptionBinding, type BrokerJob, type BrokerStore, type GuestTaskJobMetadata, type JobLease, type PrivilegedHelperPayload, type WriteJobMetadata } from "./persistence.js";
+import { GUI_SESSION_PREVIEW_TTL_MS, APPROVAL_PREVIEW_TTL_MS, privilegedHelperPayloadTarget, validatePrivilegedHelperPayload, TASK_JOB_TOOLS, type ArchivedJobRecord, type ApprovalConsumptionBinding, type BrokerJob, type BrokerStore, type GuestTaskJobMetadata, type JobLease, type PrivilegedHelperPayload, type ProjectPinningJobs, type WriteJobMetadata } from "./persistence.js";
 import { EdgeKeyring, isValidEdgeId, keyIdentity } from "./edge-keyring.js";
 import {
   authorizePrincipalProjection,
@@ -4113,12 +4113,15 @@ export class Broker {
           branch: result.record.branchName, reused: result.reused, changedPaths: [result.record.worktree] } };
     }
     if (request.tool === "mac_git_worktree_list") {
-      return read({ project_root: plan.projectRoot, worktrees: gateway.worktrees.list(plan.projectRoot, request.principal.principalId)
-        .map((record) => ({ worktree: record.worktree, branch_name: record.branchName, base_ref: record.baseRef, task_id: record.taskId })) });
+      const owner = request.principal.principalId;
+      return read({ project_root: plan.projectRoot, worktrees: gateway.worktrees.list(plan.projectRoot, owner)
+        .map((record) => ({ worktree: record.worktree, branch_name: record.branchName, base_ref: record.baseRef, task_id: record.taskId })) },
+      {}, unresolvedWorktreeWarnings(gateway.worktrees.unresolved(plan.projectRoot, owner)));
     }
     if (request.tool === "mac_git_worktree_remove") {
       const removal = await gateway.worktrees.remove(plan.projectRoot, plan.worktree!, request.principal.principalId, plan.taskId!, control,
-        authority, () => this.options.store.hasActiveProjectJobs(plan.projectRoot) || this.options.store.hasActiveProjectJobs(plan.worktree!), args.idempotency_key as string);
+        authority, () => this.options.store.hasActiveProjectJobs(plan.projectRoot) || this.options.store.hasActiveProjectJobs(plan.worktree!), args.idempotency_key as string,
+        () => unfinishedJobsMessage(this.options.store.projectPinningJobs([plan.projectRoot, plan.worktree!], request.principal.principalId)));
       return { data: { project_root: plan.projectRoot, worktree: plan.worktree!, removed: true, branch_name: removal.branchName, branch_deleted: removal.branchDeleted },
         verification: { required: true, status: "verified", strategy: "changed_paths_and_hash_readback" },
         auditEvidence: { project: plan.projectRoot, worktree: plan.worktree!, taskId: plan.taskId!, branch: removal.branchName, branchDeleted: removal.branchDeleted, changedPaths: [plan.worktree!] },
@@ -5936,6 +5939,28 @@ function writeRecoveryStatus(postcondition: SafeWritePostcondition, nowMs: numbe
     resolution: "remains_unknown",
     observed_at: new Date(nowMs).toISOString()
   };
+}
+
+/** Names the caller's unfinished Jobs behind a worktree removal refusal; stays under the 512-character failure message cap. */
+function unfinishedJobsMessage(blockers: ProjectPinningJobs): string {
+  const total = blockers.own.length + blockers.others;
+  const build = (shown: number): string => {
+    const named = blockers.own.slice(0, shown).map((job) => `${job.jobId.slice(0, 100)} (${job.tool}, ${job.state})`).join(", ");
+    const more = total - Math.min(shown, blockers.own.length);
+    return `Worktree removal is blocked by ${total} unfinished job${total === 1 ? "" : "s"} on this project (` +
+      `${named === "" ? "none of them are yours" : `${named}${more > 0 ? `, and ${more} more` : ""}`}). ` +
+      "Queued or running jobs can be cancelled with mac_job_cancel; unknown jobs cannot be cancelled and stay until the owner reconciles the ledger";
+  };
+  let shown = blockers.own.length;
+  while (build(shown).length > 480 && shown > 0) shown -= 1;
+  return build(shown);
+}
+
+/** Pending and removing records are hidden from the list, so each one is reported by task id and state (capped for the warning limit). */
+function unresolvedWorktreeWarnings(records: readonly { taskId: string; state: string }[]): string[] {
+  const warnings = records.slice(0, 10).map((record) => `Worktree for task ${record.taskId} is ${record.state} and is not usable; needs operator reconciliation`);
+  if (records.length > 10) warnings.push(`${records.length - 10} more worktrees are pending or removing and need operator reconciliation`);
+  return warnings;
 }
 
 function unavailableWriteRecovery(nowMs: number): WriteRecoveryStatus {

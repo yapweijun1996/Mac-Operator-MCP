@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { constants, closeSync, existsSync, fstatSync, fsyncSync, lstatSync, openSync, readFileSync, realpathSync, readdirSync, renameSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve, relative, isAbsolute, sep } from "node:path";
 import { BrokerError, canonicalJson, parseJsonStrict, sha256 } from "@mac-operator/contracts";
-import { canonicalProjectRoot, assertProjectIdentity, GitStatusInspector, SAFE_GIT_ENVIRONMENT, type GitExecutionControl, type GitMetadataResolver } from "./git-inspector.js";
+import { canonicalProjectRoot, assertProjectIdentity, GitStatusInspector, SAFE_GIT_ENVIRONMENT, type GitExecutionControl, type GitMetadataResolver, type SafeGitStatus } from "./git-inspector.js";
 import { loadNativePeerAdapter, parsePeerProcessIdentity } from "./peer-credentials.js";
 import { ProcessSupervisor } from "./process-supervisor.js";
 import { assertContentPathAllowed } from "./secret-policy.js";
@@ -151,6 +151,13 @@ export class ManagedWorktrees {
     return record.projectRoot;
   }
 
+  /** Records stuck in pending or removing: list() and require() hide them, so callers surface them as warnings. */
+  unresolved(projectRoot: string, owner: string): readonly Pick<ManagedWorktreeRecord, "taskId" | "state">[] {
+    this.checkStorage();
+    return this.records.filter((entry) => entry.projectRoot === projectRoot && entry.owner === owner && (entry.state === "pending" || entry.state === "removing"))
+      .map((entry) => ({ taskId: entry.taskId, state: entry.state }));
+  }
+
   create(input: WorktreeCreateRequest, control: GitExecutionControl, assertAuthority: () => void): Promise<{ record: ManagedWorktreeRecord; reused: boolean }> {
     return this.serialize(async () => {
       this.checkStorage();
@@ -164,20 +171,36 @@ export class ManagedWorktrees {
       const fingerprint = sha256(canonicalJson(input));
       const duplicate = this.records.find((entry) => entry.owner === input.owner && entry.idempotencyKey === input.idempotencyKey);
       if (duplicate) {
-        if (duplicate.fingerprint !== fingerprint) throw new BrokerError("CONFLICT", "Worktree retry key belongs to a different operation");
-        if (duplicate.state !== "active") throw new BrokerError("UNKNOWN_OUTCOME", "Worktree operation requires operator reconciliation");
+        const holder = `task ${duplicate.taskId} (branch ${duplicate.branchName}, state ${duplicate.state})`;
+        if (duplicate.fingerprint !== fingerprint) {
+          throw new BrokerError("CONFLICT", `Worktree retry key belongs to a different operation: this idempotency_key is held by ${holder}. Use a new idempotency_key or repeat the original request`);
+        }
+        if (duplicate.state === "removed") {
+          throw new BrokerError("CONFLICT", `IDEMPOTENCY_KEY_IN_USE: this idempotency_key created the worktree for task ${duplicate.taskId} (branch ${duplicate.branchName}), ` +
+            "which was later removed. Use a new idempotency_key; the task can be created again");
+        }
+        if (duplicate.state !== "active") {
+          throw new BrokerError("UNKNOWN_OUTCOME", `Worktree operation requires operator reconciliation: the worktree for task ${duplicate.taskId} (branch ${duplicate.branchName}) is ${duplicate.state}`);
+        }
         this.verify(duplicate);
         return { record: { ...duplicate }, reused: true };
       }
       if (this.records.length >= 256) throw new BrokerError("CONFLICT", "Managed worktree inventory is full");
       const taskDuplicate = this.records.find((entry) => entry.owner === input.owner && entry.projectRoot === input.projectRoot &&
         entry.taskId === input.taskId && entry.state !== "removed");
-      if (taskDuplicate) throw new BrokerError("CONFLICT", "Task already has a managed worktree");
+      if (taskDuplicate) {
+        throw new BrokerError("CONFLICT", `Task already has a managed worktree: task ${taskDuplicate.taskId} (branch ${taskDuplicate.branchName}, state ${taskDuplicate.state}). ` +
+          (taskDuplicate.state === "active" ? "Use it, remove it, or choose another task_id" : "It needs operator reconciliation; choose another task_id"));
+      }
       const baseCommit = (await this.git(input.projectRoot, ["rev-parse", "--verify", "--end-of-options", `${input.baseRef}^{commit}`], control)).trim();
       if (!/^[a-f0-9]{40,64}$/u.test(baseCommit)) throw new BrokerError("VERIFICATION_FAILED", "Base reference did not resolve to a commit");
       const before = await this.primarySnapshot(input.projectRoot, control);
       const worktree = join(this.worktreeRoot, `task-${sha256(canonicalJson({ project: input.projectRoot, owner: input.owner, task: input.taskId })).slice(0, 32)}`);
       if (existsSync(worktree)) throw new BrokerError("CONFLICT", "Worktree destination already exists");
+      // Refuse before the pending record exists: a failed `worktree add -b` would leave it behind and burn an inventory slot.
+      if ((await this.git(input.projectRoot, ["for-each-ref", "--format=%(refname)", `refs/heads/${input.branchName}`], control)).trim() !== "") {
+        throw new BrokerError("CONFLICT", `Branch ${input.branchName} already exists; choose another branch_name`);
+      }
       const record: ManagedWorktreeRecord = { ...input, fingerprint, baseCommit, worktree, state: "pending", rootIdentity: "",
         projectIdentity: primary.identity, gitDirectory: "", gitIdentity: "", removalKey: "" };
       this.records.push(record);
@@ -213,26 +236,22 @@ export class ManagedWorktrees {
   }
 
   remove(projectRoot: string, worktree: string, owner: string, taskId: string, control: GitExecutionControl,
-    assertAuthority: () => void, hasActiveJob: () => boolean, idempotencyKey = "legacy-remove"): Promise<WorktreeRemoval> {
+    assertAuthority: () => void, hasActiveJob: () => boolean, idempotencyKey = "legacy-remove", describeActiveJobs?: () => string): Promise<WorktreeRemoval> {
     return this.serialize(async () => {
-      if (this.removalRetry(projectRoot, worktree, owner, taskId, idempotencyKey)) {
-        // A retry after a completed removal only re-attempts the branch cleanup that may not have finished.
-        const done = this.records.find((entry) => entry.worktree === worktree)!;
-        return this.deleteTaskBranch(done, control);
-      }
+      const done = this.completedRemoval(projectRoot, worktree, owner, taskId, idempotencyKey);
+      // A retry after a completed removal only re-attempts the branch cleanup that may not have finished.
+      if (done) return this.deleteTaskBranch(done, control);
       const record = this.require(worktree, projectRoot, owner, taskId);
-      if (worktree === projectRoot || hasActiveJob()) throw new BrokerError("CONFLICT", "Worktree is primary or has an active/unresolved job");
+      if (worktree === projectRoot) throw new BrokerError("CONFLICT", "Worktree is the primary checkout and cannot be removed");
+      if (hasActiveJob()) throw new BrokerError("CONFLICT", describeActiveJobs?.() ?? "Worktree has an active or unresolved job");
       assertAuthority();
-      const status = await new GitStatusInspector(this.supervisor, this.resolveGitMetadata).status(worktree, true, control);
-      const ignored = await this.git(worktree, ["ls-files", "--others", "--ignored", "--exclude-standard", "-z"], control);
-      if (status.dirty || status.truncated || ignored.length !== 0) {
-        throw new BrokerError("POLICY_DENIED", "Worktree removal requires clean status including ignored files");
-      }
+      await this.assertCleanForRemoval(worktree, control);
       const before = await this.primarySnapshot(projectRoot, control);
       this.verify(record);
       assertAuthority();
       if (hasActiveJob()) throw new BrokerError("CONFLICT", "Worktree became active before removal");
-      const stored = this.records.find((entry) => entry.worktree === worktree)!;
+      // require() returns a copy and a removed record can share this path, so mutate the live record itself.
+      const stored = this.recordsAt(projectRoot, worktree, owner, taskId).find((entry) => entry.state === "active")!;
       stored.state = "removing";
       stored.removalKey = idempotencyKey;
       this.persist();
@@ -244,6 +263,28 @@ export class ManagedWorktrees {
       this.persist();
       return this.deleteTaskBranch(stored, control);
     });
+  }
+
+  /**
+   * Removal needs a clean status that includes ignored files. The refusal reports counts only: ignored and untracked
+   * names can be secret-shaped, and output beyond the Git cap is the same refusal rather than a generic Git failure.
+   */
+  private async assertCleanForRemoval(worktree: string, control: GitExecutionControl): Promise<void> {
+    let status: SafeGitStatus | undefined;
+    let ignored: number | undefined;
+    try {
+      status = await new GitStatusInspector(this.supervisor, this.resolveGitMetadata).status(worktree, true, control);
+      ignored = (await this.git(worktree, ["ls-files", "--others", "--ignored", "--exclude-standard", "-z"], control, true))
+        .split("\0").filter((path) => path !== "").length;
+    } catch (error) {
+      if (!(error instanceof BrokerError && error.errorClass === "OUTPUT_LIMIT")) throw error;
+    }
+    if (status && !status.dirty && !status.truncated && ignored === 0) return;
+    const count = (value: number | undefined): string => value === undefined ? "over the output limit" : String(value);
+    throw new BrokerError("POLICY_DENIED", "Worktree removal requires clean status including ignored files. " +
+      `Paths found${status?.truncated ? " (at least; the status listing was truncated)" : ""}: staged ${count(status?.stagedPaths.length)}, ` +
+      `unstaged ${count(status?.unstagedPaths.length)}, untracked ${count(status?.untrackedPaths.length)}, ignored ${count(ignored)} (names are not shown). ` +
+      "Tracked and untracked changes can be committed with mac_git_stage and mac_git_commit (the task branch is then kept); ignored files cannot be removed by any tool");
   }
 
   /**
@@ -267,14 +308,35 @@ export class ManagedWorktrees {
   }
 
   removalRetry(projectRoot: string, worktree: string, owner: string, taskId: string, idempotencyKey: string): boolean {
+    return this.completedRemoval(projectRoot, worktree, owner, taskId, idempotencyKey) !== undefined;
+  }
+
+  /** Every record this principal ever kept for the task at this path; a removed task can be created again at the same path. */
+  private recordsAt(projectRoot: string, worktree: string, owner: string, taskId: string): ManagedWorktreeRecord[] {
+    return this.records.filter((entry) => entry.projectRoot === projectRoot && entry.worktree === worktree && entry.owner === owner && entry.taskId === taskId);
+  }
+
+  /**
+   * The removed record this retry key completed, or undefined when the key is a fresh removal. Resolution looks at every
+   * record at the path so a stale retry of an earlier removal can never act on a worktree that was created after it.
+   */
+  private completedRemoval(projectRoot: string, worktree: string, owner: string, taskId: string, idempotencyKey: string): ManagedWorktreeRecord | undefined {
     this.checkStorage();
-    const record = this.records.find((entry) => entry.projectRoot === projectRoot && entry.worktree === worktree && entry.owner === owner && entry.taskId === taskId);
-    if (!record) return false;
-    if (record.state === "removing") throw new BrokerError("UNKNOWN_OUTCOME", "Worktree removal requires operator reconciliation");
-    if (record.state !== "removed") return false;
-    if (record.removalKey !== idempotencyKey) throw new BrokerError("CONFLICT", "Removed worktree belongs to another retry key");
-    if (existsSync(worktree) || existsSync(record.gitDirectory)) throw new BrokerError("CONFLICT", "Removed worktree path was reused");
-    return true;
+    const records = this.recordsAt(projectRoot, worktree, owner, taskId);
+    if (records.some((entry) => entry.state === "removing")) throw new BrokerError("UNKNOWN_OUTCOME", "Worktree removal requires operator reconciliation");
+    const removed = records.filter((entry) => entry.state === "removed");
+    const done = removed.find((entry) => entry.removalKey === idempotencyKey);
+    if (records.some((entry) => entry.state === "active" || entry.state === "pending")) {
+      if (done) {
+        throw new BrokerError("CONFLICT", `IDEMPOTENCY_KEY_IN_USE: this idempotency_key already removed an earlier worktree for task ${taskId}; ` +
+          "the worktree now at this path was created later and was not touched. Use a new idempotency_key to remove it");
+      }
+      return undefined;
+    }
+    if (removed.length === 0) return undefined;
+    if (!done) throw new BrokerError("CONFLICT", "Removed worktree belongs to another retry key");
+    if (existsSync(worktree) || existsSync(done.gitDirectory)) throw new BrokerError("CONFLICT", "Removed worktree path was reused");
+    return done;
   }
 
   private verify(record: ManagedWorktreeRecord): void {
@@ -318,13 +380,16 @@ export class ManagedWorktrees {
     return sha256(head + indexHash + status);
   }
 
-  private async git(cwd: string, args: readonly string[], control: GitExecutionControl): Promise<string> {
+  private async git(cwd: string, args: readonly string[], control: GitExecutionControl, reportOutputLimit = false): Promise<string> {
     const identity = canonicalProjectRoot(cwd, this.resolveGitMetadata);
     const result = await this.supervisor.run({ executable: "/usr/bin/git", cwd, environment: SAFE_GIT_ENVIRONMENT,
       args: ["--no-pager", "--no-optional-locks", `--git-dir=${identity.gitArgument}`, "--work-tree=.",
         "-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false", "-c", "submodule.recurse=false", ...args],
       timeoutMs: Math.min(control.timeoutMs, 30_000), outputCapBytes: 131_072, shouldCancel: control.shouldCancel });
     assertProjectIdentity(cwd, identity.identity, this.resolveGitMetadata);
+    if (reportOutputLimit && (result.resultClass === "OUTPUT_LIMIT" || result.truncated)) {
+      throw new BrokerError("OUTPUT_LIMIT", "Fixed worktree Git operation exceeded its output limit");
+    }
     if (result.resultClass !== "SUCCEEDED" || result.exitCode !== 0 || result.truncated) {
       throw new BrokerError(result.resultClass === "TIMEOUT" ? "TIMEOUT" : result.resultClass === "CANCELLED" ? "CANCELLED" : "EXECUTION_FAILED", "Fixed worktree Git operation failed");
     }

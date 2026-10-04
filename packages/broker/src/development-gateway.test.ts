@@ -68,6 +68,7 @@ async function setup(run?: TaskRunner["run"], agent = false) {
   return { root, project, registry, gateway, broker, store, request, handle, approve, create, profiles, runner, get calls() { return calls; }, close: async () => { await broker.close(); store.close(); await rm(root, { recursive: true, force: true }); } };
 }
 function data(result: BrokerResult): Record<string, unknown> { assert.equal(result.ok, true, JSON.stringify(result)); if (!result.ok) throw new Error("Expected success"); return result.data as Record<string, unknown>; }
+function failure(result: BrokerResult) { assert.equal(result.ok, false, JSON.stringify(result)); if (result.ok) throw new Error("Expected failure"); return result; }
 async function settle(f: Awaited<ReturnType<typeof setup>>, receipt: Record<string, unknown>) { for (let i = 0; i < 200; i++) { const state = f.store.ownedJob(receipt.job_id as string, "principal-1")?.state; if (state !== "running" && state !== "queued") return state; await new Promise<void>(resolve => setTimeout(resolve, 5)); } assert.fail("Job did not settle"); }
 
 test("V2 signed Broker worktree/Git workflow preserves the primary checkout and produces audit/review", async () => {
@@ -164,5 +165,71 @@ test("V2 provenance and all-task storage cannot be exposed through ordinary file
       assert.throws(() => f.gateway.assertProtectedStorage([{ path }]), /ordinary filesystem roots/u);
     }
     assert.doesNotThrow(() => f.gateway.assertProtectedStorage([{ path: f.project }]));
+  } finally { await f.close(); }
+});
+
+test("V2 re-created task worktree is removable through the Broker and a stale removal key cannot reach it", async () => {
+  const f = await setup(); try {
+    const make = async (key: string) => { const args = { project_root: f.project, branch_name: "codex/again", base_ref: "HEAD", task_id: "again", idempotency_key: key }; f.approve("mac_git_worktree_create", args); return data(await f.handle("mac_git_worktree_create", args)); };
+    const drop = async (worktree: unknown, key: string) => { const args = { project_root: f.project, worktree, task_id: "again", idempotency_key: key }; f.approve("mac_git_worktree_remove", args); return f.handle("mac_git_worktree_remove", args); };
+    const first = await make("again-create-1");
+    assert.equal(data(await drop(first.worktree, "again-remove-1")).removed, true);
+    const second = await make("again-create-2");
+    assert.equal(second.worktree, first.worktree);
+    const stale = failure(await drop(second.worktree, "again-remove-1"));
+    assert.equal(stale.result_class, "CONFLICT"); assert.match(stale.error.message, /^IDEMPOTENCY_KEY_IN_USE: .*new idempotency_key/u);
+    assert.equal(await readFile(join(second.worktree as string, "source.txt"), "utf8"), "original\n"); assert.equal(f.registry.list(f.project, "principal-1").length, 1);
+    assert.equal(data(await drop(second.worktree, "again-remove-2")).removed, true);
+    assert.equal(f.registry.list(f.project, "principal-1").length, 0); assert.equal(git(f.project, ["status", "--porcelain"]), "");
+  } finally { await f.close(); }
+});
+
+test("V2 worktree removal names the caller's unfinished jobs, counts the rest and says which can be cancelled", async () => {
+  const f = await setup(); try {
+    const { worktree } = await f.create();
+    const pin = (jobId: string, owner: string, createdAtMs: number) => f.store.createJob({ jobId, ownerPrincipalId: owner, ownerSessionId: `${owner}-session`, tool: "mac_test_run",
+      targetRef: `project:${f.project}`, policyVersion: "policy-0.1", payloadDigest: "a".repeat(64), idempotencyKey: jobId, createdAtMs });
+    const id = (name: string) => `job:task-${name.repeat(48)}`;
+    const refusal = async (key: string) => { const args = { project_root: f.project, worktree, task_id: "task-1", idempotency_key: key }; f.approve("mac_git_worktree_remove", args); return failure(await f.handle("mac_git_worktree_remove", args)); };
+    // The pin is global, but another principal's job is only counted, never named.
+    pin(id("6"), "another-owner", NOW - 1);
+    assert.match((await refusal("remove-others")).error.message, /blocked by 1 unfinished job on this project \(none of them are yours\)/u);
+    f.store.requestJobCancellation(id("6"), "another-owner", "synthetic-stop", NOW);
+    // Restart recovery turns a running job without container or process metadata into an unknown one that nothing resolves.
+    pin(id("1"), "principal-1", NOW); f.store.startJob(id("1"), "principal-1", 0, NOW); f.store.reconcileInterruptedJobs(NOW);
+    pin(id("2"), "principal-1", NOW + 1); f.store.startJob(id("2"), "principal-1", 0, NOW + 1);
+    pin(id("3"), "principal-1", NOW + 2); pin(id("4"), "principal-1", NOW + 3); pin(id("5"), "another-owner", NOW + 4);
+    const refused = await refusal("remove-pinned");
+    assert.equal(refused.result_class, "CONFLICT");
+    const message = refused.error.message;
+    assert.ok(message.length < 512, `message is ${message.length} characters`);
+    assert.match(message, /blocked by 5 unfinished jobs/u);
+    assert.ok(message.includes(`${id("1")} (mac_test_run, unknown), ${id("2")} (mac_test_run, running), ${id("3")} (mac_test_run, queued), and 2 more`), message);
+    assert.doesNotMatch(message, new RegExp(`${id("4")}|${id("5")}`, "u"));
+    assert.match(message, /Queued or running jobs can be cancelled with mac_job_cancel; unknown jobs cannot be cancelled and stay until the owner reconciles the ledger/u);
+    assert.doesNotMatch(message, /primary or/u);
+    // Cancelling queued jobs frees them; the running job needs its runner to stop and the unknown job never leaves.
+    for (const [job, owner] of [[id("3"), "principal-1"], [id("4"), "principal-1"], [id("5"), "another-owner"]] as const) f.store.requestJobCancellation(job, owner, "synthetic-stop", NOW + 5);
+    const pinned = (await refusal("remove-pinned-2")).error.message;
+    assert.ok(pinned.includes(`blocked by 2 unfinished jobs on this project (${id("1")} (mac_test_run, unknown), ${id("2")} (mac_test_run, running)).`), pinned);
+    assert.equal(f.registry.list(f.project, "principal-1").length, 1);
+  } finally { await f.close(); }
+});
+
+test("V2 worktree list warns about pending and removing records that no other tool can show", async () => {
+  const f = await setup(); try {
+    const control = { timeoutMs: 30_000, shouldCancel: () => false };
+    const stuck = await f.create("task-stuck"); await f.create("task-ok");
+    // A locked worktree makes `git worktree remove` fail after the record was persisted as removing.
+    git(f.project, ["worktree", "lock", stuck.worktree as string]);
+    await assert.rejects(f.registry.remove(f.project, stuck.worktree as string, "principal-1", "task-stuck", control, () => undefined, () => false, "stuck-remove"), /Git operation failed/u);
+    let checks = 0;
+    await assert.rejects(f.registry.create({ projectRoot: f.project, branchName: "codex/task-pending", baseRef: "HEAD", taskId: "task-pending", idempotencyKey: "pending-key", owner: "principal-1" },
+      control, () => { if (++checks >= 3) throw new Error("Authority revoked"); }), /revoked/u);
+    const listed = await f.handle("mac_git_worktree_list", { project_root: f.project });
+    assert.deepEqual((data(listed).worktrees as { task_id: string }[]).map(entry => entry.task_id), ["task-ok"]);
+    assert.deepEqual((listed as unknown as { warnings: string[] }).warnings, [
+      "Worktree for task task-stuck is removing and is not usable; needs operator reconciliation",
+      "Worktree for task task-pending is pending and is not usable; needs operator reconciliation"]);
   } finally { await f.close(); }
 });
