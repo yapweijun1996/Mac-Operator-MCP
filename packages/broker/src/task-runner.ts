@@ -129,9 +129,18 @@ export interface TaskRecoveryRequest {
 
 export type TaskVerificationStatus = "verified" | "failed" | "unknown" | "not_run";
 
+/**
+ * Wall-clock phases of a container task. `prepare` is the Engine checks plus container creation and ownership
+ * persistence, and `command` is the registered command or the coding controller run.
+ */
+export const TASK_PHASE_KEYS = ["prepare", "start", "snapshot", "stage", "command", "export", "import", "cleanup"] as const;
+export type TaskPhaseMs = Partial<Record<(typeof TASK_PHASE_KEYS)[number], number>>;
+
 export interface TaskExecutionResult {
   containerCleanupVerified?: boolean;
   changedPaths?: readonly string[];
+  /** Milliseconds spent in each phase the runner entered; absent for runners that do not time phases. */
+  phaseMs?: TaskPhaseMs;
   state: "completed" | "failed" | "cancelled" | "timed_out" | "unknown";
   resultClass: "SUCCEEDED" | "EXECUTION_FAILED" | "CANCELLED" | "TIMEOUT" | "OUTPUT_LIMIT" | "UNKNOWN_OUTCOME";
   exitCode: number | null;
@@ -1335,7 +1344,7 @@ export function requireTaskIsolationProof(
 export function validateTaskExecutionResult(value: unknown): TaskExecutionResult {
   if (!isPlainDataRecord(value) ||
       !hasRequiredKeys(value, ["state", "resultClass", "exitCode", "stdout", "stderr", "truncated", "durationMs", "verification"],
-      ["state", "resultClass", "exitCode", "stdout", "stderr", "truncated", "durationMs", "verification", "containerCleanupVerified", "changedPaths"])) {
+      ["state", "resultClass", "exitCode", "stdout", "stderr", "truncated", "durationMs", "verification", "containerCleanupVerified", "changedPaths", "phaseMs"])) {
     throw new BrokerError("EXECUTION_FAILED", "Task runner returned a malformed result");
   }
   const state = value.state;
@@ -1358,7 +1367,8 @@ export function validateTaskExecutionResult(value: unknown): TaskExecutionResult
   }
   if (value.containerCleanupVerified !== undefined && typeof value.containerCleanupVerified !== "boolean" ||
       value.changedPaths !== undefined && (!Array.isArray(value.changedPaths) || value.changedPaths.length > 10000 ||
-        value.changedPaths.some(path => typeof path !== "string" || !path || path.startsWith("/") || path.split("/").some((part: string) => part === ".." || part === ".git") || /[\x00-\x1f]/u.test(path)))) {
+        value.changedPaths.some(path => typeof path !== "string" || !path || path.startsWith("/") || path.split("/").some((part: string) => part === ".." || part === ".git") || /[\x00-\x1f]/u.test(path))) ||
+      value.phaseMs !== undefined && !isTaskPhaseMs(value.phaseMs)) {
     throw new BrokerError("EXECUTION_FAILED", "Container task result metadata is malformed");
   }
   const summary = verification.summary;
@@ -1369,6 +1379,7 @@ export function validateTaskExecutionResult(value: unknown): TaskExecutionResult
   return {
     ...(value.containerCleanupVerified === undefined ? {} : { containerCleanupVerified: value.containerCleanupVerified as boolean }),
     ...(value.changedPaths === undefined ? {} : { changedPaths: [...value.changedPaths as string[]] }),
+    ...(value.phaseMs === undefined ? {} : { phaseMs: { ...value.phaseMs as TaskPhaseMs } }),
     state: state as TaskExecutionResult["state"],
     resultClass: resultClass as TaskExecutionResult["resultClass"],
     exitCode: exitCode as number | null,
@@ -1381,6 +1392,12 @@ export function validateTaskExecutionResult(value: unknown): TaskExecutionResult
       ...(summary === undefined ? {} : { summary })
     }
   };
+}
+
+/** A data-only map from known task phases to whole milliseconds; also guards the audit projection of stored evidence. */
+export function isTaskPhaseMs(value: unknown): value is TaskPhaseMs {
+  return isPlainDataRecord(value) && Object.entries(value).every(([phase, ms]) =>
+    (TASK_PHASE_KEYS as readonly string[]).includes(phase) && typeof ms === "number" && Number.isSafeInteger(ms) && ms >= 0 && ms <= MAX_TASK_RESULT_DURATION_MS);
 }
 
 function hasExactKeys(value: Record<string, unknown>, allowed: readonly string[]): boolean {

@@ -61,7 +61,7 @@ import { GitBranchListInspector, GitDiffInspectorImpl, GitLogInspectorImpl, SAFE
 import { PackageInspectorImpl, validatePackageInspectRequest, type PackageInspector, type PackageManagerRequest } from "./package-inspector.js";
 import { createDockerProcessSupervisor, DOCKER_CODE_SIGNATURE_EXPECTATION, DOCKER_EXECUTABLE_CANDIDATES, DockerInspectorImpl, dockerObjectIdentityMatches, validateDockerLogsRequest, validateDockerObjectRequest, validateDockerStatusRequest, type DockerInspector, type DockerObjectType } from "./docker-inspector.js";
 import { assertContentDoesNotContainSecrets, redactBoundedText } from "./secret-policy.js";
-import { FailClosedTaskRunner, requireTaskIsolationProof, taskDescriptorDigest, validateTaskExecutionResult, validateTaskIsolationProof, type TaskExecutionResult, type TaskRecoveryRequest, type TaskRunner, type VirtualizationGuestTaskAdmission } from "./task-runner.js";
+import { FailClosedTaskRunner, isTaskPhaseMs, requireTaskIsolationProof, taskDescriptorDigest, validateTaskExecutionResult, validateTaskIsolationProof, type TaskExecutionResult, type TaskRecoveryRequest, type TaskRunner, type VirtualizationGuestTaskAdmission } from "./task-runner.js";
 import { TaskProfileRegistry, validateTaskProfileRegistry, validateTaskRunArguments, type ResolvedTaskProfile } from "./task-profile.js";
 import type { RootHelperSnapshotRequestAdmission } from "./root-helper-snapshot.js";
 import type { RootHelperSnapshotRequestAuthority } from "./root-helper-snapshot-authority.js";
@@ -4185,6 +4185,7 @@ export class Broker {
           ...(typeof row.evidence.taskId === "string" ? { task_id: row.evidence.taskId } : {}),
           ...(typeof row.evidence.worktree === "string" ? { worktree: row.evidence.worktree } : {}),
           ...(typeof row.evidence.durationMs === "number" ? { duration_ms: row.evidence.durationMs } : {}),
+          ...(isTaskPhaseMs(row.evidence.phaseMs) ? { phase_ms: row.evidence.phaseMs } : {}),
           ...(Array.isArray(row.evidence.changedPaths) ? { changed_paths: row.evidence.changedPaths.slice(0, 256) } : {}),
           ...(typeof row.evidence.commitId === "string" ? { commit_hash: row.evidence.commitId } : {})
         } : {}) })),
@@ -4481,7 +4482,8 @@ export class Broker {
         truncated: taskResult.truncated || stdout.truncated || stderr.truncated,
         auditTarget: `task_profile:${resolved.profile}`,
         auditEvidence: { jobId: execution.taskJob.jobId, state: execution.taskJob.state, verification: taskResult.verification.status,
-          ...(taskResult.changedPaths === undefined ? {} : { changedPaths: taskResult.changedPaths }) }
+          ...(taskResult.changedPaths === undefined ? {} : { changedPaths: taskResult.changedPaths }),
+          ...(taskResult.phaseMs === undefined ? {} : { phaseMs: taskResult.phaseMs }) }
       };
     } catch (error) {
       if (!terminalPersisted) {

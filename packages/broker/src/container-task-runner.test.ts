@@ -1,4 +1,4 @@
-import test from "node:test";
+import test, { type TestContext } from "node:test";
 import assert from "node:assert/strict";
 import { BrokerError, sha256 } from "@mac-operator/contracts";
 import { ContainerTaskRunner, type ContainerTaskRunnerOptions } from "./container-task-runner.js";
@@ -10,7 +10,7 @@ import { type CodexControllerRun, type CodexControllerResult, type CodexDynamicT
 import { createWorkspaceArchive, type ContainerSnapshot, type SnapshotFile } from "./container-snapshot.js";
 import { type ContainerTaskJobMetadata } from "./container-job-metadata.js";
 import { type ResolvedTaskProfile } from "./task-profile.js";
-import { type TaskExecutionControl, type TaskIsolationProof } from "./task-runner.js";
+import { TASK_PHASE_KEYS, validateTaskExecutionResult, type TaskExecutionControl, type TaskExecutionResult, type TaskIsolationProof } from "./task-runner.js";
 
 const IMAGE = `sha256:${"a".repeat(64)}`;
 const ENGINE = "engine-unit-test";
@@ -102,6 +102,36 @@ async function waiting(_options: ContainerExecOptions, request: ContainerEngineC
     if (request.signal?.aborted) reject(new BrokerError("CANCELLED", "Cancelled"));
     else request.signal?.addEventListener("abort", () => reject(new BrokerError("CANCELLED", "Cancelled")), { once: true });
   });
+}
+
+/** The runner's own result must survive the Broker's validator, and its phases can never add up to more than the whole run. */
+function assertPhaseTiming(result: TaskExecutionResult): Record<string, number> {
+  assert.deepEqual(validateTaskExecutionResult(result), result);
+  const phaseMs = result.phaseMs as Record<string, number>;
+  assert.ok(phaseMs);
+  for (const [phase, ms] of Object.entries(phaseMs)) {
+    assert.ok((TASK_PHASE_KEYS as readonly string[]).includes(phase), phase);
+    assert.ok(Number.isSafeInteger(ms) && ms >= 0, `${phase}: ${ms}`);
+  }
+  assert.ok(Object.values(phaseMs).reduce((sum, ms) => sum + ms, 0) <= result.durationMs);
+  return phaseMs;
+}
+/**
+ * A runner whose Engine, snapshot, controller and import steps each move a mocked wall clock by a fixed amount, so every phase
+ * has an exact expected duration: create 3, start 5, snapshot 4, upload 7, exec 11, download 13, kill 2.
+ */
+function timedRunner(t: TestContext, engine: FakeEngine, options: Partial<ContainerTaskRunnerOptions> = {}): { task: ContainerTaskRunner; advance: (ms: number) => void } {
+  let now = 1_000_000;
+  t.mock.method(Date, "now", () => now);
+  const advance = (ms: number): void => { now += ms; };
+  const slow = <A extends unknown[], R>(operation: (...args: A) => Promise<R>, ms: number) => async (...args: A): Promise<R> => { advance(ms); return operation(...args); };
+  engine.create = slow(engine.create.bind(engine), 3);
+  engine.start = slow(engine.start.bind(engine), 5);
+  engine.uploadArchive = slow(engine.uploadArchive.bind(engine), 7);
+  engine.exec = slow(engine.exec.bind(engine), 11);
+  engine.downloadArchive = slow(engine.downloadArchive.bind(engine), 13);
+  engine.kill = slow(engine.kill.bind(engine), 2);
+  return { advance, task: runner(engine, { snapshotProvider: (root, readonlyWorkspace) => { advance(4); return snapshot(root, readonlyWorkspace); }, ...options }) };
 }
 
 test("Container runner requires explicit accepted image/Engine evidence and never runs by default", async () => {
@@ -281,6 +311,8 @@ for (const mode of ["timeout", "cancel"] as const) {
     assert.equal(result.state, mode === "timeout" ? "timed_out" : "cancelled"); assert.equal(result.containerCleanupVerified, true);
     if (mode === "timeout") assert.match(result.stderr, /^Container task exceeded its deadline of 40 ms in phase "[a-z]+"; it covers Engine checks, container start, workspace staging and the command/u);
     assert.ok(engine.events.includes("remove")); assert.ok(!engine.events.includes("download"));
+    const phaseMs = assertPhaseTiming(result);
+    assert.ok("command" in phaseMs && "cleanup" in phaseMs, JSON.stringify(phaseMs));
   });
 }
 
@@ -489,4 +521,51 @@ test("Excluded output paths are rejected before any host import even when a regi
   });
   const result = await task.run(profile(undefined, "workspace-write"), control());
   assert.equal(result.state, "failed"); assert.equal(result.containerCleanupVerified, true); assert.equal(imports, 0); assert.deepEqual(result.changedPaths, []);
+});
+
+test("Container runner reports per-phase timing for a registered command and the Broker validator accepts it unchanged", async t => {
+  const { task } = timedRunner(t, new FakeEngine());
+  const result = await task.run(profile(), control());
+  assert.equal(result.state, "completed");
+  assert.deepEqual(assertPhaseTiming(result), { prepare: 3, start: 5, snapshot: 4, stage: 7, command: 11, cleanup: 2 });
+  assert.equal(result.durationMs, 3 + 5 + 4 + 7 + 11 + 2);
+});
+
+test("Container runner times export and import and books the coding controller run as the command phase", async t => {
+  let advance = (_ms: number): void => {};
+  const timed = timedRunner(t, new FakeEngine(), { controller: { run: async () => { advance(9); return complete(); } },
+    importChanges: () => { advance(6); return ["src/main.js"]; } });
+  advance = timed.advance;
+  const { task } = timed;
+  const written = await task.run(profile(undefined, "workspace-write"), control());
+  assert.equal(written.state, "completed");
+  assert.deepEqual(assertPhaseTiming(written), { prepare: 3, start: 5, snapshot: 4, stage: 7, command: 9, export: 13, import: 6, cleanup: 2 });
+  const read = await task.run(profile(undefined, "readonly"), control());
+  assert.deepEqual(assertPhaseTiming(read), { prepare: 3, start: 5, snapshot: 4, stage: 7, command: 9, cleanup: 2 });
+});
+
+test("Container runner keeps the timing of the phase that failed and still times cleanup", async t => {
+  const engine = new FakeEngine();
+  const { task, advance } = timedRunner(t, engine);
+  const upload = engine.uploadArchive;
+  engine.uploadArchive = async (...args) => { await upload(...args); advance(20); throw new BrokerError("EXECUTION_FAILED", "Container Engine response transport failed"); };
+  const failed = await task.run(profile(), control());
+  assert.equal(failed.state, "failed");
+  assert.deepEqual(assertPhaseTiming(failed), { prepare: 3, start: 5, snapshot: 4, stage: 27, cleanup: 2 });
+});
+
+test("Container runner times a teardown it could not verify", async t => {
+  const engine = new FakeEngine(); engine.failKill = true;
+  const { task } = timedRunner(t, engine);
+  const result = await task.run(profile(), control());
+  assert.equal(result.state, "unknown"); assert.equal(result.containerCleanupVerified, false);
+  assert.deepEqual(assertPhaseTiming(result), { prepare: 3, start: 5, snapshot: 4, stage: 7, command: 11, cleanup: 2 });
+});
+
+test("Container runner has no cleanup timing when no container was ever created", async t => {
+  const engine = new FakeEngine(); engine.createsUnknown = true;
+  const { task } = timedRunner(t, engine);
+  const result = await task.run(profile(), control());
+  assert.equal(result.state, "unknown");
+  assert.deepEqual(assertPhaseTiming(result), { prepare: 3 });
 });

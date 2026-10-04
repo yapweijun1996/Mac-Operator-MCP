@@ -170,6 +170,54 @@
                   "minimum": 0,
                   "maximum": 1200000
                 },
+                "phase_ms": {
+                  "type": "object",
+                  "description": "Milliseconds a completed container task spent per phase (command covers the registered command or coding run); phases never entered are absent.",
+                  "additionalProperties": false,
+                  "properties": {
+                    "prepare": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 1200000
+                    },
+                    "start": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 1200000
+                    },
+                    "snapshot": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 1200000
+                    },
+                    "stage": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 1200000
+                    },
+                    "command": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 1200000
+                    },
+                    "export": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 1200000
+                    },
+                    "import": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 1200000
+                    },
+                    "cleanup": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 1200000
+                    }
+                  },
+                  "required": []
+                },
                 "changed_paths": {
                   "type": "array",
                   "maxItems": 256,

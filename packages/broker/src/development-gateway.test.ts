@@ -98,6 +98,8 @@ test("V2 registered validation commands use bounded managed jobs and reject arbi
     const injected = await f.handle("mac_test_run", { ...args, script: "sudo whoami", idempotency_key: "bad" }); assert.equal(injected.ok, false); assert.equal(f.calls, 1);
     const unknown = await f.handle("mac_build_run", { ...args, profile: "unregistered", idempotency_key: "unknown" }); assert.equal(unknown.ok, false);
     const audit = data(await f.handle("mac_execution_audit", { project_root: f.project })); assert.ok((audit.events as { scope: string[] }[]).some(row => row.scope.includes("mac.task.run")));
+    // A host process runner reports no phase timing, so its runs add no phase_ms to the audit view.
+    assert.ok((audit.events as { phase_ms?: unknown }[]).every(row => row.phase_ms === undefined));
     const limited = await f.handle("mac_execution_audit", { project_root: f.project, limit: 1 }); assert.equal(limited.ok, true);
     const envelope = limited as unknown as { truncated: boolean; warnings: string[]; data: { truncated: boolean } };
     assert.equal(envelope.data.truncated, true); assert.equal(envelope.truncated, true); assert.ok(envelope.warnings.some(w => /limited to the newest 1/u.test(w)));

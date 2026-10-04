@@ -13,7 +13,7 @@ import { type CodexController, type CodexControllerResult, type CodexDynamicTool
 import { freezeResolvedTaskProfile, type ResolvedTaskProfile, type ContainerExecutionDescriptor } from "./task-profile.js";
 import {
   requireTaskIsolationProof, validateTaskIsolationProof,
-  type TaskRunner, type TaskExecutionControl, type TaskExecutionResult, type TaskIsolationProof
+  type TaskRunner, type TaskExecutionControl, type TaskExecutionResult, type TaskIsolationProof, type TaskPhaseMs
 } from "./task-runner.js";
 import { assertContentDoesNotContainSecrets, assertArgumentsDoNotContainSecrets, redactBoundedText } from "./secret-policy.js";
 import { isPlainDataRecord } from "./plain-record.js";
@@ -24,6 +24,13 @@ const MAX_RUNTIME_MS = 600_000;
 const TOOL_OUTPUT_BYTES = 128 * 1024;
 const TOOL_ARGUMENT_BYTES = 48 * 1024;
 const FILE_BYTES = 16 * 1024;
+
+type ExecutionPhase = "create" | "ownership" | "start" | "snapshot" | "stage" | "controller" | "command" | "export" | "import";
+// Reported timing groups the phases that are one cost to an operator: creation and its ownership record, then the task body.
+const PHASE_TIMING_KEY: Record<ExecutionPhase, Exclude<keyof TaskPhaseMs, "cleanup">> = {
+  create: "prepare", ownership: "prepare", start: "start", snapshot: "snapshot", stage: "stage",
+  controller: "command", command: "command", export: "export", import: "import"
+};
 
 type Engine = Pick<DockerContainerEngine, "info" | "inspectImage" | "create" | "start" | "inspect" | "exec" | "uploadArchive" | "downloadArchive" | "kill" | "remove">;
 export interface RegisteredContainerCommand {
@@ -173,8 +180,17 @@ export class ContainerTaskRunner implements TaskRunner {
     let createAttempted = false;
     let snapshot: ContainerSnapshot | undefined;
     let result = outcome("unknown", "UNKNOWN_OUTCOME", null, "", "Task result has not been established", 0);
-    let phase: "create" | "ownership" | "start" | "snapshot" | "stage" | "controller" | "command" | "export" | "import" = "create";
+    let phase: ExecutionPhase = "create";
     let reason: "timeout" | "cancel" | undefined;
+    // Each lap books the time since the previous lap to the phase that just ended; a stepped clock cannot make it negative.
+    const phaseMs: TaskPhaseMs = {};
+    let lapped = started;
+    const lap = (): void => {
+      const now = Date.now(), key = PHASE_TIMING_KEY[phase];
+      phaseMs[key] = (phaseMs[key] ?? 0) + Math.max(0, now - lapped);
+      lapped = now;
+    };
+    const enter = (next: ExecutionPhase): void => { lap(); phase = next; };
     const check = (): void => {
       if (Date.now() >= deadline) { reason = "timeout"; abort.abort(); }
       if (this.closed || control.shouldCancel()) { reason = "cancel"; abort.abort(); }
@@ -201,28 +217,28 @@ export class ContainerTaskRunner implements TaskRunner {
         recordedAtMs, deadlineAtMs: Math.max(recordedAtMs + 1, Math.min(deadline, recordedAtMs + handle.maxRuntimeMs))
       };
       // Async acknowledgements cannot prove durable ownership before guest code starts.
-      phase = "ownership";
+      enter("ownership");
       const acknowledged = control.onContainerCreated!(Object.freeze(metadata));
       if (acknowledged !== undefined) throw new BrokerError("AUDIT_UNAVAILABLE", "Container ownership persistence must complete synchronously");
       check();
-      phase = "start";
+      enter("start");
       await this.engine!.start(handle, { signal: abort.signal, timeoutMs: remaining(deadline) });
       check();
-      phase = "snapshot";
+      enter("snapshot");
       snapshot = await this.snapshotProvider(profile.cwd, handle.readonlyWorkspace, this.snapshotExcludedPaths, check);
       check();
-      phase = "stage";
+      enter("stage");
       await this.engine!.uploadArchive(handle, snapshot.archive, { signal: abort.signal, timeoutMs: remaining(deadline) });
       check();
       if (profile.containerExecution!.agent) {
         const agent = profile.containerExecution!.agent;
-        phase = "controller";
+        enter("controller");
         const coding = await raceAbort(this.controller!.run({ cwd: profile.cwd, task: agent.task,
           ...(agent.model === undefined ? {} : { model: agent.model }), maxRuntimeMs: remaining(deadline), executionProfile: agent.executionProfile,
           dynamicTools: this.dynamicTools(handle, profile.containerExecution!, deadline, abort.signal, check), signal: abort.signal }), abort.signal);
         result = mapCoding(coding, profile.process.outputCapBytes);
       } else {
-        phase = "command";
+        enter("command");
         const executed = await this.engine!.exec(handle, { command: [profile.process.executable, ...profile.process.args],
           timeoutMs: remaining(deadline), outputCapBytes: profile.process.outputCapBytes }, { signal: abort.signal });
         result = outcome(executed.exitCode === 0 ? "completed" : "failed", executed.exitCode === 0 ? "SUCCEEDED" : "EXECUTION_FAILED",
@@ -230,13 +246,13 @@ export class ContainerTaskRunner implements TaskRunner {
       }
       check();
       if (result.state === "completed" && profile.containerExecution!.agent?.executionProfile === "workspace-write") {
-        phase = "export";
+        enter("export");
         const archive = await this.engine!.downloadArchive(handle, { signal: abort.signal, timeoutMs: remaining(deadline) });
         check();
         const files = this.parseArchive(archive, false);
         if (files.some(file => this.isExcluded(file.path))) deny("Task output cannot recreate an excluded snapshot path");
         check();
-        phase = "import";
+        enter("import");
         this.importChanges(snapshot, files, profile.containerExecution!.agent?.allowedPaths ?? [], {
           beforeWrite: check,
           onWriteIntent: path => notifyImport(control, path, "intent"),
@@ -248,13 +264,16 @@ export class ContainerTaskRunner implements TaskRunner {
     } finally {
       clearTimeout(timer); clearInterval(monitor);
       abort.abort();
+      lap();
+      const cleanupStarted = Date.now();
       const cleanupVerified = handle === undefined ? !createAttempted : await this.cleanup(handle);
+      if (handle !== undefined) phaseMs.cleanup = Math.max(0, Date.now() - cleanupStarted);
       if (!cleanupVerified) result = outcome("unknown", "UNKNOWN_OUTCOME", null, "", "Owned container teardown remains unverified", 0);
       const stdout = redactBoundedText(result.stdout, profile.process.outputCapBytes);
       const stderrBudget = Math.max(0, profile.process.outputCapBytes - Buffer.byteLength(stdout.text));
       const stderr = stderrBudget > 0 ? redactBoundedText(result.stderr, stderrBudget) : { text: "", truncated: result.stderr.length > 0 };
       result = { ...result, stdout: stdout.text, stderr: stderr.text, truncated: result.truncated || stdout.truncated || stderr.truncated,
-        durationMs: Date.now() - started, containerCleanupVerified: cleanupVerified, changedPaths: [...changedPaths] };
+        durationMs: Date.now() - started, containerCleanupVerified: cleanupVerified, changedPaths: [...changedPaths], phaseMs };
     }
     return result;
   }

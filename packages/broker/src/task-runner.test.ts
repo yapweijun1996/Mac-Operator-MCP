@@ -8,7 +8,7 @@ import { BrokerError, canonicalJson, sha256 } from "@mac-operator/contracts";
 import { DescriptorSnapshotAttestationSigner } from "./descriptor-snapshot-attestation.js";
 import { VirtualizationGuestVmLifecycle } from "./virtualization-guest-lifecycle.js";
 import { virtualizationGuestAttestationSigningPayload, type SignedVirtualizationGuestAttestation } from "./virtualization-guest-attestation.js";
-import { assertTaskRunnerPublicEnablement, FailClosedTaskRunner, RootHelperSnapshotTaskRunner, VirtualizationGuestTransportExecutor, VirtualizationTaskRunner, requireTaskIsolationProof, validateTaskExecutionResult, validateTaskIsolationProof, validateVirtualizationGuestAttestation, virtualizationProfileDigest, virtualizationTaskDigest, type DescriptorSnapshotTaskRegistry, type TaskExecutionResult, type TaskIsolationProof, type VirtualizationGuestTransport, type VirtualizationGuestAttestation, type VirtualizationGuestIdentity } from "./task-runner.js";
+import { assertTaskRunnerPublicEnablement, FailClosedTaskRunner, isTaskPhaseMs, RootHelperSnapshotTaskRunner, TASK_PHASE_KEYS, VirtualizationGuestTransportExecutor, VirtualizationTaskRunner, requireTaskIsolationProof, validateTaskExecutionResult, validateTaskIsolationProof, validateVirtualizationGuestAttestation, virtualizationProfileDigest, virtualizationTaskDigest, type DescriptorSnapshotTaskRegistry, type TaskExecutionResult, type TaskIsolationProof, type VirtualizationGuestTransport, type VirtualizationGuestAttestation, type VirtualizationGuestIdentity } from "./task-runner.js";
 import type { LoadedVirtualizationGuestImage } from "./virtualization-guest-image.js";
 import type { ResolvedTaskProfile } from "./task-profile.js";
 
@@ -261,6 +261,37 @@ test("task runner result validation accepts bounded verified results", () => {
     verification: { status: "verified", summary: "exit status and postcondition checked" }
   };
   assert.deepEqual(validateTaskExecutionResult(result), result);
+});
+
+test("task runner result validation accepts only whole-millisecond timings for known phases", () => {
+  const result: TaskExecutionResult = {
+    state: "completed", resultClass: "SUCCEEDED", exitCode: 0, stdout: "ok\n", stderr: "", truncated: false, durationMs: 70_500,
+    verification: { status: "verified" }, containerCleanupVerified: true
+  };
+  const phaseMs = { prepare: 12, start: 340, snapshot: 1_500, stage: 68_000, command: 93, cleanup: 210 };
+  const validated = validateTaskExecutionResult({ ...result, phaseMs });
+  assert.deepEqual(validated, { ...result, phaseMs });
+  assert.notEqual(validated.phaseMs, phaseMs);
+  const everyPhase = Object.fromEntries(TASK_PHASE_KEYS.map((phase) => [phase, 0]));
+  assert.deepEqual(validateTaskExecutionResult({ ...result, phaseMs: everyPhase }).phaseMs, everyPhase);
+  assert.deepEqual(validateTaskExecutionResult({ ...result, phaseMs: {} }).phaseMs, {});
+  assert.equal("phaseMs" in validateTaskExecutionResult(result), false);
+  const accessor: Record<string, unknown> = {};
+  Object.defineProperty(accessor, "stage", { enumerable: true, get: () => 1 });
+  for (const rejected of [
+    { stage: -1 }, { stage: 1.5 }, { stage: Number.NaN }, { stage: Number.POSITIVE_INFINITY }, { stage: "1" }, { stage: null }, { stage: 1_200_001 },
+    { staging: 1 }, { constructor: 1 }, { ...phaseMs, warmup: 1 },
+    Object.fromEntries(Array.from({ length: 1_000 }, (_unused, index) => [`phase${index}`, 1])),
+    accessor, Object.create(phaseMs), [1], null, "stage", 7
+  ]) {
+    assert.throws(
+      () => validateTaskExecutionResult({ ...result, phaseMs: rejected }),
+      (error: unknown) => error instanceof BrokerError && error.errorClass === "EXECUTION_FAILED",
+      JSON.stringify(rejected)
+    );
+  }
+  assert.equal(isTaskPhaseMs(phaseMs), true);
+  assert.equal(isTaskPhaseMs({ stage: -1 }), false);
 });
 
 test("task runner result validation rejects malformed or oversized verification evidence", () => {

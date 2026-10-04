@@ -19,7 +19,7 @@ import type { FilesystemRootPolicy } from "./filesystem-inspector.js";
 import { ManagedWorktrees } from "./managed-worktrees.js";
 import { BrokerStore } from "./persistence.js";
 import type { ResolvedTaskProfile } from "./task-profile.js";
-import { taskDescriptorDigest, type TaskExecutionControl, type TaskExecutionResult, type TaskRunner } from "./task-runner.js";
+import { TASK_PHASE_KEYS, taskDescriptorDigest, type TaskExecutionControl, type TaskExecutionResult, type TaskRunner } from "./task-runner.js";
 
 const require = createRequire(import.meta.url);
 const Ajv2020 = require("ajv/dist/2020").default;
@@ -632,6 +632,58 @@ test("Container Broker accept receipts warn only when the token expires before m
     assert.match(longReplay[1]!, tokenWarning);
     assert.equal(f.calls, 2);
     await f.primaryUnchanged();
+  } finally { await f.close(); }
+});
+
+test("Container Broker audits per-phase timing of a completed run and mac_execution_audit projects it under the contract", async () => {
+  const contract = JSON.parse(await readFile(join(repositoryRoot, "tool-contracts", "mac_execution_audit.json"), "utf8"));
+  assert.deepEqual(Object.keys(contract.output_schema.properties.data.properties.events.items.properties.phase_ms.properties), [...TASK_PHASE_KEYS]);
+  const phaseMs = { prepare: 12, start: 340, snapshot: 1_500, stage: 68_000, command: 93, cleanup: 210 };
+  let outcome: "completed" | "failed" | "untimed" = "completed";
+  const f = await fixture({ async run() {
+    if (outcome === "untimed") return success();
+    return outcome === "completed" ? { ...success(), phaseMs }
+      : { ...success(), state: "failed", resultClass: "EXECUTION_FAILED", exitCode: 1, verification: { status: "failed" }, phaseMs };
+  } });
+  const auditEvents = async () => {
+    const result = await f.handle("mac_execution_audit", { project_root: f.project, limit: 100 });
+    assert.deepEqual(await receiptWarnings(result), []);
+    return data(result).events as Array<{ tool: string; result: string; phase_ms?: Record<string, number> }>;
+  };
+  try {
+    const worktree = await f.create();
+    assert.equal((await settle(f, (await f.validate(worktree, "timed-completed")).receipt)).state, "completed");
+    const timed = (await auditEvents()).filter(event => event.phase_ms !== undefined);
+    assert.equal(timed.length, 1);
+    assert.equal(timed[0]!.tool, "mac_test_run");
+    assert.equal(timed[0]!.result, "SUCCEEDED");
+    assert.deepEqual(timed[0]!.phase_ms, phaseMs);
+
+    // Only completed runs carry phase data: failed and untimed runs add no phase_ms to the audit view.
+    outcome = "failed";
+    assert.equal((await settle(f, (await f.validate(worktree, "timed-failed")).receipt)).state, "failed");
+    outcome = "untimed";
+    assert.equal((await settle(f, (await f.validate(worktree, "untimed-completed")).receipt)).state, "completed");
+    const events = await auditEvents();
+    assert.equal(events.filter(event => event.phase_ms !== undefined).length, 1);
+    assert.ok(events.filter(event => event.tool === "mac_test_run" && event.result === "SUCCEEDED").length >= 2);
+    f.store.verifyAuditIntegrity();
+    await f.primaryUnchanged();
+  } finally { await f.close(); }
+});
+
+test("Container Broker leaves out stored phase timing that does not satisfy the contract", async () => {
+  const f = await fixture();
+  try {
+    for (const [index, stored] of [{ warmup: 5 }, { stage: -1 }, { stage: 1.5 }, "stage"].entries()) {
+      f.store.appendAudit({ requestId: `stored-phase-${index}`, principalId: "principal-1", tool: "mac_test_run", eventType: "completion", decision: "allow",
+        resultClass: "SUCCEEDED", targetRef: `project:${f.project}`, policyVersion: "policy-0.1", timestampMs: NOW, evidence: { scopes: ["mac.task.run"], phaseMs: stored } });
+    }
+    const result = await f.handle("mac_execution_audit", { project_root: f.project, limit: 100 });
+    assert.deepEqual(await receiptWarnings(result), []);
+    const stored = (data(result).events as Array<{ request_id: string; phase_ms?: unknown }>).filter(event => event.request_id.startsWith("stored-phase-"));
+    assert.equal(stored.length, 4);
+    assert.ok(stored.every(event => !("phase_ms" in event)));
   } finally { await f.close(); }
 });
 
