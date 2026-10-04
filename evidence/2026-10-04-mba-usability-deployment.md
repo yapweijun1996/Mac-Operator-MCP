@@ -139,3 +139,18 @@ and saved. Rollback: restore that file, `pm2 delete mba-mcp`,
 Evidence: PM2 online, restart 0, Auth and Edge children on the new release, `/mcp` 401, both `.well-known` 200.
 Not verified through an authenticated MCP call. Pending checks from an MBA connector: `mac_read_file` on `~/.zshrc`
 returns `SECRET_PATH_ACCESS`; a `mac_build_run` started near token expiry returns the token-lifetime warning.
+
+## Eighth deployment — release `v2-usability8-20261004-60f71ea`
+
+Source revision 60f71ea1fec957884f4bbacbf1f2d975bdd26d1f (`mac_git_worktree_remove` also deletes the task branch with
+`git branch -d`; a branch with unmerged commits is kept and reported). Previous release
+`v2-usability7-20261004-eb3a9c5` retained. Copy of the running release plus `broker.js`, `managed-worktrees.js`,
+`managed-worktrees.d.ts` and the `mac_git_worktree_remove` contract. No queued/running jobs (completed 80 / cancelled 1 /
+failed 7 / unknown 25). Only the three unsigned Edge fields changed (original:
+`edge-service.json.before-usability8-20261004`, mode 0600). PM2 recreated from `mba-mcp.usability8.ecosystem.json`
+and saved. Rollback: restore that file, `pm2 delete mba-mcp`,
+`pm2 start mba-mcp.pre-usability8.ecosystem.json`, `pm2 save`.
+
+Evidence: PM2 online, restart 0, Auth and Edge children on the new release, `/mcp` 401, both `.well-known` 200.
+Not verified through an authenticated MCP call. Pending checks from an MBA connector: create a `codex/` worktree and
+remove it, expecting `branch_deleted: true`; `mac_read_file` on `~/.zshrc` expecting `SECRET_PATH_ACCESS`.
