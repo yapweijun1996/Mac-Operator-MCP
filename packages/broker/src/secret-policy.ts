@@ -8,7 +8,9 @@ const DENIED_BASENAMES = new Set([
   ".bash_history", ".zsh_history", ".fish_history", ".node_repl_history", ".python_history",
   ".irb_history", ".psql_history", ".sqlite_history", ".lesshst", ".wget-hsts",
   "bash_history", "zsh_history", "fish_history", "node_repl_history", "python_history",
-  "irb_history", "psql_history", "sqlite_history", "lesshst", "wget-hsts"
+  "irb_history", "psql_history", "sqlite_history", "lesshst", "wget-hsts",
+  // Shell startup files routinely export opaque API keys that no token signature can recognise.
+  ".zshrc", ".zshenv", ".zprofile", ".zlogin", ".zlogout", ".bashrc", ".bash_profile", ".bash_login", ".profile", ".envrc"
 ]);
 
 /**
@@ -67,7 +69,7 @@ const SECRET_CONTENT_PATTERNS = [
   /\bBasic\s+[A-Za-z0-9+/=]{16,}\b/iu,
   /\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b/u,
   /\bxox[baprs]-[0-9A-Za-z-]{16,}\b/u,
-  /\b(?:api[_-]?key|client[_-]?secret|password|passwd|secret|token)\s*[:=]\s*["']?[^\s"']{8,}/iu
+  /(?<![A-Za-z0-9])(?:api[_-]?key|client[_-]?secret|password|passwd|secret|token)\s*[:=]\s*["']?[^\s"']{8,}/iu
 ];
 
 /**
@@ -133,7 +135,7 @@ const LOG_SECRET_REDACTION_PATTERNS: readonly RegExp[] = [
   /\bBasic\s+[A-Za-z0-9+/=]{16,}\b/giu,
   /\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b/gu,
   /\bxox[baprs]-[0-9A-Za-z-]{16,}\b/gu,
-  /\b(?:api[_-]?key|client[_-]?secret|password|passwd|secret|token)\s*[:=]\s*["']?[^\s"']{8,}/giu,
+  /(?<![A-Za-z0-9])(?:api[_-]?key|client[_-]?secret|password|passwd|secret|token)\s*[:=]\s*["']?[^\s"']{8,}/giu,
   /(?:\/(?:[^\r\n,;)]{1,512})\.(?:key|p8|p12|pfx|ppk|jks|keystore|mobileprovision|provisionprofile))(?=$|[\s,;)'"])/giu,
   /(?:\/(?:private\/)?Users\/[^/\s]+|\/(?:private\/)?var\/root)\/(?:\.ssh|\.gnupg|\.aws|\.azure|\.config\/(?:gcloud|gh)|\.kube|\.docker|Library\/(?:Keychains|Mail|Messages|Safari|Application Support\/(?:Google\/Chrome|BraveSoftware\/Brave-Browser|Microsoft Edge)|Containers\/com\.apple\.(?:mail|messages|safari))|Photos Library\.photoslibrary)(?:[^\r\n,;)]*)/giu,
   /(?:\/(?:private\/)?Users\/[^/\s]+|\/(?:private\/)?var\/root)\/\.?(?:bash_history|zsh_history|fish_history|node_repl_history|python_history|irb_history|psql_history|sqlite_history|lesshst|wget-hsts)(?=$|[\s,;)'"])/giu,

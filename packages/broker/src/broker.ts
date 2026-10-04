@@ -4459,6 +4459,9 @@ export class Broker {
     if (request.tool === "mac_job_status" || request.tool === "mac_job_cancel") {
       assertExactArguments(request.arguments, request.tool === "mac_job_status" ? ["job_id", "tail_bytes"] : ["job_id", "reason"]);
       validateJobArguments(request.tool, request.arguments);
+      if (typeof request.arguments.job_id !== "string" || !/^job:[A-Za-z0-9._-]{1,240}$/u.test(request.arguments.job_id)) {
+        throw new BrokerError("PRECONDITION_FAILED", "job_id must be the full id returned when the job was created, in the form job:<id>");
+      }
       const jobLookup = this.options.store.ownedJobStatus(request.arguments.job_id as string, request.principal.principalId);
       if (jobLookup.job === undefined && jobLookup.archived === undefined) throw new BrokerError("TARGET_NOT_FOUND", "Broker-owned job was not found");
       return {

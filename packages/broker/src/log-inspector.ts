@@ -8,6 +8,7 @@ const MAX_LINES = 2_000;
 const MAX_SINCE_SECONDS = 31_536_000;
 const MAX_EFFECTIVE_SINCE_SECONDS = 86_400;
 const MAX_OUTPUT_BYTES = 512 * 1024;
+const MAX_WINDOW_NARROWINGS = 4;
 const SOURCE_PATTERN = /^system$|^process\/[A-Za-z0-9._+-]{1,120}$/u;
 
 export interface SafeLogEntry {
@@ -41,18 +42,26 @@ export class MacLogInspector implements LogInspector {
 
   async tail(source: string, lines: number, sinceSeconds: number, control: LogExecutionControl): Promise<SafeLogTail> {
     validateLogRequest(source, lines, sinceSeconds);
-    const effectiveSince = Math.max(1, Math.min(sinceSeconds, MAX_EFFECTIVE_SINCE_SECONDS));
-    const args = ["show", "--last", `${effectiveSince}s`, "--style", "compact", "--no-pager"];
-    if (source.startsWith("process/")) args.push("--process", source.slice("process/".length));
-    const result = await this.supervisor.run({
-      executable: LOG_EXECUTABLE,
-      args,
-      cwd: LOG_CWD,
-      environment: {},
-      timeoutMs: Math.min(control.timeoutMs, 10_000),
-      outputCapBytes: MAX_OUTPUT_BYTES,
-      shouldCancel: control.shouldCancel
-    });
+    let effectiveSince = Math.max(1, Math.min(sinceSeconds, MAX_EFFECTIVE_SINCE_SECONDS));
+    const deadline = Date.now() + Math.min(control.timeoutMs, 10_000);
+    let result: ProcessExecutionResult;
+    // `log show` emits oldest records first and the output cap keeps only that prefix; narrow the window until the
+    // newest records fit so the tail really is the tail.
+    for (let attempt = 0; ; attempt += 1) {
+      const args = ["show", "--last", `${effectiveSince}s`, "--style", "compact", "--no-pager"];
+      if (source.startsWith("process/")) args.push("--process", source.slice("process/".length));
+      result = await this.supervisor.run({
+        executable: LOG_EXECUTABLE,
+        args,
+        cwd: LOG_CWD,
+        environment: {},
+        timeoutMs: Math.max(1_000, deadline - Date.now()),
+        outputCapBytes: MAX_OUTPUT_BYTES,
+        shouldCancel: control.shouldCancel
+      });
+      if (result.resultClass !== "OUTPUT_LIMIT" || effectiveSince <= 1 || attempt >= MAX_WINDOW_NARROWINGS || deadline - Date.now() < 1_500) break;
+      effectiveSince = Math.max(1, Math.floor(effectiveSince / 4));
+    }
     return parseLogResult(source, lines, sinceSeconds, effectiveSince, result);
   }
 }
@@ -135,7 +144,11 @@ function parseLogResult(
   }
   if (partialTailDropped) warnings.push("The final partial log record was dropped");
   if (entries.length > lines) warnings.push("Log entries were limited to the requested line budget");
-  if (requestedSinceSeconds > effectiveSinceSeconds) warnings.push("The requested log window was capped at 24 hours");
+  if (requestedSinceSeconds > effectiveSinceSeconds) {
+    warnings.push(requestedSinceSeconds > MAX_EFFECTIVE_SINCE_SECONDS && effectiveSinceSeconds === MAX_EFFECTIVE_SINCE_SECONDS
+      ? "The requested log window was capped at 24 hours"
+      : `The log window was narrowed to the last ${effectiveSinceSeconds}s because the full window exceeded the output budget`);
+  }
   if (entries.some((entry) => entry.message.includes("[REDACTED]"))) warnings.push("Sensitive log content was redacted");
   return {
     source,

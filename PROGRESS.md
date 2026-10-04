@@ -6852,3 +6852,19 @@ and `mac_storage_analysis` consumers deliberately list nested aggregates (`.git`
 reporter's observations may also reflect an older build: CloudStorage skipping and recent-file ranking were
 already fixed in the previous entry. Tests: broker, inspector and log suites pass; the filesystem pressure
 test fails identically on the baseline.
+
+## October 4, 2026: fifth MCP review triage (33-call read-only report; source only until deployed)
+
+HIGH, fixed: `mac_read_file` returned an exported API key from `~/.zshrc`. Two gaps: shell startup files
+(`.zshrc`, `.zshenv`, `.zprofile`, `.zlogin`, `.bashrc`, `.bash_profile`, `.profile`, `.envrc`) were not denied by
+name, and the generic `api_key|token|secret|password = value` signature began with `\b`, which never matches
+after `_` (`KB_API_KEY=...`, `GITHUB_TOKEN=...`); content scan and log redaction now use a
+non-alphanumeric lookbehind. Also fixed: `mac_log_tail` now narrows the window (x1/4, up to four times)
+until the newest records fit the output budget and says so; `mac_git_diff` accepts ancestor forms such as
+`HEAD~1` and the error explains what is allowed; `mac_job_status` rejects a bare id with a message naming the
+`job:<id>` form; `mac_system_summary` prefixes the macOS product version. Not changed: listeners and Docker
+storage stay unavailable behind warnings, the `Documents/GitHub` clone is a stale second checkout
+(owner action: pull it), and `mac_project_summary` succeeding there is correct (tree is empty unless
+`include_tree` is set), `running_only` XPC helper noise. Owner action: rotate the exposed `KB_API_KEY`.
+Tests: 1620 pass; failures are the known baseline set plus the container-snapshot test, which fails
+identically without these changes.

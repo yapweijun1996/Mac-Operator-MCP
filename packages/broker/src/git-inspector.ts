@@ -604,13 +604,13 @@ export function validateGitDiffRequest(
   }
   if (typeof staged !== "boolean" || !isSafeGitRevision(base) ||
       !Number.isSafeInteger(maxBytes) || maxBytes < 1 || maxBytes > MAX_DIFF_BYTES) {
-    throw new BrokerError("PRECONDITION_FAILED", "Git diff arguments are outside the supported range");
+    throw new BrokerError("PRECONDITION_FAILED", "Git diff base must be a branch, tag, SHA or ancestor form such as HEAD~1 (no spaces, \"..\" or leading \"-\"; at most 128 characters), and max_bytes must be within the supported range");
   }
 }
 
 function isSafeGitRevision(ref: string | undefined, maxLength = 128): boolean {
   return ref === undefined || (typeof ref === "string" && ref.length <= maxLength &&
-    /^[A-Za-z0-9][A-Za-z0-9._/-]{0,255}$/u.test(ref) && !ref.includes(".."));
+    /^[A-Za-z0-9][A-Za-z0-9._/~^-]{0,255}$/u.test(ref) && !ref.includes(".."));
 }
 
 function isSafeGitPath(path: string): boolean {

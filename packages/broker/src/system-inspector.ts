@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { cpus, loadavg, machine, platform, release, totalmem, uptime, version } from "node:os";
 
 export interface SystemSummary {
@@ -19,7 +20,9 @@ export function inspectSystem(includeLoad: boolean): SystemSummary {
   const cpuCount = Math.max(1, Math.min(MAX_CPU_COUNT, cpus().length));
   const memoryBytes = Math.max(1, Math.min(MAX_MEMORY_BYTES, Math.floor(totalmem())));
   const uptimeSeconds = Math.max(0, Math.min(MAX_UPTIME_SECONDS, Math.floor(uptime())));
-  const osVersion = boundedVersion(version() || `${platform()} ${release()}`);
+  const kernel = version() || `${platform()} ${release()}`;
+  const productVersion = readMacProductVersion();
+  const osVersion = boundedVersion(productVersion ? `macOS ${productVersion}; ${kernel}` : kernel);
   const result: SystemSummary = {
     osVersion,
     architecture: boundedVersion(machine() || platform()),
@@ -41,4 +44,15 @@ function boundedVersion(value: string): string {
 
 function boundedLoad(value: number): number {
   return Number.isFinite(value) ? Math.max(0, Math.min(MAX_LOAD, value)) : 0;
+}
+
+/** The kernel string alone hides the marketing version; read it from the system version plist without spawning a process. */
+function readMacProductVersion(): string | undefined {
+  if (platform() !== "darwin") return undefined;
+  try {
+    const plist = readFileSync("/System/Library/CoreServices/SystemVersion.plist", "utf8");
+    return /<key>ProductVersion<\/key>\s*<string>(\d{1,3}(?:\.\d{1,3}){1,2})<\/string>/u.exec(plist)?.[1];
+  } catch {
+    return undefined;
+  }
 }

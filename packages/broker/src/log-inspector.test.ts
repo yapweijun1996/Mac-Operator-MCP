@@ -103,3 +103,20 @@ test("log inspector counts only date-prefixed lines it cannot parse as malformed
   assert.equal(result.entries.length, 1);
   assert.ok(result.warnings.includes("1 malformed log record was omitted"));
 });
+
+test("log inspector narrows the window until the newest records fit the output budget", async () => {
+  const windows: string[] = [];
+  const inspector = new MacLogInspector({
+    run: async (request) => {
+      windows.push(request.args[2]!);
+      return windows.length < 3
+        ? fakeResult("OUTPUT_LIMIT", "2026-09-14 12:00:00.000 Default kernel [x] oldest\n")
+        : fakeResult("SUCCEEDED", "2026-09-14 12:10:00.000 Default kernel [x] newest\n");
+    }
+  });
+  const result = await inspector.tail("system", 5, 600, { timeoutMs: 10_000, shouldCancel: () => false });
+  assert.deepEqual(windows, ["600s", "150s", "37s"]);
+  assert.equal(result.entries[0]?.message, "newest");
+  assert.ok(result.warnings.some((warning) => warning.includes("narrowed to the last 37s")));
+  assert.ok(!result.warnings.some((warning) => warning.includes("newest records are missing")));
+});

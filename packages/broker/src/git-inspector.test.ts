@@ -228,6 +228,8 @@ test("Git diff validates literal paths, revisions, and byte budgets", () => {
     assert.throws(() => validateGitDiffRequest("/tmp/project", [path]), BrokerError);
   }
   assert.throws(() => validateGitDiffRequest("/tmp/project", [], false, "HEAD..main"), BrokerError);
+  assert.doesNotThrow(() => validateGitDiffRequest("/tmp/project", [], false, "HEAD~1"));
+  assert.throws(() => validateGitDiffRequest("/tmp/project", [], false, "-HEAD"), BrokerError);
   assert.throws(() => validateGitDiffRequest("/tmp/project", [], false, undefined, 1_048_577), BrokerError);
 });
 

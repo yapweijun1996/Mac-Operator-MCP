@@ -237,3 +237,13 @@ test("bounded redaction never exceeds the requested UTF-8 byte budget", () => {
     assert.equal(bounded.truncated, true);
   }
 });
+
+test("shell startup files and prefixed API key assignments are protected", () => {
+  for (const name of [".zshrc", ".zshenv", ".zprofile", ".bashrc", ".bash_profile", ".profile"]) {
+    assert.throws(() => assertContentPathAllowed(`/Users/example/${name}`), /protected secret zone/u);
+  }
+  assert.throws(() => assertContentDoesNotContainSecrets(Buffer.from("export KB_API_KEY=abcd1234efgh5678\n")), /secret signature/u);
+  assert.throws(() => assertContentDoesNotContainSecrets(Buffer.from("GITHUB_TOKEN: abcd1234efgh5678\n")), /secret signature/u);
+  assert.equal(redactLogText("export KB_API_KEY=abcd1234efgh5678").redacted, true);
+  assert.doesNotThrow(() => assertContentDoesNotContainSecrets(Buffer.from("max_tokens: 4096\nTOKEN_URL=x\n")));
+});
