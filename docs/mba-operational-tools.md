@@ -82,3 +82,25 @@ The coding connection at `/mcp` exposes the 51 coding/GUI/read tools, and the
 independent `/terminal/mcp` connection provides owner terminal authority. The
 shared signed policy enables 53 implementations; neither connection silently
 inherits the other connection's additional scopes.
+
+## Development worktree workflow and its limits
+
+Behaviour observed in MBA probes that the tool schemas alone do not show:
+
+- **Branch names** for `mac_git_worktree_create` and `mac_git_branch_create` must start with `codex/`
+  (for example `codex/my-task`); the contract schema carries that pattern.
+- **Worktrees are not writable through the ordinary filesystem tools.** The signed policy denies
+  `DevelopmentWorktrees/MBA-MCP` to every ordinary root and grants no write root there, so
+  `mac_write_file_atomic` and `mac_apply_patch` return `POLICY_DENIED` inside a managed worktree. This is the
+  isolation the runbook requires, not a fault. Source changes in a worktree belong to `mac_codex_run`;
+  `mac_test_run` / `mac_build_run` validate the worktree as it is, so on an unmodified worktree they test
+  unmodified code. Making worktrees writable to MCP clients would be a new signed-policy decision.
+- **`mac_git_worktree_remove` does not delete the branch.** The `codex/...` branch stays in the project
+  repository (identical to its base when nothing was committed). Delete it from the owner terminal with
+  `git branch -d <branch>`.
+- **Container jobs show no live output.** `mac_job_status` returns empty `stdout`/`stderr` while a test, build or
+  task job is `running` (about 70-100 s, mostly workspace staging); output appears when the job finishes.
+  There is no phase or progress field.
+- **A task cannot outlive its access token.** Access tokens last five minutes and a task's authority ends when the
+  token expires. The accept receipt warns when the remaining lifetime is shorter than the task budget; a job
+  cancelled for that reason reports that the token expired. Start long tasks right after a token refresh.
