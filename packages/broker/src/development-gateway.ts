@@ -167,7 +167,7 @@ export class DevelopmentGateway {
     if (tool === "mac_git_push") throw new BrokerError("POLICY_DENIED", "HIGH_RISK_PUSH_UNAVAILABLE: separate supported push authorization is required");
     if (tool === "mac_pr_prepare" && !plan.worktree) throw new BrokerError("PRECONDITION_FAILED", "Review preparation requires a managed worktree");
     if (args.base_ref !== undefined && (typeof args.base_ref !== "string" || !/^[A-Za-z0-9][A-Za-z0-9._/-]{0,255}$/u.test(args.base_ref) || args.base_ref.includes(".."))) {
-      throw new BrokerError("PRECONDITION_FAILED", "Review base reference is malformed");
+      throw new BrokerError("PRECONDITION_FAILED", "Review base reference must be a branch, tag or commit name of letters, digits, . _ - and / (no \"..\", no revision expressions such as HEAD~1 or main@{1})");
     }
     if (args.limit !== undefined && (!Number.isSafeInteger(args.limit) || (args.limit as number) < 1 || (args.limit as number) > 100)) {
       throw new BrokerError("PRECONDITION_FAILED", "Audit limit must be between 1 and 100");

@@ -48,9 +48,10 @@
       },
       "base_ref": {
         "type": "string",
+        "description": "Branch, tag or commit name; no .. and no revision expressions such as HEAD~1 or main@{1}",
         "minLength": 1,
         "maxLength": 256,
-        "pattern": "^[A-Za-z0-9][A-Za-z0-9._/@~-]*$"
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9._/-]*$"
       }
     },
     "required": [

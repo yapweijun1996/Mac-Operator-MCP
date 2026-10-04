@@ -442,7 +442,7 @@ export function validateCreate(input: WorktreeCreateRequest): void {
   }
   if (typeof input.baseRef !== "string" || !/^[A-Za-z0-9][A-Za-z0-9._/-]{0,255}$/u.test(input.baseRef) ||
       input.baseRef.includes("..") || input.baseRef.includes("//")) {
-    throw new BrokerError("PRECONDITION_FAILED", "Worktree base reference is malformed");
+    throw new BrokerError("PRECONDITION_FAILED", "Worktree base reference must be a branch, tag or commit name of letters, digits, . _ - and / (no \"..\" or \"//\", no revision expressions such as HEAD~1 or main@{1})");
   }
 }
 

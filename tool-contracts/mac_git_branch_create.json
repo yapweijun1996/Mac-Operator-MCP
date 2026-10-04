@@ -41,16 +41,17 @@
       },
       "branch_name": {
         "type": "string",
-        "description": "Task branch; must start with codex/ (for example codex/my-task).",
+        "description": "Task branch; must start with codex/ (for example codex/my-task); letters, digits, . _ - and / only, at most 127 characters; no empty, dotted or .lock segments (no \"..\", \"//\", trailing \"/\", or segment starting or ending with \".\" or ending in \".lock\").",
         "minLength": 7,
         "maxLength": 127,
         "pattern": "^codex/[A-Za-z0-9][A-Za-z0-9._/-]*$"
       },
       "base_ref": {
         "type": "string",
+        "description": "Branch, tag or commit name; no .. and no revision expressions such as HEAD~1 or main@{1}",
         "minLength": 1,
         "maxLength": 256,
-        "pattern": "^[A-Za-z0-9][A-Za-z0-9._/@~-]*$"
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9._/-]*$"
       },
       "task_id": {
         "type": "string",
