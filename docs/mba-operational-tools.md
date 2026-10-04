@@ -76,15 +76,3 @@ The coding connection at `/mcp` exposes the 51 coding/GUI/read tools, and the
 independent `/terminal/mcp` connection provides owner terminal authority. The
 shared signed policy enables 53 implementations; neither connection silently
 inherits the other connection's additional scopes.
-
-The V2 Docker read tools use a fixed GET-only facade over the approved local
-Engine socket. Every connection verifies the socket identity and native peer;
-responses pass the same object identity, redaction and output bounds as the CLI
-adapter. No HTTP method, socket, endpoint or raw Engine response is caller
-selectable. The descriptor-required CLI adapter remains fail closed on hosts
-without that capability.
-
-Container input snapshots yield between descriptor-backed source reads. This
-keeps Broker job lease renewal, authority revocation, cancellation and health
-requests responsive while a large repository is staged. Yielding does not change
-secret filtering, path checks, archive limits or the task execution deadline.
