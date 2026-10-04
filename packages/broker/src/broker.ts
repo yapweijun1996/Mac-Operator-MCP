@@ -207,6 +207,9 @@ const VALIDATION_OUTCOME_CLASSES: ReadonlySet<string> = new Set(["SUCCEEDED", "F
 /** Tools whose runs count as validation evidence for mac_pr_prepare. */
 const VALIDATION_RUN_TOOLS: readonly string[] = ["mac_test_run", "mac_build_run", "mac_task_run"];
 
+/** A cancelled task job is replayed unchanged for its idempotency key, so running the task again needs a new key. */
+const CANCELLED_TASK_RERUN_ADVICE = "a re-run needs a NEW idempotency_key because the same key returns the cancelled job";
+
 /** Explains a truncated tree scan: a hit on the result cap is expected, anything else means a fixed traversal budget ended the scan. */
 function scanTruncationWarnings(truncated: boolean, found: number, requestedLimit: number): { warnings: string[] } | Record<string, never> {
   if (!truncated) return {};
@@ -4214,7 +4217,7 @@ export class Broker {
     if (budgetMs === undefined) return [];
     const remainingMs = request.principal.expiresAtMs - this.now();
     if (remainingMs >= budgetMs) return [];
-    return [`The access token authorizing this task expires in ${Math.max(0, Math.ceil(remainingMs / 1000))}s but the task may run up to ${Math.ceil(budgetMs / 1000)}s; a task still running at expiry is cancelled with "authority ended". If it is cancelled, retry once the client has refreshed its token`];
+    return [`The access token authorizing this task expires in ${Math.max(0, Math.ceil(remainingMs / 1000))}s but the task may run up to ${Math.ceil(budgetMs / 1000)}s; a task still running at expiry is cancelled, and ${CANCELLED_TASK_RERUN_ADVICE}`];
   }
 
   private taskJobReceipt(request: BrokerRequest, execution: ExecutionPlan, startedAt: number, reused: boolean): BrokerResult {
@@ -4237,7 +4240,10 @@ export class Broker {
         reused,
         ...(execution.taskRun.taskId === undefined ? {} : { task_id: execution.taskRun.taskId })
       },
-      warnings: this.taskTokenLifetimeWarnings(request, execution),
+      warnings: [
+        ...(reused ? [`IDEMPOTENT_REUSE: ${execution.taskJob.jobId} is ${execution.taskJob.state}; nothing was run again. Use a new idempotency_key to run it again.`] : []),
+        ...this.taskTokenLifetimeWarnings(request, execution)
+      ],
       truncated: false,
       verification: execution.development ? { required: true, status: "accepted", strategy: "exit_status_and_declared_task_verification" } :
         { required: true, status: "accepted", strategy: "exit_status_and_declared_task_verification" },
@@ -4404,9 +4410,12 @@ export class Broker {
       catch (error) {
         if (this.taskRunner.mechanism !== "docker-container" || taskResult.containerCleanupVerified !== true) throw error;
         authorityLost = true;
-        authorityLostReason = this.now() >= request.principal.expiresAtMs
-          ? `Task cancelled because the access token that authorized it expired at ${new Date(request.principal.expiresAtMs).toISOString()}; retry with a fresh token`
-          : "Task cancelled because its authority was revoked or the policy changed while it was running";
+        // Same order as ensureActiveAuthority, so the reason names the check that actually fired.
+        const cause = this.closing ? "Task cancelled because the Broker was shutting down"
+          : this.now() >= request.principal.expiresAtMs
+            ? `Task cancelled because the access token that authorized it expired at ${new Date(request.principal.expiresAtMs).toISOString()}`
+            : "Task cancelled because its authority was revoked or the policy changed while it was running";
+        authorityLostReason = `${cause}; ${CANCELLED_TASK_RERUN_ADVICE}`;
       }
       const rawOutputBytes = Buffer.byteLength(taskResult.stdout, "utf8") + Buffer.byteLength(taskResult.stderr, "utf8");
       const outputBudgetExceeded = taskResult.truncated || rawOutputBytes > resolved.process.outputCapBytes;

@@ -2,8 +2,10 @@ import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
+import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import test from "node:test";
 import { canonicalJson, sha256, signRequest, type BrokerResult, type Scope, type UnsignedBrokerRequest } from "@mac-operator/contracts";
 import { Broker } from "./broker.js";
@@ -19,13 +21,19 @@ import { BrokerStore } from "./persistence.js";
 import type { ResolvedTaskProfile } from "./task-profile.js";
 import { taskDescriptorDigest, type TaskExecutionControl, type TaskExecutionResult, type TaskRunner } from "./task-runner.js";
 
+const require = createRequire(import.meta.url);
+const Ajv2020 = require("ajv/dist/2020").default;
+const ajv = new Ajv2020({ strict: true, allErrors: true });
+require("ajv-formats").default(ajv);
+const validators = new Map<string, ReturnType<typeof ajv.compile>>();
+const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
 const NOW = 1_700_000_000_000;
 const IMAGE = `sha256:${"a".repeat(64)}`;
 const ENGINE = "container-broker-fixture";
 const PROFILE = "fixture.test";
 const scopes: Scope[] = ["mac.control.read", "mac.policy.explain", "mac.project.read", "mac.project.write", "mac.git.read", "mac.git.write", "mac.agent.read", "mac.agent.run", "mac.task.run", "mac.audit.read", "mac.job.read", "mac.job.cancel", "mac.files.read"];
 const success = (): TaskExecutionResult => ({ state: "completed", resultClass: "SUCCEEDED", exitCode: 0, stdout: "fixture validation", stderr: "", truncated: false, durationMs: 1, verification: { status: "verified" }, containerCleanupVerified: true });
-type RunContext = { store: BrokerStore; project: string; metadata: ContainerTaskJobMetadata };
+type RunContext = { store: BrokerStore; project: string; metadata: ContainerTaskJobMetadata; setClock: (ms: number) => void };
 type FixtureOptions = {
   run?: (profile: ResolvedTaskProfile, control: TaskExecutionControl, context: RunContext) => Promise<TaskExecutionResult>;
   proofImage?: string;
@@ -57,6 +65,9 @@ async function fixture(options: FixtureOptions = {}) {
   let profiles: ContainerTaskProfileRegistry;
   let store = new BrokerStore(join(state, "broker.sqlite"));
   let calls = 0;
+  // The Broker clock is mutable so a run can pass its token expiry. Keep any advance well under the 30 s job lease.
+  let clock = NOW;
+  const setClock = (ms: number): void => { clock = ms; };
   const recovered: ContainerTaskJobMetadata[] = [];
   const admitted: ContainerTaskJobMetadata[] = [];
   // This attestation is a protocol fixture, not evidence of real OS containment.
@@ -91,7 +102,7 @@ async function fixture(options: FixtureOptions = {}) {
       const evidence = JSON.parse(admission!.evidence_json as string);
       assert.equal(evidence.metadataDigest, sha256(canonicalJson(job.containerMetadata)));
       admitted.push(structuredClone(job.containerMetadata));
-      return options.run ? options.run(profile, control, { store, project, metadata: job.containerMetadata }) : success();
+      return options.run ? options.run(profile, control, { store, project, metadata: job.containerMetadata, setClock }) : success();
     },
     async recoverContainerTask(metadata) {
       assert.equal(metadata.engineId, ENGINE);
@@ -118,21 +129,21 @@ async function fixture(options: FixtureOptions = {}) {
       async resolve(input, record) { return profiles.resolveAgent({ cwd: record.worktree, projectRoot: record.projectRoot, taskId: record.taskId, task: input.task as string, executionProfile: input.execution_profile as "readonly" | "workspace-write" | "test-only", maxRuntimeMs: input.max_runtime as number, ...(input.model === undefined ? {} : { model: input.model as string }), ...(input.allowed_paths === undefined ? {} : { allowedPaths: input.allowed_paths as string[] }) }); }
     };
     gateway = new DevelopmentGateway({ worktrees: registry, codingAgent: provider, commands: [{ projectRoot: project, type: "test", profile: PROFILE }] });
-    return new Broker({ store, policy, developmentGateway: gateway, taskRunner: runner, taskProfileRegistry: profiles, now: () => NOW,
+    return new Broker({ store, policy, developmentGateway: gateway, taskRunner: runner, taskProfileRegistry: profiles, now: () => clock,
       edgeAuthenticationKeys: new EdgeKeyring([{ edgeId: "edge-1", keyId: "edge-key-1", key, notBeforeMs: NOW - 1000, expiresAtMs: NOW + 120_000 }]) });
   }
   let broker = buildBroker();
   let index = 0;
-  function request(tool: string, args: Record<string, unknown>): UnsignedBrokerRequest {
+  function request(tool: string, args: Record<string, unknown>, expiresAtMs = NOW + 60_000): UnsignedBrokerRequest {
     return { protocolVersion: "0.1", requestId: `container-request-${++index}`, contractVersion: "0.1", tool, arguments: args,
-      principal: { principalId: "principal-1", sessionId: "session-1", issuer: "test-issuer", audience: "mac-operator-broker", scopes, issuedAtMs: NOW - 1000, expiresAtMs: NOW + 60_000, edgeId: "edge-1" },
-      timestampMs: NOW, nonce: `container-nonce-${index}`, policyAudience: "mac-operator-broker", policyVersion: "policy-0.1", authenticationKeyId: "edge-key-1" };
+      principal: { principalId: "principal-1", sessionId: "session-1", issuer: "test-issuer", audience: "mac-operator-broker", scopes, issuedAtMs: NOW - 1000, expiresAtMs, edgeId: "edge-1" },
+      timestampMs: clock, nonce: `container-nonce-${index}`, policyAudience: "mac-operator-broker", policyVersion: "policy-0.1", authenticationKeyId: "edge-key-1" };
   }
   function approve(tool: string, args: Record<string, unknown>) {
     const task = tool === "mac_task_run";
     store.issueApproval({ approvalId: `approval:container-${++index}`, approverPrincipalId: "operator-1", requestingPrincipalId: "principal-1", tool, contractVersion: "0.1", targetKind: task ? "task_profile" : "project", targetRef: task ? `task_profile:${PROFILE}` : `project:${project}`, payloadDigest: sha256(canonicalJson(args)), policyVersion: "policy-0.1", approvalClass: ["mac_test_run", "mac_build_run", "mac_codex_run", "mac_task_run"].includes(tool) ? "trusted_profile" : "trusted_write", unattended: false, issuedAtMs: NOW - 1000, expiresAtMs: NOW + 60_000 });
   }
-  async function handle(tool: string, args: Record<string, unknown>) { return broker.handle(signRequest(request(tool, args), key)); }
+  async function handle(tool: string, args: Record<string, unknown>, expiresAtMs?: number) { return broker.handle(signRequest(request(tool, args, expiresAtMs), key)); }
   async function create(task = "task-1") {
     const args = { project_root: project, branch_name: `codex/${task}`, base_ref: "HEAD", task_id: task, idempotency_key: `create-${task}` };
     approve("mac_git_worktree_create", args);
@@ -151,7 +162,7 @@ async function fixture(options: FixtureOptions = {}) {
   }
   return { root, project, state, trees, handle, approve, create, validate, primaryUnchanged,
     get store() { return store; }, get broker() { return broker; }, get gateway() { return gateway; }, get profiles() { return profiles; },
-    get calls() { return calls; }, admitted, recovered,
+    get calls() { return calls; }, admitted, recovered, setClock,
     async reopen() { await broker.close(); store.close(); store = new BrokerStore(join(state, "broker.sqlite")); broker = buildBroker(); },
     async close() { await broker.close(); store.close(); await rm(root, { recursive: true, force: true }); }
   };
@@ -172,6 +183,27 @@ async function settle(f: Fixture, receipt: Record<string, unknown>) {
   assert.fail("Container job did not settle");
 }
 function sourceWrites(f: Fixture) { return f.store.auditRows().filter(row => row.result_class === "SOURCE_WRITE_INTENT" || row.result_class === "SOURCE_WRITE_VERIFIED"); }
+/** Returns the warnings of a successful accept receipt after checking the whole receipt against the versioned tool contract. */
+async function receiptWarnings(result: BrokerResult): Promise<string[]> {
+  assert.equal(result.ok, true, JSON.stringify(result));
+  if (!result.ok) throw new Error("Expected successful receipt");
+  let validate = validators.get(result.tool);
+  if (!validate) {
+    const contract = JSON.parse(await readFile(join(repositoryRoot, "tool-contracts", `${result.tool}.json`), "utf8"));
+    validate = ajv.compile(contract.output_schema);
+    validators.set(result.tool, validate);
+  }
+  assert.equal(validate(result), true, `${result.tool}: ${ajv.errorsText(validate.errors)}`);
+  return result.warnings;
+}
+const reuseWarning = (jobId: unknown, state: string) => `IDEMPOTENT_REUSE: ${jobId} is ${state}; nothing was run again. Use a new idempotency_key to run it again.`;
+// Access token expiry used by the expiry tests: the stubbed run moves the clock just past it, within the 30 s job lease.
+const EXPIRES_SOON = NOW + 10_000;
+const expiringRun: FixtureOptions["run"] = async (_profile, control, context) => {
+  context.setClock(EXPIRES_SOON + 1_000);
+  assert.equal(control.shouldCancel(), true);
+  return success();
+};
 
 test("Container Broker durably binds exact ownership before execution and clears it after verified cleanup", async () => {
   const f = await fixture();
@@ -474,6 +506,8 @@ test("Container Broker authority revocation cannot erase evidence of a verified 
     const job = await settle(f, receipt);
     assert.equal(job.state, "cancelled");
     assert.equal(job.containerMetadata, undefined);
+    assert.match(job.stderr, /authority was revoked or the policy changed/u);
+    assert.match(job.stderr, /NEW idempotency_key/u);
     assert.equal(sourceWrites(f).length, 2);
     assert.equal(await readFile(join(worktree, "source.txt"), "utf8"), "write before revocation\n");
     f.store.verifyAuditIntegrity();
@@ -514,5 +548,105 @@ test("Container Broker cancellation racing with a claimed success retains verifi
     assert.equal(job.containerMetadata, undefined);
     f.store.verifyAuditIntegrity();
     await f.primaryUnchanged();
+  } finally { await f.close(); }
+});
+
+test("Container Broker cancels a run whose access token expires and tells the client what to do next", async () => {
+  const f = await fixture({ run: expiringRun });
+  try {
+    const worktree = await f.create();
+    const args = { project_root: f.project, worktree, task_id: "task-1", max_runtime: 500, idempotency_key: "token-expiry" };
+    f.approve("mac_test_run", args);
+    const receipt = data(await f.handle("mac_test_run", args, EXPIRES_SOON));
+    const job = await settle(f, receipt);
+    assert.equal(job.state, "cancelled");
+    assert.equal(job.containerMetadata, undefined);
+    assert.equal(f.store.listUnresolvedTaskContainers().length, 0);
+    assert.equal(f.calls, 1);
+    assert.match(job.stderr, /access token that authorized it expired at/u);
+    assert.ok(job.stderr.includes(new Date(EXPIRES_SOON).toISOString()), job.stderr);
+    assert.match(job.stderr, /NEW idempotency_key/u);
+    // The client reads the same text through mac_job_status.
+    const status = data(await f.handle("mac_job_status", { job_id: receipt.job_id }));
+    assert.equal(status.state, "cancelled");
+    assert.equal(status.stderr, job.stderr);
+    f.store.verifyAuditIntegrity();
+    await f.primaryUnchanged();
+  } finally { await f.close(); }
+});
+
+test("Container Broker returns the cancelled job for the same key after an expiry cancel and says nothing was run again", async () => {
+  const f = await fixture({ run: expiringRun });
+  try {
+    const worktree = await f.create();
+    const args = { project_root: f.project, worktree, task_id: "task-1", max_runtime: 500, idempotency_key: "token-expiry-retry" };
+    f.approve("mac_test_run", args);
+    const first = await f.handle("mac_test_run", args, EXPIRES_SOON);
+    assert.deepEqual(await receiptWarnings(first), []);
+    const receipt = data(first);
+    assert.equal((await settle(f, receipt)).state, "cancelled");
+    // The client refreshed its token, but kept the idempotency key: the recorded outcome comes back and no run starts.
+    const retry = await f.handle("mac_test_run", args);
+    const retried = data(retry);
+    assert.equal(retried.job_id, receipt.job_id);
+    assert.equal(retried.state, "cancelled");
+    assert.deepEqual(await receiptWarnings(retry), [reuseWarning(receipt.job_id, "cancelled")]);
+    assert.equal(f.calls, 1);
+    assert.equal(f.admitted.length, 1);
+    await f.primaryUnchanged();
+  } finally { await f.close(); }
+});
+
+test("Container Broker accept receipts warn only when the token expires before max_runtime and flag idempotent reuse", async () => {
+  const f = await fixture();
+  try {
+    const worktree = await f.create();
+    const base = { project_root: f.project, worktree, task_id: "task-1" };
+    const tokenWarning = /^The access token authorizing this task expires in 1s but the task may run up to 2s; a task still running at expiry is cancelled, and a re-run needs a NEW idempotency_key because the same key returns the cancelled job$/u;
+
+    // The default token outlives a 500 ms budget: no warning on a fresh admission, only the reuse note on a replay.
+    const quick = { ...base, max_runtime: 500, idempotency_key: "warn-quick" };
+    f.approve("mac_test_run", quick);
+    const quickFresh = await f.handle("mac_test_run", quick);
+    assert.deepEqual(await receiptWarnings(quickFresh), []);
+    const quickReceipt = data(quickFresh);
+    assert.equal((await settle(f, quickReceipt)).state, "completed");
+    assert.deepEqual(await receiptWarnings(await f.handle("mac_test_run", quick)), [reuseWarning(quickReceipt.job_id, "completed")]);
+
+    // A token with 1 s left against a 1.5 s budget warns, and a replay carries both notes.
+    const long = { ...base, max_runtime: 1500, idempotency_key: "warn-long" };
+    f.approve("mac_test_run", long);
+    const longFresh = await receiptWarnings(await f.handle("mac_test_run", long, NOW + 1_000));
+    assert.equal(longFresh.length, 1);
+    assert.match(longFresh[0]!, tokenWarning);
+    assert.doesNotMatch(longFresh[0]!, /authority ended/u);
+    const longReceipt = data(await f.handle("mac_test_run", long, NOW + 1_000));
+    assert.equal((await settle(f, longReceipt)).state, "completed");
+    const longReplay = await receiptWarnings(await f.handle("mac_test_run", long, NOW + 1_000));
+    assert.equal(longReplay.length, 2);
+    assert.equal(longReplay[0], reuseWarning(longReceipt.job_id, "completed"));
+    assert.match(longReplay[1]!, tokenWarning);
+    assert.equal(f.calls, 2);
+    await f.primaryUnchanged();
+  } finally { await f.close(); }
+});
+
+test("Container Broker labels a task cancelled by Broker shutdown separately from revoked authority", async () => {
+  let f!: Fixture;
+  f = await fixture({ async run(_profile, control) {
+    // close() fences the Broker synchronously; it settles once this run has returned.
+    void f.broker.close();
+    assert.equal(control.shouldCancel(), true);
+    return success();
+  } });
+  try {
+    const worktree = await f.create();
+    const { receipt } = await f.validate(worktree);
+    const job = await settle(f, receipt);
+    assert.equal(job.state, "cancelled");
+    assert.equal(job.containerMetadata, undefined);
+    assert.match(job.stderr, /Broker was shutting down/u);
+    assert.doesNotMatch(job.stderr, /revoked/u);
+    assert.match(job.stderr, /NEW idempotency_key/u);
   } finally { await f.close(); }
 });
