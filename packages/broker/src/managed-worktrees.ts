@@ -376,7 +376,7 @@ export class ManagedWorktrees {
   private verify(record: ManagedWorktreeRecord): void {
     this.checkStorage();
     const expectedHead = `ref: refs/heads/${record.branchName}`;
-    if (canonicalProjectRoot(record.projectRoot).identity !== record.projectIdentity) {
+    if (!sameProjectIdentity(canonicalProjectRoot(record.projectRoot).identity, record.projectIdentity)) {
       throw new BrokerError("POLICY_DENIED", "Primary project identity changed");
     }
     const primaryMetadata = join(record.projectRoot, ".git");
@@ -396,7 +396,7 @@ export class ManagedWorktrees {
     }
     if (record.state !== "active" || directoryIdentity(record.worktree) !== record.rootIdentity ||
         directoryIdentity(record.gitDirectory) !== record.gitIdentity ||
-        canonicalProjectRoot(record.projectRoot).identity !== record.projectIdentity ||
+        !sameProjectIdentity(canonicalProjectRoot(record.projectRoot).identity, record.projectIdentity) ||
         dirname(record.worktree) !== this.worktreeRoot || dirname(record.gitDirectory) !== join(record.projectRoot, ".git", "worktrees") ||
         readBounded(join(record.worktree, ".git"), 4096).trim() !== `gitdir: ${record.gitDirectory}` ||
         readBounded(join(record.gitDirectory, "gitdir"), 4096).trim() !== join(record.worktree, ".git") ||
@@ -484,6 +484,19 @@ function validateRecord(value: ManagedWorktreeRecord, root: string): void {
     throw new Error("Malformed managed worktree provenance");
   }
   validateCreate(value);
+}
+
+/**
+ * Project identities read `dev:ino:gitDev:gitIno:configDev:configIno:configSha256`. Git rewrites .git/config through a
+ * lock file and rename (for example `git branch -d` on every worktree removal), which changes the config inode while the
+ * bytes stay identical, so only the content digest of the config is compared, never its inode.
+ */
+function sameProjectIdentity(current: string, stored: string): boolean {
+  const stable = (identity: string): string => {
+    const parts = identity.split(":");
+    return parts.length === 7 ? [...parts.slice(0, 4), parts[6]].join(":") : identity;
+  };
+  return stable(current) === stable(stored);
 }
 
 function directoryIdentity(path: string): string {

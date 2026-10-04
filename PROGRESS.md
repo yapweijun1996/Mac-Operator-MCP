@@ -7013,3 +7013,17 @@ budgets", `container-snapshot` "asynchronous snapshot permits authority heartbea
 "implemented broker results conform to versioned success and failure schemas". The 16 cancelled are
 `process-supervisor` subtests that hit the 120 s timeout under full-suite load (58/58 pass alone).
 `packages/auth` tests need Node 24 and were not run.
+
+## October 5, 2026: regression found in the ninth MBA deployment verification (fix on branch, not deployed)
+
+After deploying `v2-usability9-20261005-267cdc2`, `mac_git_worktree_list` returned `POLICY_DENIED` "Primary project
+identity changed" for the whole project. Cause: the stored project identity includes the inode of `.git/config`, and
+`git branch -d` (added to worktree removal in `60f71ea`) rewrites that file through a lock file and rename, giving it a
+new inode with identical bytes. Every removal therefore invalidated every other active managed worktree of the project,
+and `list()` verifies all active records, so it failed for all of them. Reproduced with git 2.39.5 (inode changes,
+sha256 unchanged) and by comparing the live inventory (stored config inode 120852820, current 127466086, equal digest).
+`ManagedWorktrees.verify()` now compares the project identity without the config inode (the config content digest is
+still compared), so a real configuration change is still rejected. The regression test removes one worktree and checks
+that another stays listed and usable, and that an altered config is still refused; it fails on the previous source.
+The live inventory also shows the earlier "task id reused after removal" situation for `mba-fulltest-20261004` (a removed
+and an active record on the same path); the active one is the worktree that `list` could not verify.

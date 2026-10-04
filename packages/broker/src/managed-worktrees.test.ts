@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
-import { mkdir, mkdtemp, realpath, rm, symlink, writeFile, readFile } from "node:fs/promises";
+import { mkdir, mkdtemp, realpath, rm, symlink, writeFile, readFile, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import test from "node:test";
@@ -129,6 +129,24 @@ test("worktree removal deletes a merged task branch but keeps one with unmerged 
     // The primary checkout and its own branch are untouched.
     assert.equal(git(f.project, ["rev-parse", "--abbrev-ref", "HEAD"]).trim(), "main");
     assert.equal(git(f.project, ["status", "--porcelain"]), "");
+  } finally { await f.cleanup(); }
+});
+
+test("removing one worktree does not invalidate the others although git rewrites .git/config", async () => {
+  const f = await worktreeFixture();
+  try {
+    const stays = await f.create("task-stays");
+    const goes = await f.create("task-goes");
+    const configBefore = await stat(join(f.project, ".git", "config"));
+    await f.registry.remove(f.project, goes.record.worktree, "owner", goes.record.taskId, control, authority, () => false, "remove-goes");
+    const configAfter = await stat(join(f.project, ".git", "config"));
+    // git branch -d replaces the config file (new inode, same bytes); this is the premise of the regression.
+    assert.notEqual(configAfter.ino, configBefore.ino);
+    assert.deepEqual(f.registry.list(f.project, "owner").map((entry) => entry.taskId), ["task-stays"]);
+    assert.equal(f.registry.require(stays.record.worktree, f.project, "owner", "task-stays").taskId, "task-stays");
+    // A real change of the repository configuration is still rejected.
+    git(f.project, ["config", "alias.unsafe", "status"]);
+    assert.throws(() => f.registry.list(f.project, "owner"), /Primary project identity changed|configuration/u);
   } finally { await f.cleanup(); }
 });
 
