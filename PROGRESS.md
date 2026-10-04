@@ -6931,8 +6931,8 @@ cursor paging with a correct `truncated`, task-scoped `mac_pr_prepare` test evid
 `346c009` cancel of a finished job is `CONFLICT` before approval; optional `outcome_class` on `mac_job_status`.
 `590e96f` token-expiry warning and cancel text with new-key advice, `IDEMPOTENT_REUSE` warning on replayed task
 receipts. `f58b194` the managed-worktree denial names the cause (reason code `MANAGED_WORKTREE_PATH`). `42d167b`
-idempotency conflicts name the holding job and the first differing binding; `idempotency_key` descriptions in 12
-contracts. `fa54b2b` `phase_ms` on completed container runs in `mac_execution_audit`. `8fc263c` branch_name rules and a
+idempotency conflicts name the holding job and the first differing binding; `idempotency_key` descriptions in the 12
+contracts listed under Deployment. `fa54b2b` `phase_ms` on completed container runs in `mac_execution_audit`. `8fc263c` branch_name rules and a
 narrowed `base_ref` pattern in the input schemas.
 
 Correction to the sixth entry: lifting the worktree denial is not only "a signed-policy decision". The denial is
@@ -6949,18 +6949,33 @@ session/Edge comparison in the write/terminal pre-checks. Git failures after the
 existing directory, a staged-secret denial after `git add`, a non-zero `git commit`, "did not advance HEAD") still
 strand the Job as `unknown`, so C5 is not fully closed. Runtime behaviour of `base_ref` is unchanged (`HEAD~1` not accepted).
 
-Owner decisions: (1) discard path for dirty or ignored worktree contents; (2) auto-reconcile of removing/pending
-worktree records, which would relax the runbook's "no MCP reconciliation" rule, and whether remove() may accept
-pending records; (3) the delegated approver in `personal-development-approval.ts` approves only active-record
-removal and does not approve `mac_job_cancel`, so completed-removal retries and the cancel advice need explicit owner
-approval unless the approver changes; (4) pruning or raising the 256 inventory cap, and relaxing startup validation for removed
-records; (5) releasing git Jobs already stranded as `unknown` on the MBA ledger (reviewed host repair per Job, or a
-reviewed git-Job reconcile such as the unimplemented `FAILED_RECOVERED`) and a read-only ledger query for the
-project-wide unknown-job pin given in the C1 triage; owner-only resolution of metadata-less unknown task jobs; (6) staging-reduction levers
-(per-profile input scope, runner-wide exclusions, larger staging payload) only after `phase_ms` data exists; (7) making
-worktree contents readable through a worktree-scoped tool; (8) whether `phase_ms` is persisted on the job
-for `mac_job_status` and recorded for failed/timed-out/cancelled runs; (9) idempotency key lifetime (keys are permanent
-today) and an additive `reused` field on development receipts.
+Owner decisions (each: question; options; recommended default):
+1. Discard path for dirty or ignored worktree contents. Options: keep the current rule (commit with
+   `mac_git_stage`/`mac_git_commit`, then remove; ignored files cannot be discarded by any tool), or add a reviewed
+   discard tool. Recommended: no discard path; keep commit-then-remove.
+2. Auto-reconcile of `removing`/`pending` worktree records, and whether remove() may accept `pending` records. Options:
+   keep operator-only reconciliation (the runbook's "no MCP reconciliation" rule), or auto-heal after verifying the
+   checkout state. Recommended: no auto-reconcile until the approver delegation (item 3) is reviewed.
+3. The delegated approver in `personal-development-approval.ts` approves only active-record removal and does not
+   approve `mac_job_cancel`, so completed-removal retries and the cancel advice need explicit owner approval. Options:
+   extend the approver to those two cases, or leave them owner-approved. Recommended: leave as is until reviewed with item 2.
+4. The 256-record inventory cap, which counts removed records. Options: raise the cap, prune the oldest removed records,
+   or relax startup validation for removed records. Recommended: prune oldest removed records only.
+5. Git Jobs already stranded as `unknown` on the MBA ledger (they pin the project, and the owner decides each).
+   Options: reviewed host repair per Job, or a reviewed git-Job reconcile such as the unimplemented `FAILED_RECOVERED`.
+   Recommended: reviewed host repair per Job. Find them with this read-only query (run with the broker stopped, or
+   `sqlite3 -readonly`; replace `<devProjectRoot>`): `SELECT job_id, tool, state, target_ref, cancel_reason FROM jobs
+   WHERE state IN ('queued','running','unknown') AND (target_ref='project:<devProjectRoot>' OR EXISTS (SELECT 1 FROM
+   audit_events i WHERE i.event_type='intent' AND json_extract(i.evidence_json,'$.jobId')=jobs.job_id AND
+   json_extract(i.evidence_json,'$.project')='<devProjectRoot>'));`. Metadata-less unknown task jobs stay owner-only.
+6. Staging-reduction levers (per-profile input scope, runner-wide exclusions, larger staging payload). Options: build
+   them now, or wait for data. Recommended: decide after `phase_ms` data exists.
+7. Making worktree contents readable. Options: allow ordinary read tools inside worktrees, or add a worktree-scoped
+   read tool. Recommended: a separate worktree-scoped read tool.
+8. Whether `phase_ms` is persisted on the job for `mac_job_status` and recorded for failed/timed-out/cancelled runs.
+   Options: audit-only (today), or persist it (a schema change). Recommended: audit-only until item 6 has data.
+9. Idempotency key lifetime (permanent today) and an additive `reused` field on development receipts. Options: keep
+   keys permanent, or expire them. Recommended: keep permanent; add `reused` only if clients need it.
 
 Follow-ups: raw ENOENT from `list()`/`verify()` for a missing checkout is not mapped; session/Edge comparison before the
 approval is consumed for write and terminal replays (and a clearer `linkRequestJob` mismatch text); teardown time still
@@ -6978,12 +6993,23 @@ ship the contracts before or with `broker.js`. Ship together: compiled `broker.j
 `idempotency-conflict.js`, `owner-terminal-dispatch.js` and `packages/contracts/dist/errors.js` plus `errors.d.ts`; and
 these contracts: `mac_execution_audit`, `mac_job_status`, `mac_git_worktree_create`, `mac_git_branch_create`,
 `mac_pr_prepare`, `mac_write_file_atomic`, `mac_apply_patch`, `mac_codex_run` and the 12 contracts with the new
-`idempotency_key` description. `phase_ms` needs `broker.js`, `container-task-runner.js`, `task-runner.js` and
+`idempotency_key` description (`mac_build_run`, `mac_codex_run`, `mac_git_branch_create`, `mac_git_push`,
+`mac_git_worktree_create`, `mac_git_worktree_remove`, `mac_service_control`, `mac_task_run`, `mac_terminal_exec`,
+`mac_terminal_session`, `mac_test_run`, `mac_write_file_atomic`). `phase_ms` needs `broker.js`, `container-task-runner.js`, `task-runner.js` and
 `mac_execution_audit.json` rolled out and back together. An old Broker with the new audit contract is compatible. The
 first authenticated verification of this set is still pending, and `evidence/` is not updated until then.
 
-Tests: the implementation agents reported their new suites passing (worktree lifecycle, git classification, audit
-paging, job cancel/status, token wording, managed-worktree denial, conflict messages, phase timing, contract/branch
-parity) but gave no suite totals. Known environment failures that are not caused by these changes:
-`filesystem-inspector.test` "traversal stays within bounded pressure budgets" fails on a clean HEAD under Node 23, and
-`contract-conformance.test.ts` aborts at its first failing tool, masking later checks. `packages/auth` tests need Node 24 and were not run.
+Review follow-up (after the independent review of this branch): `unresolved()` now runs behind any in-flight
+create/remove so a healthy operation is no longer warned about; the branch pre-flight compares refs exactly and refuses a
+parent/child ref conflict before the pending record exists (`deleteTaskBranch` uses the same exact check); the
+unfinished-jobs refusal no longer says "none of them are yours" when ids were dropped to fit 512 characters, with a
+test of the shrink loop. The `idempotency_key` descriptions and `docs/mba-operational-tools.md` now state what a repeat
+returns per tool (a write replays only a completed result; terminal exec replays completed or failed; a repeated
+terminal session start is `CONFLICT`).
+
+Tests: full run of 197 files on Node 23.10 (before the review follow-up): 1712 tests, 1674 pass, 3 fail, 16 cancelled.
+The 3 failures are pre-existing on main: `filesystem-inspector` "filesystem traversal stays within bounded pressure
+budgets", `container-snapshot` "asynchronous snapshot permits authority heartbeats...", and `contract-conformance`
+"implemented broker results conform to versioned success and failure schemas". The 16 cancelled are
+`process-supervisor` subtests that hit the 120 s timeout under full-suite load (58/58 pass alone).
+`packages/auth` tests need Node 24 and were not run.

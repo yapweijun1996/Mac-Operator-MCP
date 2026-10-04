@@ -52,7 +52,7 @@
         "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$"
       },
       "idempotency_key": {
-        "description": "Client-chosen key, unique per account for ever: repeating the identical request from the same login replays the recorded outcome; any different request needs a new key.",
+        "description": "Client-chosen key, unique per account for ever: repeating the identical request from the same login never runs it again: it returns the recorded outcome of a finished job, or reports the job's queued, unresolved, cancelled or failed state; any different request needs a new key.",
         "type": "string",
         "minLength": 1,
         "maxLength": 128,

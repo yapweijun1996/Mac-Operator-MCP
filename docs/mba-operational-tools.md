@@ -162,7 +162,12 @@ Behaviour observed in MBA probes that the tool schemas alone do not show.
 ### Idempotency keys
 
 Keys are per account, permanent and never freed; the contract descriptions say so. Repeating the identical request
-from the same OAuth login replays the recorded outcome; any different request needs a new key. Namespaces are
+from the same OAuth login never runs it again, but what comes back depends on the recorded job: task tools return it
+with `ok: true` in any state (see above); `mac_write_file_atomic` replays only a completed write and answers a queued
+job with `CONFLICT`, a running or unknown one with `UNKNOWN_OUTCOME`, a cancelled one with `CANCELLED` and a failed
+one with `EXECUTION_FAILED`; `mac_terminal_exec` replays a completed or failed result (`reused: true`) and answers
+the other states with `UNKNOWN_OUTCOME`, `CANCELLED` or `CONFLICT`; a repeated `mac_terminal_session` start is
+`CONFLICT` in every state. Any different request needs a new key. Namespaces are
 shared across tools: write, terminal exec and terminal session share the raw key; `mac_test_run`, `mac_build_run`,
 `mac_codex_run` and `mac_task_run` share one task-key space. A held key now gives `CONFLICT` starting
 "IDEMPOTENCY_KEY_IN_USE: this idempotency_key already belongs to job <id> (<tool>, <state>, created <time>)", plus

@@ -184,9 +184,14 @@ cannot authorize push, install, service control or destructive cleanup.
    or another checkout is denied. Git mutation waits for active worktree jobs.
 7. Use `mac_pr_prepare` for changed paths, bounded commit metadata, recorded
    validation evidence, and suggested title/description. It does not publish a
-   PR. Inspect `mac_execution_audit` with a limit of 1 to 100 (default 50) for
-   redacted, owner/project-filtered audit events. The MCP audit view is bounded;
-   the protected Broker ledger remains authoritative.
+   PR. Inspect `mac_execution_audit` for redacted, owner/project-filtered audit
+   events, newest first: `limit` is 1 to 100 (default 50). When older events
+   remain, the result has `truncated: true` and a `next_cursor`; pass it as
+   `cursor` for the next page (a malformed cursor is `PRECONDITION_FAILED`). A
+   page that exactly fills the limit with nothing older reports `truncated:
+   false`. Events carry `duration_ms` and, for completed container runs,
+   `phase_ms`. The MCP audit view is bounded; the protected Broker ledger
+   remains authoritative.
 
 For the requested YAP-MCP E2E, use only an authorized synthetic task in an
 isolated checkout. Record primary HEAD, index and status before/after and keep
