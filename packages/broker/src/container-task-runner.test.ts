@@ -590,6 +590,20 @@ test("Container runner keeps the phase timing of a timeout in export, marks that
   assert.ok(Buffer.byteLength(result.stderr) < 1024);
 });
 
+test("Container runner keeps the phase timing of a timeout in the workspace snapshot and records no later phase", async t => {
+  const engine = new FakeEngine();
+  const timed = timedRunner(t, engine, { snapshotProvider: (root, readonlyWorkspace, _excluded, check) => {
+    timed.advance(80); check();
+    return snapshot(root, readonlyWorkspace);
+  } });
+  const p = profile(); p.process.timeoutMs = 60;
+  const result = await timed.task.run(p, control());
+  assert.equal(result.state, "timed_out"); assert.equal(result.resultClass, "TIMEOUT"); assert.equal(result.containerCleanupVerified, true);
+  assert.deepEqual(assertPhaseTiming(result), { prepare: 3, start: 5, snapshot: 80, cleanup: 2 });
+  assert.match(result.stderr, /^Container task exceeded its deadline of 60 ms in phase "snapshot"; .*; phases \(ms\): prepare=3, start=5, snapshot=80 \(in progress\), cleanup=2$/u);
+  assert.equal(engine.events.includes("upload"), false);
+});
+
 test("Container runner keeps the phase timing of a cancel during staging and records no later phase", async t => {
   const engine = new FakeEngine(); let cancelled = false;
   const { task, advance } = timedRunner(t, engine);
