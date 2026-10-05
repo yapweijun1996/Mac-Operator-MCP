@@ -1,5 +1,17 @@
 # Mac-Operator-MCP Progress
 
+## Current Mac mini deployment: DONE — 2026-10-05
+
+Latest GitHub main `5fbc317` is installed as `personal-20261005-5fbc317`.
+The preexisting restart loop was caused by a deleted pinned Docker task image;
+a rebuilt image passed fresh physical and actual Codex acceptance before its
+protected runtime/evidence binding was updated. Signed policy and OAuth
+permissions are preserved. Complete regression: 2,004 PASS, 19 SKIP, 0 FAIL.
+Public V2 reads and independent owner-terminal execution/revocation passed.
+The installed GUI identity and both production permissions are retained.
+Exact deployment, limitations and recovery steps:
+[evidence](evidence/2026-10-05-mac-mini-latest-deployment.md).
+
 ## Owner terminal PTY sessions: implemented on local branch, not deployed
 
 2026-10-02: branch `feat/terminal-pty-sessions` adds `mac_terminal_session` (start, write,

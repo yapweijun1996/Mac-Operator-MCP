@@ -650,7 +650,7 @@ waitpid($child, 0);
     const mismatchJobId = brokerStore.requestRecord(mismatchResult.request_id)?.jobId;
     assert.ok(mismatchJobId);
     const mismatchJob = brokerStore.ownedJob(mismatchJobId, "owner-1");
-    assert.equal(mismatchJob?.state, "unknown");
+    assert.equal(mismatchJob?.state, "failed");
     assert.equal((await runCanaryGit(gitRoot, ["rev-parse", "HEAD"])).stdout.trim().length, 40);
     assert.equal((await runCanaryGit(gitRoot, ["diff", "--cached", "--name-only"])).stdout.trim(), "README.md");
 
