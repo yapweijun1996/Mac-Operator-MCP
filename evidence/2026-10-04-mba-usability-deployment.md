@@ -193,6 +193,5 @@ compared). Previous release `v2-usability9-20261005-267cdc2` retained. Copy of t
 Evidence: PM2 online, restart 0, release 10 as working directory, `/mcp` 401 and both `.well-known` 200 with the public
 Host name. Authenticated checks: `mac_git_worktree_list` no longer denied and lists `mba-fulltest-20261004`; creating
 worktrees A and B, removing B (`branch_deleted: true`) and listing again still shows A and `mba-fulltest-20261004`.
-Not verified: an empty `mac_git_commit` followed by `mac_git_worktree_remove` in the same worktree (the second MCP
-server did not respond during the check). The verification worktree `codex/mba-verify-a-20261005` was left in place for
-that check. The 26 `unknown` jobs predate this work and are not released by it.
+A `mac_git_commit` with nothing staged in worktree `codex/mba-verify-a-20261005` returned `PRECONDITION_FAILED` "Nothing is staged", and the following `mac_git_worktree_remove` of that worktree succeeded with `branch_deleted: true` (before the fix the failed commit left its Git job `unknown` and the removal was refused as an unresolved job); `mac_git_worktree_list` afterwards shows only `mba-fulltest-20261004`. Two `mac_codex_run` attempts to create an empty commit timed out in the export phase (90 s and 110 s) without producing a commit; they were not needed for this check and are not explained by this work.
+The 26 `unknown` jobs predate this work and are not released by it.
