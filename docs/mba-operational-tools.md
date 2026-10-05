@@ -73,7 +73,7 @@ maximum is set per profile (currently 120000 ms for the catalog profiles) and is
 in the rejection message when exceeded. The deadline covers Engine checks, container start,
 workspace staging and the command; a deadline failure reports the phase that was running.
 Where the time goes has not been measured on the MBA: earlier notes that staging dominates
-were an assumption. Completed runs now record per-phase timing (see "Phase timing" below).
+were an assumption. Container runs now record per-phase timing (see "Phase timing" below).
 
 These named profiles do not claim a full TypeScript or macOS native build.
 The initial full TypeScript container probe remains failed; secret-content
@@ -185,11 +185,13 @@ another OAuth login is still detected only after the approval is consumed.
   failed git or task run appears in `mac_execution_audit(project_root)`. Rows written before deployment stay invisible there.
 - **`mac_pr_prepare` test evidence** is task-scoped (principal, worktree, task id), keeps the newest 32 outcomes in
   chronological order, and no longer drops a finished run when other project activity fills the audit window.
-- **Phase timing.** Completed container task runs record `phase_ms` on the audit event: `prepare`, `start`,
+- **Phase timing.** Container task runs record `phase_ms` on the audit event, whether they completed, timed out, were
+  cancelled (for example at token expiry) or failed: `prepare`, `start`,
   `snapshot`, `stage`, `command` (also the coding controller run), `export`, `import` and `cleanup`, whole
-  milliseconds; phases never entered are absent. Limits: only completed runs have it (timeouts, cancels and
-  failures write none, so a run that hits the budget has no breakdown); `mac_job_status` does not show it; host
-  process runners report none; the event's `duration_ms` is measured separately, so phases need not add up to it.
+  milliseconds; phases never entered are absent. A run cut off mid-phase includes that phase with the time it had run
+  (a timeout in the export phase shows `prepare` to `command` and `export`), plus `cleanup` when the container was
+  removed. A container deadline also appends `phases (ms): ... (in progress)` to the job's `stderr`. Limits:
+  `mac_job_status` does not show it; host process runners report none; the event's `duration_ms` is measured separately, so phases need not add up to it.
   Compare `stage` with `command` on a real MBA run before concluding anything about staging overhead.
 
 ### Git jobs

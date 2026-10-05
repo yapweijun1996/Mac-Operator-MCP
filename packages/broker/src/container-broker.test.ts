@@ -6,6 +6,7 @@ import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { isDeepStrictEqual } from "node:util";
 import test from "node:test";
 import { canonicalJson, sha256, signRequest, type BrokerResult, type Scope, type UnsignedBrokerRequest } from "@mac-operator/contracts";
 import { Broker } from "./broker.js";
@@ -659,14 +660,57 @@ test("Container Broker audits per-phase timing of a completed run and mac_execut
     assert.equal(timed[0]!.result, "SUCCEEDED");
     assert.deepEqual(timed[0]!.phase_ms, phaseMs);
 
-    // Only completed runs carry phase data: failed and untimed runs add no phase_ms to the audit view.
+    // A failed run carries its timing on the failure row; an untimed run adds no phase_ms to the audit view.
     outcome = "failed";
     assert.equal((await settle(f, (await f.validate(worktree, "timed-failed")).receipt)).state, "failed");
     outcome = "untimed";
     assert.equal((await settle(f, (await f.validate(worktree, "untimed-completed")).receipt)).state, "completed");
     const events = await auditEvents();
-    assert.equal(events.filter(event => event.phase_ms !== undefined).length, 1);
+    assert.equal(events.filter(event => event.phase_ms !== undefined).length, 2);
+    assert.deepEqual(events.filter(event => event.phase_ms !== undefined && event.result !== "SUCCEEDED").map(event => event.phase_ms), [phaseMs]);
     assert.ok(events.filter(event => event.tool === "mac_test_run" && event.result === "SUCCEEDED").length >= 2);
+    f.store.verifyAuditIntegrity();
+    await f.primaryUnchanged();
+  } finally { await f.close(); }
+});
+
+test("Container Broker audits phase timing of timed out, cancelled and failed task runs and mac_execution_audit projects it under the contract", async () => {
+  const exportTimeout = { prepare: 12, start: 340, snapshot: 1_500, stage: 68_000, command: 93, export: 20_000, cleanup: 210 };
+  const stageCancel = { prepare: 12, start: 340, snapshot: 1_500, stage: 4_000, cleanup: 210 };
+  const commandFailure = { prepare: 12, start: 340, snapshot: 1_500, stage: 68_000, command: 7, cleanup: 210 };
+  const failedResult = { ...success(), exitCode: null, verification: { status: "failed" } } as const;
+  const results: Record<string, TaskExecutionResult> = {
+    "timed-out": { ...failedResult, state: "timed_out", resultClass: "TIMEOUT", stderr: "Container task exceeded its deadline", phaseMs: exportTimeout },
+    "failed": { ...failedResult, state: "failed", resultClass: "EXECUTION_FAILED", phaseMs: commandFailure },
+    "untimed-timeout": { ...failedResult, state: "timed_out", resultClass: "TIMEOUT" },
+    // The access token expires while the runner is still working; the runner result is discarded as a cancellation.
+    "token-expired": { ...failedResult, state: "cancelled", resultClass: "CANCELLED", phaseMs: stageCancel }
+  };
+  let current = "timed-out";
+  const f = await fixture({ async run(_profile, _control, context) {
+    if (current === "token-expired") context.setClock(EXPIRES_SOON + 1_000);
+    return results[current]!;
+  } });
+  try {
+    for (const name of Object.keys(results)) {
+      current = name;
+      // A run that does not complete leaves its worktree locked, so each outcome gets its own task.
+      const worktree = await f.create(`task-${name}`);
+      const args = { project_root: f.project, worktree, task_id: `task-${name}`, max_runtime: 500, idempotency_key: `phase-${name}` };
+      f.approve("mac_test_run", args);
+      await settle(f, data(await f.handle("mac_test_run", args, name === "token-expired" ? EXPIRES_SOON : undefined)));
+    }
+    const result = await f.handle("mac_execution_audit", { project_root: f.project, limit: 100 });
+    assert.deepEqual(await receiptWarnings(result), []);
+    const events = (data(result).events as Array<{ tool: string; result: string; phase_ms?: Record<string, number> }>).filter(event => event.tool === "mac_test_run");
+    const expected: Array<[string, Record<string, number> | undefined]> = [["TIMEOUT", exportTimeout], ["VERIFICATION_FAILED", commandFailure], ["TIMEOUT", undefined], ["CANCELLED", stageCancel]];
+    for (const [resultClass, phaseMs] of expected) {
+      const matching = events.filter(event => event.result === resultClass && (phaseMs === undefined ? event.phase_ms === undefined : event.phase_ms !== undefined));
+      assert.ok(matching.some(event => phaseMs === undefined || isDeepStrictEqual(event.phase_ms, phaseMs)), `${resultClass} ${JSON.stringify(phaseMs)}`);
+    }
+    // Only the three timed failure completions gained timing, and none of them is a success row.
+    assert.equal(events.filter(event => event.phase_ms !== undefined).length, 3);
+    assert.ok(events.every(event => event.phase_ms === undefined || event.result !== "SUCCEEDED"));
     f.store.verifyAuditIntegrity();
     await f.primaryUnchanged();
   } finally { await f.close(); }

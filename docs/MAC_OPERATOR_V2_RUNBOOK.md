@@ -189,8 +189,8 @@ cannot authorize push, install, service control or destructive cleanup.
    remain, the result has `truncated: true` and a `next_cursor`; pass it as
    `cursor` for the next page (a malformed cursor is `PRECONDITION_FAILED`). A
    page that exactly fills the limit with nothing older reports `truncated:
-   false`. Events carry `duration_ms` and, for completed container runs,
-   `phase_ms`. The MCP audit view is bounded; the protected Broker ledger
+   false`. Events carry `duration_ms` and, for container runs (completed,
+   timed out, cancelled or failed), `phase_ms`. The MCP audit view is bounded; the protected Broker ledger
    remains authoritative.
 
 For the requested YAP-MCP E2E, use only an authorized synthetic task in an

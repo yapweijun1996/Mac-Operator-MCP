@@ -172,7 +172,7 @@
                 },
                 "phase_ms": {
                   "type": "object",
-                  "description": "Milliseconds a completed container task spent per phase (command covers the registered command or coding run); phases never entered are absent.",
+                  "description": "Milliseconds a container task spent per phase, on completed, timed out, cancelled and failed runs (command covers the registered command or coding run); a phase cut off by the end of the run counts the time it had run, and phases never entered are absent.",
                   "additionalProperties": false,
                   "properties": {
                     "prepare": {

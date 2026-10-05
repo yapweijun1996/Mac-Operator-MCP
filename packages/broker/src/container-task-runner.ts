@@ -12,7 +12,7 @@ import { validateContainerTaskJobMetadata, type ContainerTaskJobMetadata } from 
 import { type CodexController, type CodexControllerResult, type CodexDynamicTool } from "./codex-controller.js";
 import { freezeResolvedTaskProfile, type ResolvedTaskProfile, type ContainerExecutionDescriptor } from "./task-profile.js";
 import {
-  requireTaskIsolationProof, validateTaskIsolationProof,
+  requireTaskIsolationProof, validateTaskIsolationProof, TASK_PHASE_KEYS,
   type TaskRunner, type TaskExecutionControl, type TaskExecutionResult, type TaskIsolationProof, type TaskPhaseMs
 } from "./task-runner.js";
 import { assertContentDoesNotContainSecrets, assertArgumentsDoNotContainSecrets, redactBoundedText } from "./secret-policy.js";
@@ -269,6 +269,7 @@ export class ContainerTaskRunner implements TaskRunner {
       const cleanupVerified = handle === undefined ? !createAttempted : await this.cleanup(handle);
       if (handle !== undefined) phaseMs.cleanup = Math.max(0, Date.now() - cleanupStarted);
       if (!cleanupVerified) result = outcome("unknown", "UNKNOWN_OUTCOME", null, "", "Owned container teardown remains unverified", 0);
+      if (result.state === "timed_out" && result.resultClass === "TIMEOUT") result = { ...result, stderr: `${result.stderr}; ${phaseSummary(phaseMs, PHASE_TIMING_KEY[phase])}` };
       const stdout = redactBoundedText(result.stdout, profile.process.outputCapBytes);
       const stderrBudget = Math.max(0, profile.process.outputCapBytes - Buffer.byteLength(stdout.text));
       const stderr = stderrBudget > 0 ? redactBoundedText(result.stderr, stderrBudget) : { text: "", truncated: result.stderr.length > 0 };
@@ -375,6 +376,10 @@ function canonicalProjectRoot(value: unknown): boolean { return typeof value ===
 function notifyImport(control: TaskExecutionControl, path: string, phase: "intent" | "verified"): void {
   const acknowledged = control.onWorkspaceImport!(path, phase);
   if (acknowledged !== undefined) throw new BrokerError("AUDIT_UNAVAILABLE", "Workspace import audit must persist synchronously");
+}
+// Compact timing line for a cut-off run: entered phases in execution order, the one that was running when it ended marked.
+function phaseSummary(phaseMs: TaskPhaseMs, active: keyof TaskPhaseMs): string {
+  return `phases (ms): ${TASK_PHASE_KEYS.filter(key => phaseMs[key] !== undefined).map(key => `${key}=${phaseMs[key]}${key === active ? " (in progress)" : ""}`).join(", ")}`;
 }
 function remaining(deadline: number): number { const ms = deadline - Date.now(); if (ms < 1) throw new BrokerError("TIMEOUT", "Container task deadline expired"); return ms; }
 function deny(message: string): never { throw new BrokerError("POLICY_DENIED", message); }

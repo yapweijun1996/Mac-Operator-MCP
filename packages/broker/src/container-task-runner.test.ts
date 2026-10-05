@@ -79,8 +79,8 @@ class FakeEngine {
   async inspect(handle: ContainerTaskHandle): Promise<{ id: string; running: boolean; status: string; exitCode: number; processId: number }> {
     return { id: handle.id, running: true, status: "running", exitCode: 0, processId: 100 };
   }
-  async uploadArchive(_handle: ContainerTaskHandle, archive: Buffer): Promise<void> { this.events.push("upload"); this.uploaded = archive; }
-  async downloadArchive(): Promise<Buffer> { this.events.push("download"); return createWorkspaceArchive(OUTPUT, ["src"]); }
+  async uploadArchive(_handle: ContainerTaskHandle, archive: Buffer, _request?: ContainerEngineControl): Promise<void> { this.events.push("upload"); this.uploaded = archive; }
+  async downloadArchive(_handle?: ContainerTaskHandle, _request?: ContainerEngineControl): Promise<Buffer> { this.events.push("download"); return createWorkspaceArchive(OUTPUT, ["src"]); }
   async exec(handle: ContainerTaskHandle, options: ContainerExecOptions, request: ContainerEngineControl = {}): Promise<ContainerExecResult> {
     this.events.push("exec"); this.calls.push({ handle, command: options.command, ...(request.signal ? { signal: request.signal } : {}) });
     return this.onExec ? this.onExec(options, request) : this.result;
@@ -568,4 +568,44 @@ test("Container runner has no cleanup timing when no container was ever created"
   const result = await task.run(profile(), control());
   assert.equal(result.state, "unknown");
   assert.deepEqual(assertPhaseTiming(result), { prepare: 3 });
+});
+
+/** Resolves a rejection once the runner aborts the in-flight Engine call, like a real Engine request would. */
+function untilAborted(signal: AbortSignal | undefined): Promise<never> {
+  return new Promise((_resolve, reject) => {
+    const fail = (): void => reject(new BrokerError("CANCELLED", "Cancelled"));
+    if (signal?.aborted) fail(); else signal?.addEventListener("abort", fail, { once: true });
+  });
+}
+
+test("Container runner keeps the phase timing of a timeout in export, marks that phase in progress and says so in stderr", async t => {
+  const engine = new FakeEngine();
+  const timed = timedRunner(t, engine, { controller: { run: async () => { timed.advance(9); return complete(); } }, importChanges: () => [] });
+  engine.downloadArchive = async (_handle, request) => { timed.advance(50); return untilAborted(request?.signal); };
+  const p = profile(undefined, "workspace-write"); p.process.timeoutMs = 60;
+  const result = await timed.task.run(p, control());
+  assert.equal(result.state, "timed_out"); assert.equal(result.resultClass, "TIMEOUT"); assert.equal(result.containerCleanupVerified, true);
+  assert.deepEqual(assertPhaseTiming(result), { prepare: 3, start: 5, snapshot: 4, stage: 7, command: 9, export: 50, cleanup: 2 });
+  assert.match(result.stderr, /^Container task exceeded its deadline of 60 ms in phase "export"; .*; phases \(ms\): prepare=3, start=5, snapshot=4, stage=7, command=9, export=50 \(in progress\), cleanup=2$/u);
+  assert.ok(Buffer.byteLength(result.stderr) < 1024);
+});
+
+test("Container runner keeps the phase timing of a cancel during staging and records no later phase", async t => {
+  const engine = new FakeEngine(); let cancelled = false;
+  const { task, advance } = timedRunner(t, engine);
+  engine.uploadArchive = async (_handle, _archive, request) => { advance(15); cancelled = true; return untilAborted(request?.signal); };
+  const result = await task.run(profile(), { ...control(), shouldCancel: () => cancelled });
+  assert.equal(result.state, "cancelled"); assert.equal(result.containerCleanupVerified, true);
+  assert.deepEqual(assertPhaseTiming(result), { prepare: 3, start: 5, snapshot: 4, stage: 15, cleanup: 2 });
+  assert.equal(result.stderr, "Container task was cancelled");
+});
+
+test("Container runner keeps the phase timing of a failing command up to command plus cleanup", async t => {
+  const engine = new FakeEngine();
+  const { task, advance } = timedRunner(t, engine);
+  engine.exec = async () => { advance(20); throw new BrokerError("EXECUTION_FAILED", "Task exec identity, user or exit state did not verify"); };
+  const result = await task.run(profile(), control());
+  assert.equal(result.state, "failed"); assert.equal(result.containerCleanupVerified, true);
+  assert.deepEqual(assertPhaseTiming(result), { prepare: 3, start: 5, snapshot: 4, stage: 7, command: 20, cleanup: 2 });
+  assert.doesNotMatch(result.stderr, /phases \(ms\)/u);
 });

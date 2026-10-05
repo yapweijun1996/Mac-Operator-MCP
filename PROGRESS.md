@@ -6972,8 +6972,9 @@ Owner decisions (each: question; options; recommended default):
    them now, or wait for data. Recommended: decide after `phase_ms` data exists.
 7. Making worktree contents readable. Options: allow ordinary read tools inside worktrees, or add a worktree-scoped
    read tool. Recommended: a separate worktree-scoped read tool.
-8. Whether `phase_ms` is persisted on the job for `mac_job_status` and recorded for failed/timed-out/cancelled runs.
-   Options: audit-only (today), or persist it (a schema change). Recommended: audit-only until item 6 has data.
+8. Whether `phase_ms` is persisted on the job for `mac_job_status` (recording it for failed/timed-out/cancelled runs
+   was done afterwards, see the October 5 phase-timing follow-up). Options: audit-only (today), or persist it (a schema
+   change). Recommended: audit-only until item 6 has data.
 9. Idempotency key lifetime (permanent today) and an additive `reused` field on development receipts. Options: keep
    keys permanent, or expire them. Recommended: keep permanent; add `reused` only if clients need it.
 
@@ -7027,3 +7028,22 @@ still compared), so a real configuration change is still rejected. The regressio
 that another stays listed and usable, and that an altered config is still refused; it fails on the previous source.
 The live inventory also shows the earlier "task id reused after removal" situation for `mba-fulltest-20261004` (a removed
 and an active record on the same path); the active one is the worktree that `list` could not verify.
+
+## October 5, 2026: phase timing for timed-out, cancelled and failed container runs (on branch, not deployed)
+
+The eighth triage entry said only completed runs carry `phase_ms`. The runner already returned `phaseMs` for every
+outcome (the in-progress phase is booked when the run ends, and `cleanup` when the container was removed), and the
+Broker validator accepts it for every state; the loss was in the Broker, which copied it only into the success
+evidence. Now a run that does not succeed writes its `phaseMs` onto the failure completion row: the task path
+attaches it to the error it throws (`CANCELLED` including token expiry, `UNKNOWN_OUTCOME`, `TIMEOUT`, `OUTPUT_LIMIT`,
+`VERIFICATION_FAILED`, `EXECUTION_FAILED`) through a `WeakMap` keyed by that error, and `auditFailure` adds it to the
+evidence. A timeout in the export phase therefore shows `prepare` to `command` with their real durations, `export`
+with the time it had run, and `cleanup`. `mac_execution_audit` already projected `phase_ms` from any completion row, so
+the only contract edit is the field description. The deadline text in the job `stderr` now ends with a compact
+`phases (ms): prepare=..., ..., export=... (in progress), cleanup=...` line (timed-out container runs only; the existing
+stderr assertions are prefix matches). Unchanged: `durationMs` and the timeout budget check, the guest result journal,
+persistence and schema, host-process runners (no `phaseMs`). Still not exposed by `mac_job_status`. Not deployed.
+
+Compiled files to ship: `packages/broker/dist/broker.js`, `packages/broker/dist/container-task-runner.js` and
+`tool-contracts/mac_execution_audit.json` (description only; no `.d.ts` or `task-runner` change). An old Broker with the
+new contract description is compatible.

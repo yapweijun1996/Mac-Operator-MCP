@@ -294,6 +294,20 @@ test("task runner result validation accepts only whole-millisecond timings for k
   assert.equal(isTaskPhaseMs({ stage: -1 }), false);
 });
 
+test("task runner result validation applies the same timing rules to timed out, cancelled and failed results", () => {
+  const phaseMs = { prepare: 3, start: 5, snapshot: 4, stage: 7, command: 9, export: 50, cleanup: 2 };
+  const outcomes = [["timed_out", "TIMEOUT"], ["cancelled", "CANCELLED"], ["failed", "EXECUTION_FAILED"]] as const;
+  for (const [state, resultClass] of outcomes) {
+    const result: TaskExecutionResult = { state, resultClass, exitCode: null, stdout: "", stderr: "stopped", truncated: false, durationMs: 80,
+      verification: { status: "failed" }, containerCleanupVerified: true };
+    assert.deepEqual(validateTaskExecutionResult({ ...result, phaseMs }), { ...result, phaseMs });
+    for (const rejected of [{ ...phaseMs, export: -1 }, { ...phaseMs, export: 0.5 }, { ...phaseMs, warmup: 1 }, { export: 1_200_001 }]) {
+      assert.throws(() => validateTaskExecutionResult({ ...result, phaseMs: rejected }),
+        (error: unknown) => error instanceof BrokerError && error.errorClass === "EXECUTION_FAILED", JSON.stringify(rejected));
+    }
+  }
+});
+
 test("task runner result validation rejects malformed or oversized verification evidence", () => {
   assert.throws(
     () => validateTaskExecutionResult({

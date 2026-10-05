@@ -61,7 +61,7 @@ import { GitBranchListInspector, GitDiffInspectorImpl, GitLogInspectorImpl, SAFE
 import { PackageInspectorImpl, validatePackageInspectRequest, type PackageInspector, type PackageManagerRequest } from "./package-inspector.js";
 import { createDockerProcessSupervisor, DOCKER_CODE_SIGNATURE_EXPECTATION, DOCKER_EXECUTABLE_CANDIDATES, DockerInspectorImpl, dockerObjectIdentityMatches, validateDockerLogsRequest, validateDockerObjectRequest, validateDockerStatusRequest, type DockerInspector, type DockerObjectType } from "./docker-inspector.js";
 import { assertContentDoesNotContainSecrets, redactBoundedText } from "./secret-policy.js";
-import { FailClosedTaskRunner, isTaskPhaseMs, requireTaskIsolationProof, taskDescriptorDigest, validateTaskExecutionResult, validateTaskIsolationProof, type TaskExecutionResult, type TaskRecoveryRequest, type TaskRunner, type VirtualizationGuestTaskAdmission } from "./task-runner.js";
+import { FailClosedTaskRunner, isTaskPhaseMs, requireTaskIsolationProof, taskDescriptorDigest, validateTaskExecutionResult, validateTaskIsolationProof, type TaskExecutionResult, type TaskPhaseMs, type TaskRecoveryRequest, type TaskRunner, type VirtualizationGuestTaskAdmission } from "./task-runner.js";
 import { TaskProfileRegistry, validateTaskProfileRegistry, validateTaskRunArguments, type ResolvedTaskProfile } from "./task-profile.js";
 import type { RootHelperSnapshotRequestAdmission } from "./root-helper-snapshot.js";
 import type { RootHelperSnapshotRequestAuthority } from "./root-helper-snapshot-authority.js";
@@ -210,6 +210,12 @@ const VALIDATION_RUN_TOOLS: readonly string[] = ["mac_test_run", "mac_build_run"
 
 /** A cancelled task job is replayed unchanged for its idempotency key, so running the task again needs a new key. */
 const CANCELLED_TASK_RERUN_ADVICE = "a re-run needs a NEW idempotency_key because the same key returns the cancelled job";
+// Phase timings of a task run that did not succeed, keyed by the error thrown for it, so the failure audit row can carry them.
+const failedTaskPhaseMs = new WeakMap<BrokerError, TaskPhaseMs>();
+function withPhaseTiming(error: BrokerError, phaseMs: TaskPhaseMs | undefined): BrokerError {
+  if (phaseMs !== undefined) failedTaskPhaseMs.set(error, phaseMs);
+  return error;
+}
 
 /**
  * Rejects an idempotency key that the caller's earlier Job holds for a different tool, payload, target or policy version.
@@ -4436,7 +4442,7 @@ export class Broker {
         ? undefined
         : redactBoundedText(taskResult.verification.summary, 512).text;
       const durableCancellation = this.options.store.ownedJob(job.jobId, request.principal.principalId)?.cancelRequested === true;
-      if (durableCancellation && this.taskRunner.mechanism === "docker-container" && taskResult.containerCleanupVerified !== true) throw new BrokerError("UNKNOWN_OUTCOME", "Cancellation cleanup is unverified", true);
+      if (durableCancellation && this.taskRunner.mechanism === "docker-container" && taskResult.containerCleanupVerified !== true) throw withPhaseTiming(new BrokerError("UNKNOWN_OUTCOME", "Cancellation cleanup is unverified", true), taskResult.phaseMs);
       const finished = !authorityLost && !durableCancellation && !outputBudgetExceeded && !timeoutBudgetExceeded && taskResult.state === "completed" && taskResult.resultClass === "SUCCEEDED" && taskResult.verification.status === "verified";
       const terminalState = authorityLost || durableCancellation ? "cancelled" : finished ? "completed" : timeoutBudgetExceeded || taskResult.state === "timed_out" ? "failed" : taskResult.state === "cancelled" ? "cancelled" : taskResult.state === "unknown" ? "unknown" : "failed";
       const terminalClass = finished ? "success" : terminalState === "cancelled" ? "denied" : terminalState === "unknown" ? "unknown" : timeoutBudgetExceeded || taskResult.state === "timed_out" || outputBudgetExceeded || taskResult.resultClass === "OUTPUT_LIMIT" ? "failed" : taskResult.verification.status === "failed" ? "verification_failed" : "failed";
@@ -4455,12 +4461,12 @@ export class Broker {
       }, execution.jobLease, this.now());
       terminalPersisted = true;
       if (!finished) {
-        if (terminalState === "cancelled") throw new BrokerError("CANCELLED", "Task was cancelled under active authority");
-        if (terminalState === "unknown") throw new BrokerError("UNKNOWN_OUTCOME", "Task outcome could not be verified", true);
-        if (timeoutBudgetExceeded || taskResult.state === "timed_out") throw new BrokerError("TIMEOUT", "Task exceeded its execution budget");
-        if (outputBudgetExceeded || taskResult.resultClass === "OUTPUT_LIMIT") throw new BrokerError("OUTPUT_LIMIT", "Task exceeded its output budget");
-        if (taskResult.verification.status !== "verified") throw new BrokerError("VERIFICATION_FAILED", "Task postcondition verification failed");
-        throw new BrokerError("EXECUTION_FAILED", "Task execution failed");
+        if (terminalState === "cancelled") throw withPhaseTiming(new BrokerError("CANCELLED", "Task was cancelled under active authority"), taskResult.phaseMs);
+        if (terminalState === "unknown") throw withPhaseTiming(new BrokerError("UNKNOWN_OUTCOME", "Task outcome could not be verified", true), taskResult.phaseMs);
+        if (timeoutBudgetExceeded || taskResult.state === "timed_out") throw withPhaseTiming(new BrokerError("TIMEOUT", "Task exceeded its execution budget"), taskResult.phaseMs);
+        if (outputBudgetExceeded || taskResult.resultClass === "OUTPUT_LIMIT") throw withPhaseTiming(new BrokerError("OUTPUT_LIMIT", "Task exceeded its output budget"), taskResult.phaseMs);
+        if (taskResult.verification.status !== "verified") throw withPhaseTiming(new BrokerError("VERIFICATION_FAILED", "Task postcondition verification failed"), taskResult.phaseMs);
+        throw withPhaseTiming(new BrokerError("EXECUTION_FAILED", "Task execution failed"), taskResult.phaseMs);
       }
       return {
         data: {
@@ -5497,7 +5503,7 @@ export class Broker {
         targetRef: targetRef ?? "unresolved",
         policyVersion: request.policyVersion,
         evidence: { scopes: [...(this.currentPolicy().tools.get(request.tool)?.requiredScopes ?? [])], ...evidence,
-          ...(jobId ? { jobId } : {}) },
+          ...(jobId ? { jobId } : {}), ...(failedTaskPhaseMs.has(error) ? { phaseMs: failedTaskPhaseMs.get(error) } : {}) },
         timestampMs
       });
     } catch {
