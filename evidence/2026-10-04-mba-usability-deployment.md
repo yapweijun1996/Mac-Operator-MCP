@@ -154,3 +154,45 @@ and saved. Rollback: restore that file, `pm2 delete mba-mcp`,
 Evidence: PM2 online, restart 0, Auth and Edge children on the new release, `/mcp` 401, both `.well-known` 200.
 Not verified through an authenticated MCP call. Pending checks from an MBA connector: create a `codex/` worktree and
 remove it, expecting `branch_deleted: true`; `mac_read_file` on `~/.zshrc` expecting `SECRET_PATH_ACCESS`.
+
+## Ninth deployment — release `v2-usability9-20261005-267cdc2`
+
+Source revision 267cdc2f389681a6bb7012a15c8aeb3925366844 (the eighth MCP review triage: worktree removal state fixes,
+Git pre-spawn failures no longer strand the job as `unknown`, `mac_execution_audit` paging with `cursor`,
+`mac_pr_prepare` evidence scoped to the task, finished-job cancel as `CONFLICT`, `outcome_class` on `mac_job_status`,
+managed-worktree path message, idempotency conflict messages, `phase_ms`, branch/base_ref schema text). Previous release
+`v2-usability8-20261004-60f71ea` retained. Copy of the running release plus nine compiled Broker modules (`.js` and
+`.d.ts`: `broker`, `container-task-runner`, `development-gateway`, `git-inspector`, `idempotency-conflict`,
+`managed-worktrees`, `owner-terminal-dispatch`, `persistence`, `task-runner`), contracts `errors.js`/`errors.d.ts` and
+16 changed tool contracts. No queued/running jobs (completed 83 / cancelled 1 / failed 8 / unknown 26). Only the three
+unsigned Edge fields changed (original: `edge-service.json.before-usability9-20261005`, mode 0600). PM2 recreated from
+`mba-mcp.usability9-20261005.ecosystem.json` and saved. Rollback: restore that file, `pm2 delete mba-mcp`,
+`pm2 start mba-mcp.pre-usability9-20261005.ecosystem.json`, `pm2 save`.
+
+Evidence: PM2 online, restart 0, release 9 as working directory, `/mcp` 401 and both `.well-known` 200 when called with
+the public Host name (the first script check used `127.0.0.1` as Host and got 403, which is the allowed-hosts rule, not a
+fault). Authenticated checks from an MCP connector: a task id re-created after removal with new keys removed and
+re-created twice with `branch_deleted: true`; an empty `mac_git_commit` returned `PRECONDITION_FAILED` "Nothing is staged
+to commit; stage the intended paths with mac_git_stage first"; `mac_execution_audit` with `limit: 5` returned
+`next_cursor` and the second page had no duplicates (the client first showed no `cursor` in the schema because it had
+cached the old tool list; the deployed contract declares it). The job state of the failed commit could not be read:
+`mac_git_commit` is synchronous and returns no job id. Regression found during verification: `mac_git_worktree_list`
+returned `POLICY_DENIED` "Primary project identity changed" (see the tenth deployment).
+
+## Tenth deployment — release `v2-usability10-20261005-b040970`
+
+Source revision b040970a0d69367d01095b7f2d95e2883f366a1a (project identity of a managed worktree no longer includes the
+inode of `.git/config`, which `git branch -d` replaces on every worktree removal; the content digest is still
+compared). Previous release `v2-usability9-20261005-267cdc2` retained. Copy of the running release plus
+`managed-worktrees.js` (the only file that differs from release 9; contracts identical to HEAD). No queued/running jobs
+(completed 83 / cancelled 1 / failed 9 / unknown 26). Only the three unsigned Edge fields changed (original:
+`edge-service.json.before-usability10-20261005`, mode 0600). PM2 recreated from
+`mba-mcp.usability10-20261005.ecosystem.json` and saved. Rollback: restore that file, `pm2 delete mba-mcp`,
+`pm2 start mba-mcp.pre-usability10-20261005.ecosystem.json`, `pm2 save`.
+
+Evidence: PM2 online, restart 0, release 10 as working directory, `/mcp` 401 and both `.well-known` 200 with the public
+Host name. Authenticated checks: `mac_git_worktree_list` no longer denied and lists `mba-fulltest-20261004`; creating
+worktrees A and B, removing B (`branch_deleted: true`) and listing again still shows A and `mba-fulltest-20261004`.
+Not verified: an empty `mac_git_commit` followed by `mac_git_worktree_remove` in the same worktree (the second MCP
+server did not respond during the check). The verification worktree `codex/mba-verify-a-20261005` was left in place for
+that check. The 26 `unknown` jobs predate this work and are not released by it.
