@@ -109,3 +109,28 @@ The source tree now contains a separate HMAC-authenticated `PolicySignerIpcServe
 `LocalBrokerRuntime` is the in-process lifecycle boundary used by a future packaged service. It starts the Broker IPC channel before separate operator channels, closes started channels in reverse order, serializes concurrent lifecycle calls, and enters `failed` when cleanup itself fails so an explicit retry is required. It does not own the SQLite store, load secrets, install launchd persistence, or enable capabilities; those responsibilities remain with the future packaging entrypoint and accepted ADR-0007 configuration.
 
 The packaged service must instantiate `BrokerServiceEntrypoint` with `createMacOsNativeBrokerRuntime`, which constructs `MacOsNativeBrokerIpcServer` for the Edge-to-Broker channel, and must pass native `peerPolicy` to the policy-signer and approval channels. The launchd renderer emits no environment or privilege fields. The legacy `BrokerIpcServer`/`peerCredentialVerifier` paths remain compatibility prototypes because they read Node's private socket handle; production startup must record the native module, Node version, caller PID policy, socket modes, and bounded service readback.
+
+## Incident note: personal service down after reboot (2026-10-06)
+
+**Symptom.** After a Mac restart, pm2 `mac-operator-personal` sat in `waiting restart` (70 restarts), nothing listened on `127.0.0.1:3443`, and auto-deploy logged `mac-operator-personal is not online`.
+
+**Root cause.** The installed profile was `v2` (development). Startup builds a Docker inspector against the pinned socket `~/.docker/run/docker.sock`. Docker Desktop did not come up after the reboot, so startup threw `ENOENT` and `personal-service.ts` swallowed it into the generic `Personal service failed closed` message. `GUI_HELPER_UNAVAILABLE` in the same log is only a warning.
+
+**Diagnosis tip.** The real error is hidden by the catch in `main()`. Run the service in the foreground with a preload that wraps `Promise.prototype.catch` and prints the rejection reason; do not edit the release directory.
+
+**What was tried.**
+- OrbStack as the engine: its socket is `~/.orbstack/run/docker.sock` and the code does not hard-code Docker Desktop (peer identity is read at startup; the socket path must be a real path, not a symlink). The 17 physical container checks passed there with a freshly built image. The runtime config pins `engineId` and `imageId`, so both must change, and `acceptance.json` needs all 16 checks, including the two Codex end-to-end checks.
+- The Codex end-to-end checks failed because the Codex child process exited (`CODEX_PROCESS_EXITED`). The cause is not yet known, so no new `acceptance.json` was produced and no production config or policy was changed.
+
+**Recovery taken.** Rolled back to the Docker-free G1 profile using the recorded launch config in `MacOperator-o1-20261001a/rollback-launch.json`: release `personal-20260925-g1a`, data root `MacOperator-g1-20260925a`, same pm2 flags as auto-deploy, then `pm2 save`. Public `/mcp` returns 401 and OAuth metadata is served. The V2/O1 data root and a full backup (`MacOperator/backups/pre-orbstack-20261006-071421`) are untouched.
+
+**Consequences of the rollback.**
+- The OAuth grants issued by the V2 installation do not carry over, so the ChatGPT/Claude connector must be reconnected.
+- The development tools (`mac_task_run`, `mac_test_run`, `mac_build_run`, `mac_codex_run`) are not available under G1.
+- Auto-deploy is paused by `MacOperator/auto-deploy/PAUSE`. Remove that file only when the intended release and profile are live again.
+
+**Leftovers.** All temporary artifacts from the OrbStack attempt (probe script, local test branches and worktrees in `cloudflare-tunnel-server-001`, test image, evidence directory) were removed. The pre-attempt backup `MacOperator/backups/pre-orbstack-20261006-071421` is kept.
+
+**Why the Codex end-to-end checks failed (resolved diagnosis).** Not the engine and not Codex. The snapshot copied into the container is filtered by the broker secret scanner (`secret-policy.js`, content pattern 29: a secret-like name followed by `:` or `=` and an 8+ character value). 14 files in the YAP `scripts/` directory are filtered out, including `scripts/test-isolation.test.js` (lines 45-46: `DB_PASSWORD: PRIVATE_VALUE`, `OPENAI_API_KEY: PRIVATE_VALUE`). The registered profile `yap.test-isolation` runs that file, so it would fail under V2 on any engine until the YAP test is rewritten to build those names from an array instead of `NAME: value` pairs. Do not loosen the scanner.
+
+**Open follow-ups.** Decide whether V2 is needed; if so, fix the YAP test as above, rebuild the image on OrbStack, re-run the 16-check acceptance, then run the offline `development --enable` upgrade; or make Docker an optional dependency so a missing engine only disables the container tools instead of failing startup.
