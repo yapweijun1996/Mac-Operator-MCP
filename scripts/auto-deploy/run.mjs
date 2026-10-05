@@ -4,7 +4,7 @@
 // Safety model: the agent only pulls (no inbound port), only fast-forwards to origin/main, never downgrades, never
 // re-signs the policy, and rolls the full protected state back when the new release is not healthy.
 import { execFileSync, spawnSync } from "node:child_process";
-import { appendFileSync, cpSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -123,6 +123,15 @@ function stageRelease(target, name) {
   return finalDir;
 }
 
+/**
+ * `cp -Rp` keeps owner-only modes. Node's cpSync creates directories as 0755, which the service rejects as a
+ * non-private state root, so it must not be used for protected state.
+ */
+function copyTree(from, to) {
+  const copied = run("/bin/cp", ["-Rp", from, to], { timeout: 600_000 });
+  if (!copied.ok) throw new Error(`state copy failed: ${copied.stderr.trim().slice(0, 200)}`);
+}
+
 function startService(release, stateRoot, execPath) {
   run("pm2", ["delete", SERVICE], { timeout: 30_000 });
   return run("pm2", ["start", execPath, "--name", SERVICE, ...PM2_FLAGS, "--cwd", release, "--", `${release}/packages/auth/dist/personal-service.js`, "start", stateRoot],
@@ -154,7 +163,7 @@ async function cutover({ target, short, release, stateRoot, edgePath, previous }
   run("pm2", ["stop", SERVICE], { timeout: 60_000 });
   await delay(4_000);
   mkdirSync(backup, { recursive: true, mode: 0o700 });
-  cpSync(stateRoot, join(backup, "state"), { recursive: true, preserveTimestamps: true, verbatimSymlinks: true });
+  copyTree(stateRoot, join(backup, "state"));
   const priorEdge = JSON.parse(readFileSync(edgePath, "utf8"));
   const patched = patchEdgeConfig(priorEdge, { packageRoot: release, sourceRevision: target });
   writeFileSync(`${edgePath}.tmp`, `${JSON.stringify(patched, null, 2)}\n`, { mode: 0o600 });
@@ -165,7 +174,7 @@ async function cutover({ target, short, release, stateRoot, edgePath, previous }
   run("pm2", ["delete", SERVICE], { timeout: 30_000 });
   const failedState = join(MAC_ROOT, "backups", `auto-failed-${stamp}-${short}`);
   renameSync(stateRoot, failedState);
-  cpSync(join(backup, "state"), stateRoot, { recursive: true, preserveTimestamps: true, verbatimSymlinks: true });
+  copyTree(join(backup, "state"), stateRoot);
   const restored = startService(previous, stateRoot, execPath) && await healthy(priorEdge);
   if (restored) run("pm2", ["save"], { timeout: 30_000 });
   return { ok: false, restored, backup, failedState };
