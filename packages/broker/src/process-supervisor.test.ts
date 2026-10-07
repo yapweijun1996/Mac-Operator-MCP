@@ -1087,6 +1087,68 @@ test("process supervisor attributes an unexpected signal exit as execution failu
   assert.equal(supervisor.activeCount(), 0);
 });
 
+test("process supervisor lets a short-lived tracked detached descendant settle after root exit", async (t) => {
+  if (process.platform !== "darwin") {
+    t.skip("Detached descendant identity tracking is a macOS native boundary");
+    return;
+  }
+  const supervisor = new ProcessSupervisor({ pollIntervalMs: 5, terminationGraceMs: 50 });
+  const result = await supervisor.run({
+    executable: "/usr/bin/python3",
+    args: [
+      "-c",
+      [
+        "import os,time",
+        "pid=os.fork()",
+        "if pid == 0:",
+        " os.setsid(); os.close(1); os.close(2); time.sleep(0.04); os._exit(0)",
+        "time.sleep(0.02)",
+        "os._exit(0)"
+      ].join("\n")
+    ],
+    cwd: CWD,
+    timeoutMs: 2_000,
+    outputCapBytes: 1_024
+  });
+  assert.equal(result.state, "completed");
+  assert.equal(result.resultClass, "SUCCEEDED");
+  assert.equal(result.exitCode, 0);
+  assert.equal(result.terminationObserved, true);
+  assert.equal(supervisor.activeCount(), 0);
+});
+
+test("process supervisor still drains a long-lived tracked detached descendant after root exit", async (t) => {
+  if (process.platform !== "darwin") {
+    t.skip("Detached descendant identity tracking is a macOS native boundary");
+    return;
+  }
+  const supervisor = new ProcessSupervisor({ pollIntervalMs: 5, terminationGraceMs: 50 });
+  const result = await supervisor.run({
+    executable: "/usr/bin/python3",
+    args: [
+      "-c",
+      [
+        "import os,time",
+        "pid=os.fork()",
+        "if pid == 0:",
+        " os.setsid(); os.close(1); os.close(2); time.sleep(30); os._exit(0)",
+        "print(pid,flush=True)",
+        "time.sleep(0.02)",
+        "os._exit(0)"
+      ].join("\n")
+    ],
+    cwd: CWD,
+    timeoutMs: 2_000,
+    outputCapBytes: 1_024
+  });
+  assert.equal(result.state, "unknown");
+  assert.equal(result.resultClass, "UNKNOWN_OUTCOME");
+  const descendantPid = Number.parseInt(result.stdout, 10);
+  assert.ok(Number.isSafeInteger(descendantPid) && descendantPid > 0);
+  await assertProcessGone(descendantPid);
+  assert.equal(supervisor.activeCount(), 0);
+});
+
 test("process supervisor terminates a tracked detached descendant", async (t) => {
   if (process.platform !== "darwin") {
     t.skip("Detached descendant identity tracking is a macOS native boundary");

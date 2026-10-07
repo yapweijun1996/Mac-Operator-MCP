@@ -2733,6 +2733,80 @@ test("task process ownership metadata survives restart as UNKNOWN", async () => 
   }
 });
 
+test("task process ownership metadata supports the full 256-descendant contract", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "mac-operator-task-process-metadata-max-"));
+  const databasePath = join(directory, "broker.sqlite");
+  const lease = {
+    ownerId: "broker:test",
+    token: "lease:" + "fixtureowner0001",
+    expiresAtMs: 100
+  };
+  const descendants = (count: number) => Array.from({ length: count }, (_, index) => ({
+    pid: 10_000_000 + index,
+    startTimeMicros: 9_007_199_254_700_000 + index
+  }));
+  const metadata = (count: number, recordedAtMs: number) => ({
+    pid: 99_999_999,
+    processGroupId: 99_999_999,
+    startTimeMicros: 9_007_199_254_699_999,
+    recordedAtMs,
+    descendants: descendants(count),
+    taskDescriptorDigest: "a".repeat(64)
+  });
+
+  let store = new BrokerStore(databasePath);
+  try {
+    store.createJob(jobInput("job:task-process-metadata-max", "task-process-metadata-max"));
+    const running = store.startJob("job:task-process-metadata-max", "principal-1", 0, 1, lease);
+
+    const beyondLegacyBound = metadata(36, 2);
+    assert.ok(canonicalJson(beyondLegacyBound).length > 2_000);
+    const recorded = store.recordJobProcessOwnership(
+      "job:task-process-metadata-max",
+      "principal-1",
+      running.revision,
+      beyondLegacyBound,
+      lease,
+      2
+    );
+    assert.equal(recorded.processMetadata?.descendants.length, 36);
+
+    const maximum = metadata(256, 3);
+    assert.ok(canonicalJson(maximum).length < 16_384);
+    const updated = store.updateJobProcessOwnership(
+      "job:task-process-metadata-max",
+      "principal-1",
+      recorded.revision,
+      maximum,
+      lease,
+      3
+    );
+    assert.equal(updated.processMetadata?.descendants.length, 256);
+
+    assert.throws(
+      () => store.updateJobProcessOwnership(
+        "job:task-process-metadata-max",
+        "principal-1",
+        updated.revision,
+        metadata(257, 4),
+        lease,
+        4
+      ),
+      (error: unknown) => error instanceof BrokerError
+    );
+
+    store.close();
+    store = new BrokerStore(databasePath);
+    const reopened = store.ownedJob("job:task-process-metadata-max", "principal-1");
+    assert.equal(reopened?.state, "unknown");
+    assert.equal(reopened?.processMetadata?.descendants.length, 256);
+    assert.equal(reopened?.processMetadata?.taskDescriptorDigest, "a".repeat(64));
+  } finally {
+    store.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 test("task process no-fork ownership proof survives restart", async () => {
   const directory = await mkdtemp(join(tmpdir(), "mac-operator-task-process-proof-"));
   const databasePath = join(directory, "broker.sqlite");
