@@ -8,6 +8,7 @@ import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, renam
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
+import { preflightState } from "./preflight.mjs";
 import { setTimeout as delay } from "node:timers/promises";
 import {
   classifyRelation, decideAction, isHealthy, parseFailedTestFiles, parsePm2Service, patchEdgeConfig, releaseName, selectPrunable
@@ -217,6 +218,13 @@ async function once({ dryRun }) {
     const name = releaseName(new Date(), target);
     const built = buildAndTest(target, short);
     if (!built.ok) { writeState({ ...state, failed: target }); return notify("Auto-deploy blocked", `${short}: ${built.why}`); }
+    // The new build must open a private copy of the live state before the running service is touched.
+    const preflight = preflightState({ packageRoot: CHECKOUT, stateRoot, nodePath: live.execPath ?? process.execPath });
+    if (!preflight.ok) {
+      writeState({ ...state, failed: target });
+      log("preflight-failed", { target, why: preflight.why });
+      return notify("Auto-deploy blocked", `${short}: new build cannot open the live state (${preflight.why})`);
+    }
     const release = stageRelease(target, name);
     const jobs = activeJobs(stateRoot);
     if (jobs > 0) return log("deferred", { target, activeJobs: jobs, release });
