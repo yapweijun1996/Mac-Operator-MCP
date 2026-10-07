@@ -152,6 +152,19 @@ export class AuthStore {
     ).run(count).changes));
   }
 
+  /**
+   * Bound consumed refresh tokens per grant. Rotation adds one record per refresh and
+   * consumed hashes otherwise live until grant expiry, which fills the 1000-record kind
+   * cap and makes every later refresh fail. Replay detection only needs recent hashes.
+   */
+  compactConsumedRefresh(grantId: string, keep: number): number {
+    this.assertAvailable();
+    return this.write(() => Number(this.db.prepare(
+      "DELETE FROM records WHERE kind='refresh' AND json_extract(payload,'$.grantId') = ? AND json_extract(payload,'$.consumed') = 1 " +
+      "AND rowid NOT IN (SELECT rowid FROM records WHERE kind='refresh' AND json_extract(payload,'$.grantId') = ? AND json_extract(payload,'$.consumed') = 1 ORDER BY rowid DESC LIMIT ?)"
+    ).run(grantId, grantId, keep).changes));
+  }
+
   prune(): void {
     this.assertAvailable();
     this.write(() => this.db.prepare("DELETE FROM records WHERE kind != 'account' AND json_extract(payload,'$.expiresAt') <= ?").run(Date.now()));

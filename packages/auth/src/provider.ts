@@ -7,6 +7,7 @@ import { AuthStore } from "./store.js";
 export const fingerprint = (value: string): string => createHash("sha256").update(value).digest("hex");
 export const nonce = (): string => randomBytes(32).toString("hex");
 const ACCESS_SECONDS = 300;
+const CONSUMED_REFRESH_KEPT = 16;
 export const GRANT_MS = 7 * 24 * 60 * 60 * 1000;
 
 /** Protocol validation belongs to oauth2-server; durable authority belongs here. */
@@ -110,6 +111,7 @@ export class AuthProvider implements OAuth2Server.AuthorizationCodeModel, OAuth2
           return undefined;
         }
         this.store.put("refresh", user.refreshHash, { ...previous, consumed: true });
+        this.store.compactConsumedRefresh(grantId, CONSUMED_REFRESH_KEPT);
       }
       if (!token.refreshToken) throw new Error("Refresh token required");
       this.store.put("refresh", fingerprint(token.refreshToken), { clientId: client.id, grantId, expiresAt: grant.expiresAt, consumed: false });
