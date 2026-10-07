@@ -1035,6 +1035,29 @@ export class ProcessSupervisor {
       };
       notifyOwnership();
 
+      const settleNaturalClose = async (): Promise<"drained" | "alive" | "unknown"> => {
+        // Non-strict owner-terminal commands can legitimately leave a helper
+        // alive for a few milliseconds after the root shell closes. Observe
+        // without signalling for one tightly bounded grace period. Success is
+        // still allowed only after native proof that the root group and every
+        // tracked descendant identity are gone.
+        const deadline = Date.now() + Math.max(this.pollIntervalMs, Math.min(this.terminationGraceMs, 250));
+        while (!settled && terminationReason === null) {
+          processTree?.sample();
+          notifyOwnership();
+          if (settled || terminationReason !== null) return "alive";
+          const rootState = processTree?.rootState() ?? "alive";
+          const descendantState = processTree?.aliveState() ?? "none";
+          const currentGroupState = groupState();
+          if (rootState === "unknown" || processTree?.observationFailed ||
+              descendantState === "unknown" || currentGroupState === "unknown") return "unknown";
+          if (currentGroupState === "none" && descendantState === "none") return "drained";
+          if (Date.now() >= deadline) return "alive";
+          await new Promise((resolve) => setTimeout(resolve, this.pollIntervalMs));
+        }
+        return "alive";
+      };
+
       const handleExit = (): void => {
         childExitCode = capture.exitCode;
         childExitSignal = capture.exitSignal;
@@ -1078,6 +1101,18 @@ export class ProcessSupervisor {
           if (rootState === "unknown" || processTree?.observationFailed || descendantState === "unknown" || currentGroupState === "unknown") {
             finishUnknown();
           } else if (currentGroupState === "alive" || descendantState === "alive") {
+            if (terminationReason === null && request.requireCleanExitProof !== true) {
+              const naturalState = await settleNaturalClose();
+              if (settled) return;
+              if (naturalState === "unknown") {
+                finishUnknown();
+                return;
+              }
+              if (naturalState === "drained") {
+                finish(childExitCode, childExitSignal);
+                return;
+              }
+            }
             if (terminationReason === null) {
               groupDrainDeadlineMs ??= Date.now() + Math.max(this.terminationGraceMs * 3, 1_000);
               terminate("orphaned");

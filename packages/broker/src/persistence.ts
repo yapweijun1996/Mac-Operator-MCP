@@ -106,6 +106,7 @@ const JOB_LEASE_OWNER_PATTERN = /^[A-Za-z0-9._:@/-]{1,128}$/u;
 const JOB_LEASE_TOKEN_PATTERN = /^lease:[A-Za-z0-9._:-]{16,128}$/u;
 const EDGE_KEY_ID_PATTERN = /^[A-Za-z0-9._:-]{1,128}$/u;
 const MAX_JOB_LEASE_MS = 120_000;
+const MAX_PROCESS_JOB_METADATA_CHARS = 16_384;
 const MAX_ACTIVE_REQUESTS_GLOBAL = 256;
 const MAX_ACTIVE_REQUESTS_PER_SESSION = 64;
 /**
@@ -6427,7 +6428,9 @@ function validateProcessJobMetadata(metadata: ProcessJobMetadata): void {
 
 function serializeProcessJobMetadata(metadata: ProcessJobMetadata): string {
   validateProcessJobMetadata(metadata);
-  return canonicalJson(metadata);
+  const serialized = canonicalJson(metadata);
+  if (serialized.length > MAX_PROCESS_JOB_METADATA_CHARS) throw malformedJob();
+  return serialized;
 }
 
 function serializeGuestTaskJobMetadata(metadata: GuestTaskJobMetadata): string {
@@ -6539,7 +6542,9 @@ function validateGuestTaskJobMetadata(metadata: GuestTaskJobMetadata): void {
 }
 
 function parseProcessJobMetadata(value: string): ProcessJobMetadata {
-  if (value.length < 1 || value.length > 2_000) throw new BrokerError("AUDIT_UNAVAILABLE", "Broker process metadata is malformed");
+  if (value.length < 1 || value.length > MAX_PROCESS_JOB_METADATA_CHARS) {
+    throw new BrokerError("AUDIT_UNAVAILABLE", "Broker process metadata is malformed");
+  }
   let parsed: unknown;
   try { parsed = parseJsonStrict(value); }
   catch { throw new BrokerError("AUDIT_UNAVAILABLE", "Broker process metadata is malformed"); }
