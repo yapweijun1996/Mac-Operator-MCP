@@ -134,3 +134,20 @@ The packaged service must instantiate `BrokerServiceEntrypoint` with `createMacO
 **Why the Codex end-to-end checks failed (resolved diagnosis).** Not the engine and not Codex. The snapshot copied into the container is filtered by the broker secret scanner (`secret-policy.js`, content pattern 29: a secret-like name followed by `:` or `=` and an 8+ character value). 14 files in the YAP `scripts/` directory are filtered out, including `scripts/test-isolation.test.js` (lines 45-46: `DB_PASSWORD: PRIVATE_VALUE`, `OPENAI_API_KEY: PRIVATE_VALUE`). The registered profile `yap.test-isolation` runs that file, so it would fail under V2 on any engine until the YAP test is rewritten to build those names from an array instead of `NAME: value` pairs. Do not loosen the scanner.
 
 **Open follow-ups.** Decide whether V2 is needed; if so, fix the YAP test as above, rebuild the image on OrbStack, re-run the 16-check acceptance, then run the offline `development --enable` upgrade; or make Docker an optional dependency so a missing engine only disables the container tools instead of failing startup.
+
+## Upgrade note: G1 to O1 on the default endpoint (2026-10-06)
+
+**Goal.** Allow coding-agent CLIs through the unchanged `https://mac.yapweijun1996.com/mcp` endpoint without depending on Docker, so the V2 container path is not needed.
+
+**What was done.**
+- Built `main` at `3757e55` in the auto-deploy checkout and copied it to the immutable release `releases/personal-20261006-3757e55`. No earlier release contained the `terminal-sessions` command.
+- With the service stopped, copied the complete state to `backups/g1-before-o1-20261006T130853`, rebound `edge-service.json` (`packageRoot`, `contractsDirectory`, `sourceRevision`), then ran the offline `owner-terminal --enable` and `terminal-sessions --enable` upgrades against `MacOperator-g1-20260925a`, restarted PM2 with the auto-deploy flags and required an online process with zero restarts and `401` from `/mcp`.
+- Existing OAuth grants kept their original scopes, so the connector showed `mac_terminal_exec` with `scope_not_granted`. Removing and re-adding the connector was not enough; `revoke-all` (all browser sessions and OAuth grants, for every client) followed by a fresh consent granted `mac.terminal.exec`.
+- Resumed auto-deploy by removing `auto-deploy/PAUSE`. A dry run reported the live revision equal to `origin/main`.
+
+**Findings.**
+- `claude` stores its login only in the login keychain, which the PM2 child process cannot read, so it reported `loggedIn: false` through O1. A token file read inside the command fixes it.
+- The Homebrew-path `codex` is an npm global (`@openai/codex`), not a Homebrew package. Version 0.153.4 returned HTTP 400 for the default `gpt-6.1-sol` model; `npm install -g @openai/codex@latest` (0.160.1) fixed it.
+- Idempotency keys are permanent per owner: a reused key returns the recorded result (`"reused": true`) instead of running again, which can make an old failure look current.
+
+**Rollback.** Stop the service, restore `backups/g1-before-o1-20261006T130853` over `MacOperator-g1-20260925a`, rebind `edge-service.json` to `releases/personal-20260925-g1a` and start that release. See [Running coding-agent CLIs through the owner terminal](docs/cli-agents-via-owner-terminal.md) for the verified invocations and limits.
