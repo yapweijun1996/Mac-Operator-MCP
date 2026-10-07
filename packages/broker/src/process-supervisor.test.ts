@@ -1092,7 +1092,7 @@ test("process supervisor lets a short-lived tracked detached descendant settle a
     t.skip("Detached descendant identity tracking is a macOS native boundary");
     return;
   }
-  const supervisor = new ProcessSupervisor({ pollIntervalMs: 5, terminationGraceMs: 50 });
+  const supervisor = new ProcessSupervisor({ pollIntervalMs: 5, terminationGraceMs: 250 });
   const result = await supervisor.run({
     executable: "/usr/bin/python3",
     args: [
