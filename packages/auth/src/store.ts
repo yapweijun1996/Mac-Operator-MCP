@@ -165,6 +165,18 @@ export class AuthStore {
     ).run(grantId, grantId, keep).changes));
   }
 
+  /**
+   * Global bound for consumed refresh tokens across all grants. A brand-new login has no
+   * consumed tokens of its own to compact, so without this a full table rejects it.
+   */
+  evictOldConsumedRefresh(keep: number): number {
+    this.assertAvailable();
+    return this.write(() => Number(this.db.prepare(
+      "DELETE FROM records WHERE kind='refresh' AND json_extract(payload,'$.consumed') = 1 " +
+      "AND rowid NOT IN (SELECT rowid FROM records WHERE kind='refresh' AND json_extract(payload,'$.consumed') = 1 ORDER BY rowid DESC LIMIT ?)"
+    ).run(keep).changes));
+  }
+
   prune(): void {
     this.assertAvailable();
     this.write(() => this.db.prepare("DELETE FROM records WHERE kind != 'account' AND json_extract(payload,'$.expiresAt') <= ?").run(Date.now()));

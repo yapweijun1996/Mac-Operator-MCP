@@ -39,3 +39,22 @@ test("a refresh table full of consumed tokens accepts a new token once compacted
   store.put("refresh", "new", { clientId: "client", grantId: "grant-a", expiresAt, consumed: false });
   assert.ok(store.get("refresh", "new"));
 });
+
+test("evictOldConsumedRefresh frees a full table for a new login and keeps live tokens", async t => {
+  const directory = await realpath(await mkdtemp(join(tmpdir(), "mac-auth-refresh-global-")));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const store = new AuthStore(directory, true);
+  t.after(() => store.close());
+  for (let index = 0; index < 994; index++) {
+    store.put("refresh", `old-${index}`, { clientId: "client", grantId: `grant-${index % 7}`, expiresAt, consumed: true });
+  }
+  for (let index = 0; index < 6; index++) {
+    store.put("refresh", `live-${index}`, { clientId: "client", grantId: `grant-${index}`, expiresAt, consumed: false });
+  }
+  assert.throws(() => store.put("refresh", "new-login", { clientId: "client", grantId: "grant-new", expiresAt, consumed: false }), /Auth capacity exceeded/u);
+  assert.equal(store.evictOldConsumedRefresh(500), 494);
+  store.put("refresh", "new-login", { clientId: "client", grantId: "grant-new", expiresAt, consumed: false });
+  assert.ok(store.get("refresh", "live-0"));
+  assert.ok(store.get("refresh", "old-993"));
+  assert.equal(store.get("refresh", "old-0"), undefined);
+});
