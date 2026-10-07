@@ -15,7 +15,7 @@
   },
   "devDependencies": {
     "@mac-operator/broker": "0.1.0",
-    "@modelcontextprotocol/client": "^2.0.0",
+    "@modelcontextprotocol/client": "2.2.0",
     "@types/express": "^5.0.6"
   }
 }
