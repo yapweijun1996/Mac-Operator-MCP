@@ -146,6 +146,14 @@ test("Broker owner terminal requires scope and delegation, audits before executi
     assert.equal(crossTool.ok, false); assert.equal(crossTool.result_class, "CONFLICT");
     if (!crossTool.ok) assert.equal(crossTool.error.message, "IDEMPOTENCY_KEY_IN_USE: this idempotency_key already belongs to job job:write-held " +
       "(mac_write_file_atomic, queued, created 1970-01-01T00:00:01.000Z), but the new request differs in tool. Use a new idempotency_key.");
+    // A command ended by a signal has no exit code; it is still an observed failure and must not wedge the next start.
+    const signalled = await call({ ...args, command: "kill -9 $$", idempotency_key: "signal-exit" });
+    assert.equal(signalled.ok, true, JSON.stringify(signalled));
+    const signalledJob = store.ownedJobByIdempotencyKey("signal-exit", "principal-1")!;
+    assert.equal(signalledJob.state, "failed"); assert.equal(signalledJob.exitCode, null);
+    assert.equal(store.requestRecord(`terminal-${sequence}`)?.state, "SUCCEEDED");
+    // Opening a second handle runs the same startup ledger integrity check a service restart does.
+    new BrokerStore(join(root, "broker.sqlite")).close();
     assert.equal(store.auditEventExists("terminal-3", "intent"), true);
     assert.equal(store.auditEventExists("terminal-3", "completion"), true);
     const pending = call({ command: "printf started > cancel-started; sleep 5; printf late > cancel-late", cwd: root, idempotency_key: "cancel-operation" });
