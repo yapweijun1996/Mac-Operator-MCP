@@ -8,6 +8,7 @@ export const fingerprint = (value: string): string => createHash("sha256").updat
 export const nonce = (): string => randomBytes(32).toString("hex");
 const ACCESS_SECONDS = 300;
 const CONSUMED_REFRESH_KEPT = 16;
+const CONSUMED_REFRESH_GLOBAL_KEPT = 500;
 export const GRANT_MS = 7 * 24 * 60 * 60 * 1000;
 
 /** Protocol validation belongs to oauth2-server; durable authority belongs here. */
@@ -113,6 +114,8 @@ export class AuthProvider implements OAuth2Server.AuthorizationCodeModel, OAuth2
         this.store.put("refresh", user.refreshHash, { ...previous, consumed: true });
         this.store.compactConsumedRefresh(grantId, CONSUMED_REFRESH_KEPT);
       }
+      // New logins carry no previous token, so bound the global consumed set on every save.
+      this.store.evictOldConsumedRefresh(CONSUMED_REFRESH_GLOBAL_KEPT);
       if (!token.refreshToken) throw new Error("Refresh token required");
       this.store.put("refresh", fingerprint(token.refreshToken), { clientId: client.id, grantId, expiresAt: grant.expiresAt, consumed: false });
       // Scope reduction remains effective across subsequent refreshes and status checks.
