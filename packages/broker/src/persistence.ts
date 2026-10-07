@@ -1256,10 +1256,11 @@ export class BrokerStore {
               throw new BrokerError("AUDIT_UNAVAILABLE", "Stored task reuse does not have matching audit evidence");
             }
           }
-          // An owner-terminal command that ran and exited nonzero is a successfully observed request whose
-          // Job is `failed` with its exit code (documented behaviour); it must not make the ledger unreadable.
+          // An owner-terminal command that ran and exited nonzero, or was ended by a signal and so has no exit
+          // code, is a successfully observed request whose Job is `failed` (documented behaviour); it must not make
+          // the ledger unreadable. A failed Job that claims exit code 0 is still inconsistent.
           const observedNonzeroExit = OWNER_TERMINAL_JOB_TOOLS.has(job.tool) && job.state === "failed" &&
-            job.resultClass === "failed" && Number.isSafeInteger(job.exitCode) && job.exitCode !== 0;
+            job.resultClass === "failed" && (job.exitCode === null || Number.isSafeInteger(job.exitCode) && job.exitCode !== 0);
           if (request.state === "SUCCEEDED" &&
               (request.resultClass !== "SUCCEEDED" && request.resultClass !== "IDEMPOTENT_REUSE" ||
                !taskReuse && !observedNonzeroExit && (job.state !== "completed" || job.resultClass !== "success"))) {
