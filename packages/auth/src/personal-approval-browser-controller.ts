@@ -26,6 +26,7 @@ export function createPersonalApprovalBrowserController(options: {
   store: BrokerStore;
   authStore?: AuthStore;
   allowDesktop?: boolean;
+  defaultBrowserPrincipalId?: string;
   approvalIssuerRuntime: ApprovalIssuerRuntimeAssembly;
   socketPath: string;
   now?: () => number;
@@ -41,7 +42,8 @@ export function createPersonalApprovalBrowserController(options: {
     finally { client.dispose(); }
   };
   const sessions = new GuiSessionApprovals(options.store, issueExact, now, options.authStore,
-    { allowDesktop: options.allowDesktop === true });
+    { allowDesktop: options.allowDesktop === true,
+      ...(options.defaultBrowserPrincipalId !== undefined ? { defaultBrowserPrincipalId: options.defaultBrowserPrincipalId } : {}) });
   const flights = new Map<string, Promise<ApprovalBrowserIssuanceResult>>();
   const preview = (requestId: string): ApprovalBrowserPreview | undefined => {
     const record = options.store.approvalPreview(requestId, now());

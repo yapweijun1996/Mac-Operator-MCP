@@ -36,12 +36,14 @@ export class GuiSessionApprovals {
   private readonly grants = new Map<string, Grant>();
   private readonly requestGrants = new Map<string, string>();
   private readonly allowDesktop: boolean;
+  private readonly defaultBrowserPrincipalId: string | undefined;
   constructor(private readonly store: BrokerStore,
     private readonly issueExact: (approval: Omit<IssueApprovalInput, "approverPrincipalId">) => Promise<void>,
     private readonly now: () => number = Date.now,
     private readonly authStore?: AuthStore,
-    options: { allowDesktop?: boolean } = {}) {
+    options: { allowDesktop?: boolean; defaultBrowserPrincipalId?: string } = {}) {
     this.allowDesktop = options.allowDesktop === true;
+    this.defaultBrowserPrincipalId = this.authStore ? options.defaultBrowserPrincipalId : undefined;
     this.restore();
   }
 
@@ -136,6 +138,31 @@ export class GuiSessionApprovals {
     return this.view(grant);
   }
 
+  /**
+   * Owner-configured default for ordinary browsing. It creates the same persistent, audited and
+   * revocable browser grant as the approval page, bound to the current policy. Explicit-approval
+   * operations never reach this point, desktop authority is never created, and an owner revocation
+   * at the same policy version is never undone.
+   */
+  private ensureDefaultBrowserGrant(operation: GuiSessionOperation): void {
+    if (this.defaultBrowserPrincipalId === undefined || !this.authStore ||
+        operation.principalId !== this.defaultBrowserPrincipalId || !APPS.includes(operation.appId)) return;
+    const consentRequestId = `default-browser:${operation.principalId}:${operation.appId}:${operation.policyVersion}`;
+    if (consentRequestId.length > 128 || this.requestGrants.has(consentRequestId)) return;
+    if (this.store.isRevoked("principal", operation.principalId)) return;
+    this.prune();
+    if (this.grants.size >= 16 || this.requestGrants.size >= 4096) return;
+    const grant: Grant = { id: `gui-session:${randomUUID()}`, principalId: operation.principalId,
+      sessionId: operation.sessionId, policyVersion: operation.policyVersion, appId: operation.appId, persistent: true,
+      expiresAtMs: Number.MAX_SAFE_INTEGER, remainingOperations: Number.MAX_SAFE_INTEGER, approvals: new Map() };
+    this.audit(grant, "GUI_DEFAULT_BROWSER_GRANTED", operation.requestId);
+    this.authStore.put("browser_grant", grant.id, { id: grant.id, principalId: grant.principalId, sessionId: operation.sessionId,
+      appId: operation.appId as "bundle:com.google.Chrome" | "bundle:com.apple.Safari", policyVersion: grant.policyVersion,
+      consentRequestId, createdAt: this.now(), revoked: false });
+    this.grants.set(grant.id, grant);
+    this.requestGrants.set(consentRequestId, grant.id);
+  }
+
   status(id: string): GuiSessionView | undefined {
     const grant = this.grants.get(id);
     return grant && this.active(grant) ? this.view(grant) : undefined;
@@ -170,6 +197,7 @@ export class GuiSessionApprovals {
       : operation.tool === "mac_app_focus"
       ? operation.targetKind !== "app_window" || operation.targetRef !== `app_window:window:${operation.appId}`
       : operation.targetKind !== "ui_element" || !/^ui_element:element:[a-f0-9]{48}$/u.test(operation.targetRef)) return false;
+    this.ensureDefaultBrowserGrant(operation);
     const grant = [...this.grants.values()].find(candidate => this.active(candidate) &&
       candidate.principalId === operation.principalId && (candidate.persistent || candidate.sessionId === operation.sessionId) &&
       candidate.policyVersion === operation.policyVersion && (candidate.desktop

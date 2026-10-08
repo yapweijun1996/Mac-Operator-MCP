@@ -70,17 +70,19 @@ export const configSchema = z.object({
   guiAccess: z.enum(["browsers", "desktop"]).optional(),
   ownerTerminalConnection: z.boolean().optional(),
   dockerReadAccess: z.boolean().optional(),
-  ownerTerminalScope: z.boolean().optional()
+  ownerTerminalScope: z.boolean().optional(),
+  defaultBrowserAccess: z.boolean().optional()
 }).strict().refine(value => value.resource === new URL("mcp", value.issuer).href &&
   (new URL(value.issuer).pathname === "/" || (value.grantProfile === "o1" && value.ownerTerminalConnection !== true)) &&
   (value.ownerTerminalConnection !== true || value.grantProfile === "v2") &&
   (value.ownerTerminalScope !== true || value.grantProfile === "v2" && value.ownerTerminalConnection !== true && new URL(value.issuer).pathname === "/") &&
+  (value.defaultBrowserAccess !== true || ["g1", "o1", "v2"].includes(value.grantProfile)) &&
   (value.guiAccess !== "desktop" || ["g1", "o1", "v2"].includes(value.grantProfile)) &&
   (value.dockerReadAccess !== true || ["o1", "v2"].includes(value.grantProfile) && new URL(value.issuer).pathname === "/"));
 export type AuthConfig = z.infer<typeof configSchema>;
 export function ownerTerminalAuthConfig(config: AuthConfig): AuthConfig {
   if (config.grantProfile !== "v2" || config.ownerTerminalConnection !== true) throw new Error("Separate owner terminal consent is not enabled");
-  const { ownerTerminalConnection: _enabled, dockerReadAccess: _docker, ownerTerminalScope: _scope, ...base } = config;
+  const { ownerTerminalConnection: _enabled, dockerReadAccess: _docker, ownerTerminalScope: _scope, defaultBrowserAccess: _browser, ...base } = config;
   const context = ownerTerminalOAuthContext(new URL(config.issuer));
   return configSchema.parse({ ...base, issuer: context.issuer.href, resource: context.resource.href, grantProfile: "o1" });
 }

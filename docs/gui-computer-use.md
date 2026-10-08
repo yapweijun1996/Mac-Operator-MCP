@@ -510,6 +510,22 @@ The lifecycle deployment backs up its two modules with
 `.before-ui-evidence-lifecycle`; native binaries and macOS grants are unchanged.
 
 
+## Default browser access
+
+Setting `"defaultBrowserAccess": true` in `auth/auth-config.json` (profiles g1, o1 and v2) lets
+the configured owner principal browse with Chrome or Safari without a manual consent click. The
+first ordinary open/focus/action/type call without an active grant creates the same persistent
+`browser_grant` as the approval page, bound to the current policy version, audited as
+`GUI_DEFAULT_BROWSER_GRANTED` and revocable at `/approval/access`. A policy upgrade creates a fresh
+grant for the new version, so a policy bump no longer blocks browsing.
+
+Unchanged limits: operations with `requiresExplicitApproval` (web form submission, Enter submission,
+named sensitive controls), credentials, passkeys and secure fields still need the independent
+attended approval or the owner's own action. Other principals, non-browser apps and desktop
+authority are never created by this flag. A revocation at the same policy version is not undone
+automatically. Rollback: remove the key (older readers reject unknown config keys), restart, and
+revoke the `default-browser:` grants if desired.
+
 ## Persistent browser access
 
 The owner can choose **Allow this browser until revoked** on a Chrome or Safari
