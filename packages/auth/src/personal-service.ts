@@ -28,6 +28,7 @@ import { upgradePersonalDevelopment } from "./personal-development-upgrade.js";
 import { enablePersonalTerminalConnection } from "./personal-terminal-connection.js";
 import { upgradePersonalOwnerTerminal } from "./personal-owner-upgrade.js";
 import { upgradePersonalTerminalSessions } from "./personal-terminal-session-upgrade.js";
+import { upgradePersonalGitPush } from "./personal-git-push-upgrade.js";
 import { upgradePersonalDockerRead } from "./personal-docker-upgrade.js";
 import { upgradePersonalComputerUse } from "./personal-computer-use-upgrade.js";
 import { createPersonalTerminalApprover } from "./personal-terminal-approval.js";
@@ -359,6 +360,11 @@ async function main() {
     if (!detail || process.argv[5] !== "--enable") throw new Error("Source revision and explicit --enable required");
     await upgradePersonalTerminalSessions(root, packageRoot, detail);
     console.log("Owner terminal sessions enabled in offline state; existing OAuth grants keep their scopes and need no reconnect.");
+  }
+  else if (mode === "git-push") {
+    if (!detail || process.argv[5] !== "--enable" || process.argv.length !== 6) throw new Error("Source revision and explicit --enable required");
+    await upgradePersonalGitPush(root, packageRoot, detail);
+    console.log("mac_git_push enabled in the offline state; reconnect OAuth once to receive the mac.git.push scope.");
   }
   else if (mode === "docker-read") {
     if (!detail || process.argv[5] !== "--enable" || process.argv.length !== 6) throw new Error("Source revision and explicit --enable required");
