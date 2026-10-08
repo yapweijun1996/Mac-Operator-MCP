@@ -51,8 +51,7 @@ OAuth grants. GUI readiness continues to use the installed application's
 LaunchServices identity and its existing TCC permissions. Runtime provisioning
 must not rebuild or reinstall that application.
 
-`mac_git_push` remains a planned contract without a supported push executor or
-separate approval workflow. Privileged operations and service control likewise
+`mac_git_push` is implemented as a bounded, non-force push (see [Git push](git-push.md)). Privileged operations and service control likewise
 require their own configured, authenticated executors and operation targets.
 Changing enablement flags cannot implement those tools or validate their
 postconditions. Their absence must remain visible in capability diagnostics.

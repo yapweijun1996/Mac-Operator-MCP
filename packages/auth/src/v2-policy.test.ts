@@ -43,11 +43,13 @@ async function fixture() {
 }
 
 test("V2 grant profile adds exactly the development authority while O1 remains unchanged", () => {
-  assert.equal(V2_TOOLS.length, 50); assert.equal(O1_TOOLS.length, 39);
+  assert.equal(V2_TOOLS.length, 51); assert.equal(O1_TOOLS.length, 39);
   assert.deepEqual(scopesForGrantProfile("v2"), V2_CODING_SCOPES); assert.equal(V2_CODING_SCOPES.includes("mac.terminal.exec" as never), false); assert.deepEqual(scopesForGrantProfile("o1"), O1_SCOPES);
   assert.equal(new Set(OAUTH_SCOPES).size, OAUTH_SCOPES.length); assert.equal(new Set(V2_TOOLS).size, V2_TOOLS.length);
-  for (const name of ["mac_git_push", "mac_service_control", "mac_package_install"]) assert.equal((V2_TOOLS as readonly string[]).includes(name), false);
-  for (const scope of ["mac.git.push", "mac.service.control", "mac.package.install", "mac.privileged.run"]) assert.equal((V2_SCOPES as readonly string[]).includes(scope), false);
+  assert.equal((V2_TOOLS as readonly string[]).includes("mac_git_push"), true);
+  assert.equal((V2_SCOPES as readonly string[]).includes("mac.git.push"), true);
+  for (const name of ["mac_service_control", "mac_package_install"]) assert.equal((V2_TOOLS as readonly string[]).includes(name), false);
+  for (const scope of ["mac.service.control", "mac.package.install", "mac.privileged.run"]) assert.equal((V2_SCOPES as readonly string[]).includes(scope), false);
   assert.equal((O1_SCOPES as readonly string[]).includes("mac.task.run"), false);
   const config = configSchema.parse({ version: 1, issuer: "https://mac.example/", resource: "https://mac.example/mcp",
     issuerId: "mac-operator-auth", principalId: "owner-1", keyId: "key-1", port: 3444, allowedRedirectUris: ["https://chat.example/callback"], grantProfile: "v2" });
@@ -139,9 +141,9 @@ test("strict V2 assertion rejects widened scopes, extra tools and revoked grant 
   const f = await fixture();
   try {
     const document = f.document();
-    const widened = { ...document, principal_grants: document.principal_grants.map(grant => ({ ...grant, scopes: [...grant.scopes, "mac.git.push" as const] })) };
+    const widened = { ...document, principal_grants: document.principal_grants.map(grant => ({ ...grant, scopes: [...grant.scopes, "mac.docker.read" as const] })) };
     assert.throws(() => assertV2Policy(f.verify(widened), "owner-1", "mac-operator-auth", f.config), /grant mismatch/u);
-    for (const tool of ["mac_git_push", "mac_service_control"] as const) {
+    for (const tool of ["mac_service_control"] as const) {
       const widenedTools = { ...document, tool_enablement: [...document.tool_enablement, { tool, enabled: true }] };
       assert.throws(() => assertV2Policy(f.verify(widenedTools), "owner-1", "mac-operator-auth", f.config), /tool set mismatch/u);
     }
@@ -221,6 +223,22 @@ test("existing signed O1 policy remains accepted only by its unchanged strict ch
 });
 
 
+test("signed V2 policy enables mac_git_push per allowed project and keeps destructive operations killed", async () => {
+  const f = await fixture();
+  try {
+    const document = f.document();
+    assert.equal(document.tool_enablement.some(tool => tool.tool === "mac_git_push" && tool.enabled), true);
+    assert.equal(document.principal_grants[0]?.scopes.includes("mac.git.push"), true);
+    const pushRules = document.target_rules.filter(rule => rule.scope === "mac.git.push");
+    assert.deepEqual(pushRules.map(rule => rule.target.reference), [f.developmentProject]);
+    assert.equal(document.kill_switches.destructive, true);
+    const policy = f.verify(document);
+    assert.equal(policy.tools.get("mac_git_push")?.enabled, true);
+    assert.equal(policy.tools.get("mac_git_push")?.capabilityFamilies.includes("destructive"), false);
+    assertV2Policy(policy, "owner-1", "mac-operator-auth", f.config);
+  } finally { await f.close(); }
+});
+
 test("V2 Docker opt-in adds only read targets and preserves coding and GUI isolation", async () => {
   const f = await fixture();
   try {
@@ -234,7 +252,7 @@ test("V2 Docker opt-in adds only read targets and preserves coding and GUI isola
     assert.deepEqual(after.kill_switches, before.kill_switches);
     assert.deepEqual(after.principal_grants[0]?.scopes, developmentPolicyScopes(true));
     assert.deepEqual(after.tool_enablement.map(tool => tool.tool), developmentTools(true));
-    assert.equal(developmentTools(true).length, 53);
+    assert.equal(developmentTools(true).length, 54);
     assert.equal(scopesForGrantProfile("v2", true).includes("mac.terminal.exec"), false);
     assert.equal(scopesForGrantProfile("v2", true).includes("mac.docker.read"), true);
   } finally { await f.close(); }

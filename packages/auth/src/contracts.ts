@@ -4,7 +4,7 @@ import { READ_SCOPES, D1_SCOPES, G1_SCOPES, W1_SCOPES, D1_ADDITIONAL_SCOPES, G1_
   O1_SCOPES, V2_SCOPES, V2_CODING_SCOPES, ownerTerminalOAuthContext } from "@mac-operator/contracts";
 export { READ_SCOPES, D1_ADDITIONAL_SCOPES, W1_ADDITIONAL_SCOPES, W1_READ_SCOPES, W1_SCOPES,
   G1_GUI_SCOPES, G1_SCOPES, O1_SCOPES, V2_SCOPES, V2_CODING_SCOPES, D1_SCOPES } from "@mac-operator/contracts";
-export const OAUTH_SCOPES = [...D1_SCOPES, ...G1_GUI_SCOPES, "mac.terminal.exec", "mac.agent.read", "mac.agent.run", "mac.audit.read"] as const;
+export const OAUTH_SCOPES = [...D1_SCOPES, ...G1_GUI_SCOPES, "mac.terminal.exec", "mac.agent.read", "mac.agent.run", "mac.audit.read", "mac.git.push"] as const;
 export type GrantProfile = "r1" | "w1" | "g1" | "o1" | "d1" | "v2";
 export function scopesForGrantProfile(profile: GrantProfile, dockerReadAccess = false): readonly Scope[] {
   const scopes: readonly Scope[] = profile === "v2" ? V2_CODING_SCOPES : profile === "o1" ? O1_SCOPES : profile === "d1" ? D1_SCOPES : profile === "g1" ? G1_SCOPES : profile === "w1" ? W1_SCOPES : READ_SCOPES;
@@ -31,7 +31,7 @@ export function ownerTools(dockerReadAccess = false): readonly string[] {
   return dockerReadAccess ? [...O1_TOOLS, ...DOCKER_READ_TOOLS] : O1_TOOLS;
 }
 export const V2_TOOLS = [...O1_TOOLS, "mac_task_run", "mac_git_worktree_create", "mac_git_worktree_list", "mac_git_worktree_remove",
-  "mac_git_branch_create", "mac_codex_preflight", "mac_codex_run", "mac_test_run", "mac_build_run", "mac_pr_prepare", "mac_execution_audit"] as const;
+  "mac_git_branch_create", "mac_codex_preflight", "mac_codex_run", "mac_test_run", "mac_build_run", "mac_git_push", "mac_pr_prepare", "mac_execution_audit"] as const;
 export function developmentTools(dockerReadAccess = false): readonly string[] {
   return dockerReadAccess ? [...V2_TOOLS, ...DOCKER_READ_TOOLS] : V2_TOOLS;
 }

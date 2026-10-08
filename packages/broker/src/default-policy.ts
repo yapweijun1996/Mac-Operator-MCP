@@ -415,6 +415,21 @@ const tools: ToolPolicy[] = [
     enabled: false
   },
   {
+    // Non-force push of one exact branch/commit to origin. Owner-granted scope; the delegated single-use approval,
+    // project target rules, protected-branch and NO_PUSH checks, remote readback and audit all still apply.
+    tool: "mac_git_push",
+    contractVersion: "0.1",
+    requiredScopes: ["mac.project.write", "mac.git.push"],
+    capabilityFamilies: ["write", "network"],
+    targetType: "project",
+    mutation: true,
+    approvalPolicy: "trusted_write",
+    outputCapBytes: 131_072,
+    timeoutMs: 30_000,
+    implemented: true,
+    enabled: false
+  },
+  {
     tool: "mac_package_inspect",
     contractVersion: "0.1",
     requiredScopes: ["mac.package.read"],

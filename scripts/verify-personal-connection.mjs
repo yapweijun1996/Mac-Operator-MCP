@@ -193,11 +193,11 @@ async function run() {
     const data = await call(name, argumentsValue);
     if (name === "mac_capabilities") {
       assert.deepEqual(data.capabilities.map(capability => capability.name).sort(), [...PLANNED_TOOL_NAMES].sort());
-      for (const disabledTool of primaryConfig.grantProfile === "v2" ? ["mac_git_push", ...DEVELOPMENT_TOOL_NAMES.filter(name => !expectedTools.includes(name)), ...(terminalProbe ? ["mac_task_run"] : [])] : [...DEVELOPMENT_TOOL_NAMES, "mac_task_run"]) {
+      for (const disabledTool of primaryConfig.grantProfile === "v2" ? [...DEVELOPMENT_TOOL_NAMES.filter(name => !expectedTools.includes(name)), ...(terminalProbe ? ["mac_task_run"] : [])] : [...DEVELOPMENT_TOOL_NAMES, "mac_task_run"]) {
         assert.equal(data.capabilities.find(capability => capability.name === disabledTool)?.enabled, false,
           `Personal deployment unexpectedly enabled ${disabledTool}`);
       }
-      console.log(`Personal capability boundary: ${data.capabilities.length} contracts; ${primaryConfig.grantProfile === "v2" ? "scope-bound development; push denied" : "V2/task execution disabled"}.`);
+      console.log(`Personal capability boundary: ${data.capabilities.length} contracts; ${primaryConfig.grantProfile === "v2" ? "scope-bound development; push enabled for non-protected branches only" : "V2/task execution disabled"}.`);
     }
     console.log(`${profileLabel} call passed: ${name}`);
   }
@@ -266,9 +266,10 @@ async function run() {
     assert.equal(status.dirty, false);
     const primaryAfter = await primaryFingerprint();
     assert.deepEqual(primaryAfter, primaryBefore);
-    const push = await call("mac_policy_explain", { proposed_tool: "mac_git_push", target: { kind: "project", reference: developmentProject }, proposed_arguments: { project_root: developmentProject,
-      worktree, remote: "origin", branch_name: branch, approval_id: "public-probe-denied", idempotency_key: `${taskId}-push-denied` } });
-    assert.equal(push.decision, "deny");
+    // Explain only: the probe never pushes to a real remote.
+    const push = await call("mac_policy_explain", { proposed_tool: "mac_git_push", target: { kind: "project", reference: developmentProject }, proposed_arguments: { project_root: worktree,
+      remote: "origin", branch_name: branch, expected_commit: committed.commit_id, idempotency_key: `${taskId}-push-explain` } });
+    assert.equal(push.decision, "allow");
     const audit = await call("mac_execution_audit", { project_root: developmentProject, limit: 100 });
     assert.ok(audit);
     const removed = await call("mac_git_worktree_remove", { project_root: developmentProject, worktree, task_id: taskId, idempotency_key: `${taskId}-remove` });

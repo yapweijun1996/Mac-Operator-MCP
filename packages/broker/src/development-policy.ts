@@ -12,7 +12,6 @@ const definitions: readonly [string, DevelopmentPermissionTier, readonly Scope[]
   ["mac_codex_run", "AGENT_RUN", ["mac.project.read", "mac.project.write", "mac.agent.run"]],
   ["mac_test_run", "AGENT_RUN", ["mac.project.read", "mac.project.write", "mac.task.run"]],
   ["mac_build_run", "AGENT_RUN", ["mac.project.read", "mac.project.write", "mac.task.run"]],
-  ["mac_git_push", "HIGH_RISK", ["mac.project.write", "mac.git.push"]],
   ["mac_pr_prepare", "READ", ["mac.project.read", "mac.git.read", "mac.job.read"]],
   ["mac_execution_audit", "READ", ["mac.project.read", "mac.audit.read"]]
 ];

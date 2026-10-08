@@ -3,7 +3,7 @@
   "schema_version": "0.1",
   "tool_name": "mac_git_push",
   "capability_level": "L4",
-  "safety_class": "destructive",
+  "safety_class": "writes_local",
   "required_scopes": [
     "mac.project.write",
     "mac.git.push"
@@ -11,10 +11,10 @@
   "normalized_target_type": "project_root",
   "timeout_ms": 30000,
   "output_cap_bytes": 131072,
-  "network_policy": "none",
+  "network_policy": "origin_push_endpoint",
   "filesystem_policy": "write_allowed_project",
   "secret_policy": "deny_secret_paths_and_env",
-  "approval_policy": "explicit_privileged_policy",
+  "approval_policy": "trusted_write",
   "idempotent": true,
   "postcondition_verification": {
     "required": true,
@@ -24,8 +24,8 @@
   "audit_class": "git_write",
   "tool_delivery_wave": "wave_3",
   "implementation_status": "planned",
-  "purpose": "Reserved high-risk push boundary, denied until a separate explicit approval workflow is supported; never force-push.",
-  "input_summary": "project_root, worktree, remote, branch_name, approval_id, idempotency_key",
+  "purpose": "Explicitly approved, non-force push of the exact current branch and HEAD to origin, never to a protected branch or a NO_PUSH repository, independently verified by remote readback. Enabled in the owner V2 profile; a delegated single-use approval is bound to the exact request.",
+  "input_summary": "project_root, remote, branch_name, expected_commit, idempotency_key",
   "output_summary": "remote, branch_name, pushed",
   "input_schema": {
     "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -39,17 +39,8 @@
         "maxLength": 4096,
         "pattern": "^[^\\u0000]+$"
       },
-      "worktree": {
-        "type": "string",
-        "minLength": 1,
-        "maxLength": 4096,
-        "pattern": "^[^\\u0000]+$"
-      },
       "remote": {
-        "type": "string",
-        "minLength": 1,
-        "maxLength": 128,
-        "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$"
+        "const": "origin"
       },
       "branch_name": {
         "type": "string",
@@ -57,26 +48,23 @@
         "maxLength": 128,
         "pattern": "^[A-Za-z0-9][A-Za-z0-9._/-]*$"
       },
-      "approval_id": {
-        "type": "string",
-        "minLength": 1,
-        "maxLength": 128,
-        "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$"
-      },
       "idempotency_key": {
         "description": "Client-chosen key, unique per account for ever: repeating the identical request from the same login never runs it again: it returns the recorded outcome of a finished job, or reports the job's queued, unresolved, cancelled or failed state; any different request needs a new key.",
         "type": "string",
         "minLength": 1,
         "maxLength": 128,
         "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$"
+      },
+      "expected_commit": {
+        "type": "string",
+        "pattern": "^(?:[a-f0-9]{40}|[a-f0-9]{64})$"
       }
     },
     "required": [
       "project_root",
-      "worktree",
       "remote",
       "branch_name",
-      "approval_id",
+      "expected_commit",
       "idempotency_key"
     ]
   },
@@ -208,6 +196,6 @@
     "kbid": "mac-operator-mcp",
     "kb_id": "90f1df58-87f6-4f47-aa9a-2881c478f8a0",
     "kb_item_id": "54e6a022-d57f-4846-a215-af56912e36af",
-    "source_text": "Local V2 design contract from docs/MAC_OPERATOR_V2_DESIGN.md, 2026-10-01. This contract identifier is reserved locally and does not assert an existing KB item. Reserved high-risk push boundary, denied until a separate explicit approval workflow is supported; never force-push."
+    "source_text": "Local bounded push contract implementing FULL_ACCESS_DESIGN.md item 3. Owner-granted mac.git.push scope with delegated single-use approval; independent exact remote readback; never force-push."
   }
 }
