@@ -2,8 +2,8 @@ import assert from "node:assert/strict";
 import { chmod, lstat, mkdtemp, realpath, rm, symlink, unlink } from "node:fs/promises";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { join } from "node:path";
-import { tmpdir } from "node:os";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
 import { createWorkspaceArchive, parseWorkspaceArchive } from "./container-snapshot.js";
 import { sha256 } from "@mac-operator/contracts";
 import {
@@ -56,8 +56,9 @@ function multiplex(stream: number, value: string): Buffer {
 }
 
 async function fixture(overrides: Partial<ContainerEngineOptions> = {}): Promise<FakeEngine> {
-  const directory = await realpath(await mkdtemp(join(tmpdir(), "mop-engine-")));
-  await chmod(directory, 0o700);
+  // Shared temporary directories have writable ancestors rejected by the socket policy.
+  const ancestor = await realpath(fileURLToPath(new URL("../../../", import.meta.url)));
+  const directory = await mkdtemp(join(ancestor, "mop-engine-"));
   const socket = join(directory, "engine.sock");
   let running = false;
   let deleted = false;
@@ -142,15 +143,26 @@ async function fixture(overrides: Partial<ContainerEngineOptions> = {}): Promise
     }
     json(res, 404, { message: "unexpected route" });
   });
-  await new Promise<void>((resolvePromise, reject) => { server.once("error", reject); server.listen(socket, resolvePromise); });
-  await chmod(socket, 0o600);
-  result.options = { socketPath: socket,
-    peerPolicy: { expectedUid: process.getuid!(), expectedGid: process.getgid!(), allowedProcessIdentity: { pid: process.pid, startTimeMicros: 1 } },
-    peerVerifier: { verify: () => { result.verifiedConnections += 1; return { uid: process.getuid!(), gid: process.getgid!(), pid: process.pid }; } },
-    ...overrides };
-  result.engine = new DockerContainerEngine(result.options);
-  result.close = async (): Promise<void> => { server.closeAllConnections(); await new Promise<void>((resolvePromise) => server.close(() => resolvePromise())); await rm(directory, { recursive: true, force: true }); };
-  return result;
+  result.close = async (): Promise<void> => {
+    try {
+      server.closeAllConnections();
+      await new Promise<void>((resolvePromise) => server.close(() => resolvePromise()));
+    } finally { await rm(directory, { recursive: true, force: true }); }
+  };
+  try {
+    await chmod(directory, 0o700);
+    await new Promise<void>((resolvePromise, reject) => { server.once("error", reject); server.listen(socket, resolvePromise); });
+    await chmod(socket, 0o600);
+    result.options = { socketPath: socket,
+      peerPolicy: { expectedUid: process.getuid!(), expectedGid: process.getgid!(), allowedProcessIdentity: { pid: process.pid, startTimeMicros: 1 } },
+      peerVerifier: { verify: () => { result.verifiedConnections += 1; return { uid: process.getuid!(), gid: process.getgid!(), pid: process.pid }; } },
+      ...overrides };
+    result.engine = new DockerContainerEngine(result.options);
+    return result;
+  } catch (error) {
+    await result.close();
+    throw error;
+  }
 }
 
 async function running(f: FakeEngine, readonlyWorkspace = false): Promise<ContainerTaskHandle> {
@@ -514,12 +526,15 @@ test("Container Engine rejects symlink socket, writable parents and replaced soc
     const before = await lstat(f.socket);
     await unlink(f.socket);
     const replacement = createServer();
-    await new Promise<void>(resolvePromise => replacement.listen(f.socket, resolvePromise));
-    await chmod(f.socket, 0o600);
-    assert.notEqual((await lstat(f.socket)).ino, before.ino);
-    await assert.rejects(f.engine.info(), /unsafe/u);
-    replacement.closeAllConnections();
-    await new Promise<void>(resolvePromise => replacement.close(() => resolvePromise()));
+    try {
+      await new Promise<void>((resolvePromise, reject) => { replacement.once("error", reject); replacement.listen(f.socket, resolvePromise); });
+      await chmod(f.socket, 0o600);
+      assert.notEqual((await lstat(f.socket)).ino, before.ino);
+      await assert.rejects(f.engine.info(), /unsafe/u);
+    } finally {
+      replacement.closeAllConnections();
+      await new Promise<void>(resolvePromise => replacement.close(() => resolvePromise()));
+    }
   } finally { await f.close(); }
 });
 

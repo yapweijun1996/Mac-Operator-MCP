@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { access, chmod, lstat, mkdir, mkdtemp, realpath, rm } from "node:fs/promises";
+import { access, chmod, chown, lstat, mkdir, mkdtemp, realpath, rm } from "node:fs/promises";
 import { connect } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -65,6 +65,7 @@ test("privileged helper startup restores an activated key and owns a separate na
   let manager: PrivilegedHelperKeyManager | undefined;
   try {
     await mkdir(helperSocketDirectory, { mode: 0o700 });
+    await chown(helperSocketDirectory, uid, gid);
     await chmod(helperSocketDirectory, 0o711);
     const provisioned = await provisionAuthenticationKey(keyPath);
     const key = await loadAuthenticationKey(keyPath);
@@ -287,6 +288,7 @@ test("root-helper key-material startup does not require BrokerStore access", asy
   let runtime: Awaited<ReturnType<typeof createPrivilegedHelperRuntimeFromKeyMaterial>> | undefined;
   try {
     await mkdir(helperSocketDirectory, { mode: 0o700 });
+    await chown(helperSocketDirectory, uid, gid);
     await chmod(helperSocketDirectory, 0o711);
     const provisioned = await provisionAuthenticationKey(keyPath);
     const key = await loadAuthenticationKey(keyPath);

@@ -49,7 +49,7 @@
         "maxLength": 4096
       },
       "idempotency_key": {
-        "description": "Client-chosen key, unique per account for ever: repeating the identical request from the same login never runs it again: it returns the recorded outcome of a finished job, or reports the job's queued, unresolved, cancelled or failed state; any different request needs a new key.",
+        "description": "Start only. Client-chosen key, unique per account for ever: repeating the identical request from the same login never runs it again: it returns the recorded outcome of a finished job, or reports the job's queued, unresolved, cancelled or failed state; any different request needs a new key.",
         "type": "string",
         "pattern": "^[A-Za-z0-9._:-]{1,128}$"
       },
@@ -96,7 +96,77 @@
         "minimum": 0,
         "maximum": 5000
       }
-    }
+    },
+    "oneOf": [
+      {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "action",
+          "cwd",
+          "idempotency_key"
+        ],
+        "properties": {
+          "action": {
+            "const": "start"
+          },
+          "cwd": {},
+          "idempotency_key": {},
+          "rows": {},
+          "cols": {},
+          "lifetime_ms": {},
+          "idle_timeout_ms": {}
+        }
+      },
+      {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "action",
+          "session_id",
+          "data"
+        ],
+        "properties": {
+          "action": {
+            "const": "write"
+          },
+          "session_id": {},
+          "data": {}
+        }
+      },
+      {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "action",
+          "session_id",
+          "cursor"
+        ],
+        "properties": {
+          "action": {
+            "const": "read"
+          },
+          "session_id": {},
+          "cursor": {},
+          "max_bytes": {},
+          "wait_ms": {}
+        }
+      },
+      {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "action",
+          "session_id"
+        ],
+        "properties": {
+          "action": {
+            "const": "stop"
+          },
+          "session_id": {}
+        }
+      }
+    ]
   },
   "output_schema": {
     "$schema": "https://json-schema.org/draft/2020-12/schema",

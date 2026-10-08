@@ -1117,6 +1117,13 @@ napi_value CreateUnixListener(napi_env env, napi_callback_info info) {
     ThrowSystemError(env, close_on_error("Unix socket owner setup failed"));
     return nullptr;
   }
+  // macOS inherits the parent directory's group at bind, even without setgid.
+  // Match strict owner readback without changing group access or root ACL ownership.
+  if (peer_group_id < 0 && (peer_user_id < 0 || geteuid() != 0) &&
+      chown(address.sun_path, static_cast<uid_t>(-1), getegid()) != 0) {
+    ThrowSystemError(env, close_on_error("Unix socket owner-group setup failed"));
+    return nullptr;
+  }
   const mode_t socket_mode = peer_group_id >= 0
       ? static_cast<mode_t>(S_IRUSR | S_IWUSR | S_IWGRP)
       : static_cast<mode_t>(S_IRUSR | S_IWUSR);

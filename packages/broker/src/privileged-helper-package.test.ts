@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
-import { chmod, mkdir, realpath, rm, symlink, unlink, writeFile } from "node:fs/promises";
+import { chmod, chown, mkdir, realpath, rm, symlink, unlink, writeFile } from "node:fs/promises";
 import { mkdtemp } from "node:fs/promises";
 import { createServer } from "node:net";
 import { join } from "node:path";
@@ -479,6 +479,7 @@ test("privileged helper authority socket readback binds Broker ownership and rej
   });
   const server = createServer();
   try {
+    await chown(directory, uid, gid);
     await new Promise<void>((resolvePromise, reject) => {
       server.once("error", reject);
       server.listen(socketPath, resolvePromise);
@@ -555,6 +556,7 @@ test("privileged helper socket readback permits only the authenticated Broker gr
   const server = createServer();
   try {
     await mkdir(runDirectory, { mode: 0o700 });
+    await chown(runDirectory, uid, gid);
     await chmod(runDirectory, 0o710);
     await new Promise<void>((resolvePromise, reject) => {
       server.once("error", reject);
@@ -596,6 +598,7 @@ test("privileged helper socket readback verifies an exact user ACL on an owner-o
   let listenerFd: number | undefined;
   try {
     await mkdir(runDirectory, { mode: 0o700 });
+    await chown(runDirectory, uid, process.getegid?.() ?? gid);
     await chmod(runDirectory, 0o711);
     listenerFd = native.createUnixListener(socketPath, 16, undefined, uid);
     const readback = await readPrivilegedHelperSocketReadback(socketPath, uid, process.getegid?.() ?? gid, "privileged helper", {

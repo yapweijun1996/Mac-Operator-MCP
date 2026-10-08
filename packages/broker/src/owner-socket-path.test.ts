@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { chmod, mkdir, mkdtemp, rm, symlink } from "node:fs/promises";
+import { chmod, chown, mkdir, mkdtemp, rm, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -34,6 +34,7 @@ test("group socket parent validation permits only the exact peer traversal direc
   const runDirectory = join(directory, "run");
   try {
     await mkdir(runDirectory, { mode: 0o700 });
+    await chown(runDirectory, uid, gid);
     await chmod(runDirectory, 0o710);
     const socketPath = join(runDirectory, "helper.sock");
     await validateGroupSocketParentChain(socketPath, uid, uid, gid);

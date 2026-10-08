@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import { chmod, lstat, mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises";
-import test from "node:test";
+import test, { after } from "node:test";
 import { join } from "node:path";
-import { tmpdir } from "node:os";
+import { fileURLToPath } from "node:url";
 import {
   macOsDeploymentJournalPath,
   readMacOsDeploymentJournal,
@@ -10,7 +10,13 @@ import {
   type MacOsDeploymentJournalRecord
 } from "./macos-deployment-journal.js";
 
-const tempRoot = await realpath(tmpdir());
+// Shared OS temporary directories can violate the journal's ancestor permissions.
+const fixtureAncestor = await realpath(fileURLToPath(new URL(".", import.meta.url)));
+assert.equal((await lstat(fixtureAncestor)).uid, process.getuid?.());
+const tempRoot = await mkdtemp(join(fixtureAncestor, "mac-operator-journal-tests-"));
+after(async () => {
+  await rm(tempRoot, { recursive: true, force: true });
+});
 
 function record(overrides: Partial<MacOsDeploymentJournalRecord> = {}): MacOsDeploymentJournalRecord {
   return {
