@@ -236,3 +236,20 @@ test("strict JSON manifest duplicate keys and secret content are rejected withou
     assert.equal(f.runtimeCalls(), 0);
   } finally { await f.close(); }
 });
+
+test("agent projects without task profiles may run Codex only through an owned worktree", async () => {
+  const f = await fixture();
+  try {
+    // The project has no registered profile entries at all, so only the explicit agent project list can admit it.
+    const open = new ContainerTaskProfileRegistry({ ...f.options, entries: [], agentProjects: [f.project] });
+    const profile = await open.resolveAgent({ ...f.agent, projectRoot: f.project });
+    assert.equal(profile.containerExecution?.agent?.executionProfile, "workspace-write");
+    await assert.rejects(open.resolveAgent({ ...f.agent, projectRoot: f.directory }), errorClass("POLICY_DENIED"));
+    await assert.rejects(open.resolveAgent({ ...f.agent, projectRoot: f.project, cwd: f.project }), errorClass("POLICY_DENIED"));
+    await assert.rejects(open.resolveAgent({ ...f.agent, projectRoot: f.project, taskId: "another-task" }), errorClass("POLICY_DENIED"));
+    const closed = new ContainerTaskProfileRegistry({ ...f.options, entries: [] });
+    await assert.rejects(closed.resolveAgent({ ...f.agent, projectRoot: f.project }), errorClass("POLICY_DENIED"));
+    // Task profiles themselves stay tied to registered entries.
+    await assert.rejects(open.resolve(f.request), errorClass("TARGET_NOT_FOUND"));
+  } finally { await f.close(); }
+});

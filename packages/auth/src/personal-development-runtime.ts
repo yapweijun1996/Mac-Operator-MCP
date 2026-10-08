@@ -84,7 +84,7 @@ export async function createPersonalDevelopmentRuntime(config: PersonalDevelopme
   const worktrees = new ManagedWorktrees(config.stateRoot, config.worktreeRoot);
   try {
     const profiles = new ContainerTaskProfileRegistry({ imageId: config.imageId, engineId: config.engineId,
-      entries: config.entries.map(({ type: _type, ...entry }) => entry),
+      entries: config.entries.map(({ type: _type, ...entry }) => entry), agentProjects: config.developmentProjects,
       validateWorkspace: async (cwd, projectRoot, taskId) => {
         if (!config.developmentProjects.includes(projectRoot)) throw new Error("Development project is not registered");
         worktrees.require(cwd, projectRoot, principalId, taskId);

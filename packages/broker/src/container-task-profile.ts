@@ -36,6 +36,11 @@ export interface ContainerTaskProfileOptions {
   imageId: string;
   engineId: string;
   entries: readonly ApprovedContainerTask[];
+  /**
+   * Exact-path development projects that may host Codex agent runs without registered task profiles. Agent runs still
+   * require an owned isolated worktree, the signed project rules and the controller readiness gate.
+   */
+  agentProjects?: readonly string[];
   validateWorkspace: (cwd: string, projectRoot: string, taskId: string) => Promise<ContainerWorkspaceAuthorization>;
   /** Inspect only the fixed image's runtime; never execute a project command here. */
   validateRuntime: (imageId: string, engineId: string, command: readonly string[]) => Promise<boolean>;
@@ -60,12 +65,14 @@ export class ContainerTaskProfileRegistry extends TaskProfileRegistry {
 
   constructor(options: ContainerTaskProfileOptions) {
     super([]);
-    if (!isPlainDataRecord(options) || !allowedKeys(options, ["imageId", "engineId", "entries", "validateWorkspace", "validateRuntime", "preflight"]) ||
+    if (!isPlainDataRecord(options) || !allowedKeys(options, ["imageId", "engineId", "entries", "agentProjects", "validateWorkspace", "validateRuntime", "preflight"]) ||
         typeof options.imageId !== "string" || !/^sha256:[a-f0-9]{64}$/u.test(options.imageId) ||
         typeof options.engineId !== "string" || !ID.test(options.engineId) ||
         !dataArray(options.entries, 256) || typeof options.validateWorkspace !== "function" || typeof options.validateRuntime !== "function" ||
-        options.preflight !== undefined && typeof options.preflight !== "function") malformed("Container profile configuration is malformed");
-    this.options = { ...options, entries: [] };
+        options.preflight !== undefined && typeof options.preflight !== "function" ||
+        options.agentProjects !== undefined && (!dataArray(options.agentProjects, 16) || new Set(options.agentProjects).size !== options.agentProjects.length ||
+          options.agentProjects.some(project => typeof project !== "string" || !isAbsolute(project) || resolve(project) !== project))) malformed("Container profile configuration is malformed");
+    this.options = { ...options, entries: [], ...(options.agentProjects === undefined ? {} : { agentProjects: Object.freeze([...options.agentProjects]) }) };
     for (const entry of options.entries) {
       const safe = snapshotEntry(entry);
       if (this.entries.has(safe.profile)) malformed("Container task profile is duplicated");
@@ -96,7 +103,7 @@ export class ContainerTaskProfileRegistry extends TaskProfileRegistry {
 
   async resolveAgent(request: ContainerAgentRequest): Promise<ResolvedTaskProfile> {
     const safe = snapshotAgentRequest(request);
-    const candidates = [...new Set([...this.entries.values()].map(entry => entry.projectRoot))];
+    const candidates = [...new Set([...[...this.entries.values()].map(entry => entry.projectRoot), ...(this.options.agentProjects ?? [])])];
     if (safe.projectRoot !== undefined && !candidates.includes(safe.projectRoot)) deny("Agent project is outside the approved registry");
     let owner: string | undefined;
     let selectedProject: string | undefined;
