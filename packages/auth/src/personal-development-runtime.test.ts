@@ -26,7 +26,7 @@ async function runtimeFixture() {
     checks: REQUIRED_CONTAINER_EVIDENCE.map(name => ({ name, status: "pass" }))
   };
   const config: PersonalDevelopmentRuntimeConfig = {
-    schemaVersion: "0.1", ownerProjectRoot: project, developmentProjects: [project], stateRoot: state, worktreeRoot: trees,
+    schemaVersion: "0.1", ownerProjectRoot: project, developmentProjects: [project], gitPushDeniedProjects: [], stateRoot: state, worktreeRoot: trees,
     taskProfiles: ["fixture.test"], socketPath: join(root, "engine.sock"), engineId: evidence.engineId as string,
     imageId: evidence.imageId as string, codexExecutable: join(root, "codex"),
     codexExecutableSha256: CODEX_CONTROLLER_EXECUTABLE_SHA256, codexVersion: CODEX_CONTROLLER_VERSION,

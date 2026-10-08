@@ -16,6 +16,8 @@ export interface V2PolicyConfiguration {
   stateRoot: string;
   worktreeRoot: string;
   taskProfiles: readonly string[];
+  /** Development projects that never receive `mac.git.push`; each must also be a development project. */
+  gitPushDeniedProjects?: readonly string[];
 }
 
 /** Ordinary filesystem tools never gain authority over gateway control state or other tasks. */
@@ -50,6 +52,7 @@ export function buildV2TargetRules(principalId: string, filesystemRoots: PolicyD
     if (project !== ownerProjectRoot) rules.push({ rule_id: `owner-v2-${index}-files`, effect: "allow", principal_id: principalId,
       scope: "mac.files.write", target: { kind: "path", reference: root.root_id } });
     for (const [scopeIndex, scope] of PROJECT_SCOPES.entries()) {
+      if (scope === "mac.git.push" && safe.gitPushDeniedProjects?.includes(project) === true) continue;
       rules.push({ rule_id: `owner-v2-${index}-${scopeIndex}`, effect: "allow", principal_id: principalId, scope,
         target: { kind: "project", reference: project } });
     }
@@ -102,11 +105,16 @@ export function assertV2Policy(policy: BrokerPolicy, principalId: string, issuer
 
 function validateConfiguration(ownerProjectRoot: string, config: V2PolicyConfiguration): V2PolicyConfiguration {
   w1ProjectRoot(ownerProjectRoot);
-  if (!plainRecord(config) || Object.keys(config).sort().join(",") !== "developmentProjects,stateRoot,taskProfiles,worktreeRoot" ||
+  const keys = plainRecord(config) ? Object.keys(config).sort().join(",") : "";
+  if (!plainRecord(config) || (keys !== "developmentProjects,stateRoot,taskProfiles,worktreeRoot" &&
+      keys !== "developmentProjects,gitPushDeniedProjects,stateRoot,taskProfiles,worktreeRoot") ||
       !stringArray(config.developmentProjects, 16) || config.developmentProjects.length === 0 ||
       new Set(config.developmentProjects).size !== config.developmentProjects.length || !stringArray(config.taskProfiles, 64) ||
       config.taskProfiles.length === 0 || new Set(config.taskProfiles).size !== config.taskProfiles.length ||
-      config.taskProfiles.some(profile => !ID.test(profile))) throw new Error("V2 operator configuration is malformed");
+      config.taskProfiles.some(profile => !ID.test(profile)) ||
+      config.gitPushDeniedProjects !== undefined && (!stringArray(config.gitPushDeniedProjects, 16) ||
+        new Set(config.gitPushDeniedProjects).size !== config.gitPushDeniedProjects.length ||
+        config.gitPushDeniedProjects.some(project => !config.developmentProjects.includes(project)))) throw new Error("V2 operator configuration is malformed");
   const projects = config.developmentProjects.map(w1ProjectRoot);
   for (const path of [config.stateRoot, config.worktreeRoot]) {
     if (typeof path !== "string" || !isAbsolute(path) || resolve(path) !== path || realpathSync(path) !== path || !lstatSync(path).isDirectory()) {
@@ -116,7 +124,8 @@ function validateConfiguration(ownerProjectRoot: string, config: V2PolicyConfigu
   for (const project of [ownerProjectRoot, ...projects]) {
     if (contained(config.stateRoot, project) || contained(config.worktreeRoot, project)) throw new Error("V2 project cannot enter gateway storage");
   }
-  return { developmentProjects: [...projects], stateRoot: config.stateRoot, worktreeRoot: config.worktreeRoot, taskProfiles: [...config.taskProfiles].sort() };
+  return { developmentProjects: [...projects], stateRoot: config.stateRoot, worktreeRoot: config.worktreeRoot, taskProfiles: [...config.taskProfiles].sort(),
+    ...(config.gitPushDeniedProjects === undefined || config.gitPushDeniedProjects.length === 0 ? {} : { gitPushDeniedProjects: [...config.gitPushDeniedProjects].sort() }) };
 }
 
 function contained(root: string, path: string): boolean {

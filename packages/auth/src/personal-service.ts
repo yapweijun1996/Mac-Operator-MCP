@@ -25,6 +25,7 @@ import { enableConnectionDiagnostics } from "./connection-diagnostics.js";
 import { buildR1TargetRules, r1FilesystemRoots } from "./r1-policy.js";
 import { assertO1Policy, assertG1Policy, assertW1Policy, buildO1TargetRules, buildG1TargetRules, buildW1TargetRules, w1FilesystemRoots, w1ProjectRoot } from "./w1-policy.js";
 import { upgradePersonalDevelopment } from "./personal-development-upgrade.js";
+import { upgradePersonalDevelopmentProjectAdd } from "./personal-development-project-add-upgrade.js";
 import { enablePersonalTerminalConnection } from "./personal-terminal-connection.js";
 import { upgradePersonalOwnerTerminal } from "./personal-owner-upgrade.js";
 import { upgradePersonalTerminalSessions } from "./personal-terminal-session-upgrade.js";
@@ -385,6 +386,12 @@ async function main() {
     if (!detail || !/^[a-f0-9]{7,64}$/u.test(detail) || !process.argv[5] || process.argv[6] !== "--enable") throw new Error("Source revision, private runtime config and explicit --enable required");
     await upgradePersonalDevelopment(root, packageRoot, detail, process.argv[5]);
     console.log("Evidence-verified development gateway enabled; existing OAuth grants retain their original scopes.");
+  }
+  else if (mode === "development-project-add") {
+    if (!detail || !/^[a-f0-9]{7,64}$/u.test(detail) || !process.argv[5] || process.argv[6] !== "--enable" || process.argv.length !== 7) {
+      throw new Error("Source revision, private replacement runtime config and explicit --enable required");
+    }
+    console.log(JSON.stringify({ status: "enabled", ...(await upgradePersonalDevelopmentProjectAdd(root, packageRoot, detail, process.argv[5])) }));
   }
   else if (mode === "browser-access") {
     if (!detail || !/^[A-Za-z0-9._:-]{1,128}$/u.test(detail) || process.argv[5] !== "--until-revoked") {
