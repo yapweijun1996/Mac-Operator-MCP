@@ -72,3 +72,8 @@ pnpm-debug.log*
 
 # Rendered packaging artifacts
 packaging/macos/rendered/
+
+# Local AI agent tooling state
+.claude/settings.local.json
+.claude/worktrees/
+.codex/
