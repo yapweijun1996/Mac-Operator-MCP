@@ -45,7 +45,7 @@ async function fixture(overrides: { developmentIssuer?: string; developmentKeyId
   const options = { principalId: PRINCIPAL, runtime, socketPath, worktrees: provenance, developmentProjects: [project], taskProfiles: ["approved.test"], now: () => NOW };
   const operation = (tool = "mac_codex_run", requestId = "development-request-1"): DevelopmentOperation => ({
     requestId, principalId: PRINCIPAL, sessionId: "session-1", tool, contractVersion: "0.1", policyVersion: "policy-0.1",
-    targetKind: tool === "mac_task_run" ? "task_profile" : "project", targetRef: tool === "mac_task_run" ? "task_profile:approved.test" : `project:${["mac_git_stage", "mac_git_commit"].includes(tool) ? worktree : project}`,
+    targetKind: tool === "mac_task_run" ? "task_profile" : "project", targetRef: tool === "mac_task_run" ? "task_profile:approved.test" : `project:${["mac_git_stage", "mac_git_commit", "mac_git_push"].includes(tool) ? worktree : project}`,
     payloadDigest: "b".repeat(64), approvalClass: ["mac_codex_run", "mac_test_run", "mac_build_run", "mac_task_run"].includes(tool) ? "trusted_profile" : "trusted_write",
     expiresAtMs: NOW + 1_000_000, projectRoot: project,
     ...(["mac_git_worktree_create", "mac_git_branch_create"].includes(tool) ? {} : { worktree }), taskId: "task-1"
@@ -59,7 +59,7 @@ test("delegated development issuer creates exact single-use approvals for coding
   try {
     const approve = createPersonalDevelopmentApprover(f.options);
     const tools = ["mac_git_worktree_create", "mac_git_branch_create", "mac_git_worktree_remove", "mac_codex_run",
-      "mac_test_run", "mac_build_run", "mac_task_run", "mac_git_stage", "mac_git_commit"];
+      "mac_test_run", "mac_build_run", "mac_task_run", "mac_git_stage", "mac_git_commit", "mac_git_push"];
     for (const [index, tool] of tools.entries()) {
       const operation = f.operation(tool, `development-request-${index}`);
       assert.equal(await approve(operation), true);
@@ -79,7 +79,7 @@ test("coding delegation never approves Tier4, terminal, arbitrary file or host o
   const f = await fixture();
   try {
     const approve = createPersonalDevelopmentApprover(f.options);
-    for (const tool of ["mac_git_push", "mac_terminal_exec", "mac_service_control", "mac_priv_package_install", "mac_priv_power",
+    for (const tool of ["mac_terminal_exec", "mac_service_control", "mac_priv_package_install", "mac_priv_power",
       "mac_write_file_atomic", "mac_apply_patch", "sudo", "mac_job_cancel"]) assert.equal(await approve(f.operation(tool)), false);
     assert.equal(f.store.auditRows().length, f.auditBaseline);
   } finally { await f.close(); }
@@ -107,7 +107,7 @@ test("execution, removal and Git need owned task worktrees while creation cannot
   const f = await fixture();
   try {
     const approve = createPersonalDevelopmentApprover(f.options);
-    for (const tool of ["mac_codex_run", "mac_test_run", "mac_build_run", "mac_task_run", "mac_git_worktree_remove", "mac_git_stage", "mac_git_commit"]) {
+    for (const tool of ["mac_codex_run", "mac_test_run", "mac_build_run", "mac_task_run", "mac_git_worktree_remove", "mac_git_stage", "mac_git_commit", "mac_git_push"]) {
       const value = f.operation(tool);
       for (const worktree of [undefined, f.project, join(f.root, "unowned"), `${f.worktree}/../managed-worktree`]) {
         const { worktree: _worktree, ...withoutWorktree } = value;
@@ -115,7 +115,7 @@ test("execution, removal and Git need owned task worktrees while creation cannot
         assert.equal(await approve(input), false);
       }
       assert.equal(await approve({ ...value, taskId: "wrong-task" }), false);
-      if (!["mac_git_stage", "mac_git_commit"].includes(tool)) {
+      if (!["mac_git_stage", "mac_git_commit", "mac_git_push"].includes(tool)) {
         const { taskId: _taskId, ...withoutTask } = value;
         assert.equal(await approve(withoutTask), false);
       }

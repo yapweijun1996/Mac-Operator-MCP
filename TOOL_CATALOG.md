@@ -92,7 +92,7 @@ These additive source contracts do not enable the live personal deployment. Prod
 | [mac_codex_run](tool-contracts/mac_codex_run.json) | Submit a bounded coding-agent job in one authorized isolated worktree; enforce filesystem, process, secret, Git, and explicit network boundaries. The only tool that changes files in a managed worktree; inspect the result with mac_git_diff, mac_git_status or mac_pr_prepare. |
 | [mac_test_run](tool-contracts/mac_test_run.json) | Submit one approved existing test profile as a bounded Broker-managed worktree job; never accept an arbitrary shell command. |
 | [mac_build_run](tool-contracts/mac_build_run.json) | Submit one approved existing build profile as a bounded Broker-managed worktree job; never accept an arbitrary shell command. |
-| [mac_git_push](tool-contracts/mac_git_push.json) | Reserved high-risk push boundary, denied until a separate explicit approval workflow is supported; never force-push. |
+| [mac_git_push](tool-contracts/mac_git_push.json) | Non-force push of one exact branch and commit to origin, enabled in the owner V2 profile; protected branches and NO_PUSH repositories are denied and the remote branch is read back to verify. |
 | [mac_pr_prepare](tool-contracts/mac_pr_prepare.json) | Prepare a bounded review summary from changed paths, commits, and managed-job test evidence without publishing a pull request. |
 | [mac_execution_audit](tool-contracts/mac_execution_audit.json) | Read bounded redacted audit events for an authorized project; never expose sensitive file contents or credentials. |
 

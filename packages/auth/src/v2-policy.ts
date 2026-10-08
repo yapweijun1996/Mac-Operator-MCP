@@ -7,7 +7,9 @@ import { buildO1TargetRules, w1FilesystemRoots, w1ProjectRoot, type GuiAccess } 
 
 const ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u;
 const PROJECT_SCOPES: readonly Scope[] = ["mac.project.read", "mac.project.write", "mac.git.read", "mac.git.write",
-  "mac.package.read", "mac.files.write", "mac.agent.read", "mac.agent.run", "mac.task.run", "mac.audit.read", "mac.job.read", "mac.job.cancel"];
+  "mac.package.read", "mac.files.write", "mac.agent.read", "mac.agent.run", "mac.task.run", "mac.audit.read", "mac.job.read", "mac.job.cancel",
+  // Appended last so the identifiers of the pre-push project rules stay unchanged for the push upgrade.
+  "mac.git.push"];
 
 export interface V2PolicyConfiguration {
   developmentProjects: readonly string[];

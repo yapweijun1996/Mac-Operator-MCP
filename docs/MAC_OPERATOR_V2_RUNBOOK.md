@@ -9,7 +9,7 @@ The wire and contract versions remain `0.1`.
 
 All 11 V2 contracts remain disabled by default; the accepted personal V2
 profile enables ten of them and the existing named `mac_task_run` interface.
-`mac_git_push` always denies execution, including with a supplied scope.
+`mac_git_push` is part of the V2 owner profile (scope `mac.git.push`); see [Git push](git-push.md) for its guards.
 The production adapter is `ContainerTaskRunner`; its pinned Linux runtime and
 constrained `CodexController` are distinct from the earlier staging runners.
 Real acceptance is recorded in the [current change report](MAC_OPERATOR_V2_CHANGE_REPORT.md).
@@ -133,7 +133,7 @@ linked `.git` metadata alone never grants project authority.
 | `mac_test_run`, `mac_build_run` | AGENT_RUN | `mac.project.read`, `mac.project.write`, `mac.task.run` |
 | `mac_pr_prepare` | READ | `mac.project.read`, `mac.git.read`, `mac.job.read` |
 | `mac_execution_audit` | READ | `mac.project.read`, `mac.audit.read` |
-| `mac_git_push` | HIGH_RISK | `mac.project.write`, `mac.git.push`; execution still denied |
+| `mac_git_push` | SAFE_WRITE (delegated single-use approval) | `mac.project.write`, `mac.git.push`; non-force, non-protected branch only, see [Git push](git-push.md) |
 
 Existing `mac_job_status` and `mac_job_cancel` require `mac.job.read` and
 `mac.job.cancel` respectively, together with the existing owned-job target
@@ -197,7 +197,7 @@ For the requested YAP-MCP E2E, use only an authorized synthetic task in an
 isolated checkout. Record primary HEAD, index and status before/after and keep
 production source unchanged. Do not claim this E2E passed until the actual
 coding adapter, validation jobs, local Git review/commit and primary-checkout
-comparison have completed. Push remains denied.
+comparison have completed. Pushing is a separate, explicit `mac_git_push` call.
 
 ## Jobs, cancellation and restart
 

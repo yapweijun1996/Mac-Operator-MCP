@@ -23,7 +23,7 @@ const DEFAULT_POLL_INTERVAL_MS = 25;
 const DEFAULT_TERMINATION_GRACE_MS = 250;
 const DEFAULT_MAX_CONCURRENT_PER_EXECUTABLE = 4;
 const MAX_TRACKED_PROCESS_GROUPS = 256;
-const PROCESS_REQUEST_KEYS = ["executable", "expectedExecutableContentSha256", "args", "cwd", "environment", "stdin", "timeoutMs", "outputCapBytes", "runAsUid", "runAsGid", "allowUserOwnedExecutable", "requireCleanExitProof", "shouldCancel", "onStarted", "onOwnershipChanged", "keepStdinOpen", "onStdinReady", "streamOutput", "onOutputChunk"];
+const PROCESS_REQUEST_KEYS = ["executable", "expectedExecutableContentSha256", "args", "cwd", "environment", "stdin", "timeoutMs", "outputCapBytes", "runAsUid", "runAsGid", "allowUserOwnedExecutable", "requireCleanExitProof", "shouldCancel", "beforeSpawn", "onStarted", "onOwnershipChanged", "keepStdinOpen", "onStdinReady", "streamOutput", "onOutputChunk"];
 interface NativeProcessTreeAdapter {
   listDescendantProcesses(pid: number): unknown;
   listProcessGroupMembers(processGroupId: number): unknown;
@@ -119,6 +119,8 @@ export interface ProcessExecutionRequest {
    */
   requireCleanExitProof?: boolean;
   shouldCancel?: () => boolean;
+  /** Fixed adapters revalidate mutation authority synchronously at the spawn boundary. */
+  beforeSpawn?: () => void;
   /** Hook used to persist verified ownership before work proceeds. */
   onStarted?: (snapshot: ProcessOwnershipSnapshot) => void | Promise<void>;
   /** Synchronous hook used to persist newly observed descendants. */
@@ -413,6 +415,7 @@ export class ProcessSupervisor {
       let cwdDescriptor: Awaited<ReturnType<typeof open>> | undefined;
       try {
         if (this.descriptorSpawnAdapter === undefined) {
+          safeRequest.beforeSpawn?.();
           child = spawn(safeRequest.executable, [...safeRequest.args], {
               cwd: safeRequest.cwd,
               env: environment,
@@ -438,6 +441,7 @@ export class ProcessSupervisor {
           if (!sameProcessPathMetadata(cwdIdentity, validatedPaths.cwd)) {
             throw new BrokerError("POLICY_DENIED", "Process cwd changed while opening descriptor");
           }
+          safeRequest.beforeSpawn?.();
           child = this.descriptorSpawnAdapter.spawn({
             executableFd: executableDescriptor.fd,
             cwdFd: cwdDescriptor.fd,
@@ -1301,6 +1305,7 @@ async function validateRequest(
     throw new BrokerError("POLICY_DENIED", "Process privilege drop requires a root helper");
   }
   if ((request.shouldCancel !== undefined && typeof request.shouldCancel !== "function") ||
+      (request.beforeSpawn !== undefined && typeof request.beforeSpawn !== "function") ||
       (request.onStarted !== undefined && typeof request.onStarted !== "function") ||
       (request.onOwnershipChanged !== undefined && typeof request.onOwnershipChanged !== "function")) {
     throw new BrokerError("PRECONDITION_FAILED", "Process control callbacks are malformed");
@@ -1402,6 +1407,7 @@ function snapshotProcessRequest(value: unknown): ProcessExecutionRequest {
     throw new BrokerError("PRECONDITION_FAILED", "Process executable content identity is malformed");
   }
   if ((value.shouldCancel !== undefined && typeof value.shouldCancel !== "function") ||
+      (value.beforeSpawn !== undefined && typeof value.beforeSpawn !== "function") ||
       (value.onStarted !== undefined && typeof value.onStarted !== "function") ||
       (value.onOwnershipChanged !== undefined && typeof value.onOwnershipChanged !== "function")) {
     throw new BrokerError("PRECONDITION_FAILED", "Process control callbacks are malformed");
@@ -1422,6 +1428,7 @@ function snapshotProcessRequest(value: unknown): ProcessExecutionRequest {
   if (environment !== undefined) snapshot.environment = Object.fromEntries(Object.entries(environment)) as Record<string, string>;
   if (value.stdin !== undefined) snapshot.stdin = value.stdin as string;
   if (value.requireCleanExitProof !== undefined) snapshot.requireCleanExitProof = value.requireCleanExitProof as boolean;
+  if (value.beforeSpawn !== undefined) snapshot.beforeSpawn = value.beforeSpawn as () => void;
   if (value.shouldCancel !== undefined) snapshot.shouldCancel = value.shouldCancel as () => boolean;
   if (value.onStarted !== undefined) {
     snapshot.onStarted = value.onStarted as (snapshot: ProcessOwnershipSnapshot) => void | Promise<void>;

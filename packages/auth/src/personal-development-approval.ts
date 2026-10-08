@@ -7,7 +7,7 @@ const REQUEST_ID = /^[A-Za-z0-9._:@/+\-]{1,128}$/u;
 const MAX_APPROVAL_LIFETIME_MS = 630_000;
 const CREATION_TOOLS = new Set(["mac_git_worktree_create", "mac_git_branch_create"]);
 const EXECUTION_TOOLS = new Set(["mac_codex_run", "mac_test_run", "mac_build_run", "mac_task_run"]);
-const LOCAL_GIT_TOOLS = new Set(["mac_git_stage", "mac_git_commit"]);
+const LOCAL_GIT_TOOLS = new Set(["mac_git_stage", "mac_git_commit", "mac_git_push"]);
 const FIELDS = ["requestId", "principalId", "sessionId", "tool", "contractVersion", "policyVersion", "targetKind", "targetRef",
   "payloadDigest", "approvalClass", "expiresAtMs", "projectRoot", "worktree", "taskId"];
 

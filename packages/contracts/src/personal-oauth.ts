@@ -12,7 +12,7 @@ export const W1_SCOPES = [...W1_READ_SCOPES, ...W1_ADDITIONAL_SCOPES] as const;
 export const G1_GUI_SCOPES = ["mac.app.control", "mac.ui.observe", "mac.ui.control"] as const;
 export const G1_SCOPES = [...W1_SCOPES, ...G1_GUI_SCOPES] as const;
 export const O1_SCOPES = [...G1_SCOPES, "mac.terminal.exec"] as const;
-export const V2_SCOPES = [...O1_SCOPES, "mac.task.run", "mac.agent.read", "mac.agent.run", "mac.audit.read"] as const;
+export const V2_SCOPES = [...O1_SCOPES, "mac.task.run", "mac.agent.read", "mac.agent.run", "mac.audit.read", "mac.git.push"] as const;
 export const V2_CODING_SCOPES = V2_SCOPES.filter(scope => scope !== "mac.terminal.exec");
 export const D1_SCOPES = [...READ_SCOPES, ...D1_ADDITIONAL_SCOPES] as const;
 

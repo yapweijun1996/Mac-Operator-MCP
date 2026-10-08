@@ -57,10 +57,11 @@ import { WorkerProcessExecutor, type ProcessExecutor } from "./process-executor.
 import { ProcessSupervisor, type ProcessOwnershipSnapshot } from "./process-supervisor.js";
 import { LaunchdServiceInspector, validateServiceId, type ServiceInspector } from "./service-inspector.js";
 import { MacLogInspector, validateLogRequest, type LogInspector } from "./log-inspector.js";
+import { GitPushInspectorImpl, validateGitPushInput, type GitPushInspector } from "./git-push.js";
 import { GitBranchListInspector, GitDiffInspectorImpl, GitLogInspectorImpl, SAFE_GIT_ENVIRONMENT, GitStatusInspector, GitWriteInspectorImpl, validateGitBranchRequest, validateGitCommitRequest, validateGitDiffRequest, validateGitLogRequest, validateGitStageRequest, validateGitStatusRequest, type GitBranchInspector, type GitDiffInspector, type GitInspector, type GitLogInspector, type GitWriteInspector } from "./git-inspector.js";
 import { PackageInspectorImpl, validatePackageInspectRequest, type PackageInspector, type PackageManagerRequest } from "./package-inspector.js";
 import { createDockerProcessSupervisor, DOCKER_CODE_SIGNATURE_EXPECTATION, DOCKER_EXECUTABLE_CANDIDATES, DockerInspectorImpl, dockerObjectIdentityMatches, validateDockerLogsRequest, validateDockerObjectRequest, validateDockerStatusRequest, type DockerInspector, type DockerObjectType } from "./docker-inspector.js";
-import { assertContentDoesNotContainSecrets, redactBoundedText } from "./secret-policy.js";
+import { assertContentDoesNotContainSecrets, assertContentPathAllowed, redactBoundedText } from "./secret-policy.js";
 import { FailClosedTaskRunner, isTaskPhaseMs, requireTaskIsolationProof, taskDescriptorDigest, validateTaskExecutionResult, validateTaskIsolationProof, type TaskExecutionResult, type TaskPhaseMs, type TaskRecoveryRequest, type TaskRunner, type VirtualizationGuestTaskAdmission } from "./task-runner.js";
 import { TaskProfileRegistry, validateTaskProfileRegistry, validateTaskRunArguments, type ResolvedTaskProfile } from "./task-profile.js";
 import type { RootHelperSnapshotRequestAdmission } from "./root-helper-snapshot.js";
@@ -143,6 +144,7 @@ export interface BrokerOptions {
   gitLogInspector?: GitLogInspector;
   gitDiffInspector?: GitDiffInspector;
   gitWriteInspector?: GitWriteInspector;
+  gitPushInspector?: GitPushInspector;
   packageInspector?: PackageInspector;
   dockerInspector?: DockerInspector;
   appInspector?: AppInventoryInspector;
@@ -259,6 +261,7 @@ export class Broker {
   private readonly gitLogInspector: GitLogInspector;
   private readonly gitDiffInspector: GitDiffInspector;
   private readonly gitWriteInspector: GitWriteInspector;
+  private readonly gitPushInspector: GitPushInspector;
   private readonly packageInspector: PackageInspector;
   private readonly dockerInspector: DockerInspector;
   private readonly appInspector: AppInventoryInspector;
@@ -332,6 +335,7 @@ export class Broker {
     this.gitLogInspector = options.gitLogInspector ?? new GitLogInspectorImpl(this.processSupervisor, options.developmentGateway?.worktrees.resolveGitMetadata);
     this.gitDiffInspector = options.gitDiffInspector ?? new GitDiffInspectorImpl(this.processSupervisor, options.developmentGateway?.worktrees.resolveGitMetadata);
     this.gitWriteInspector = options.gitWriteInspector ?? new GitWriteInspectorImpl(this.processSupervisor, options.developmentGateway?.worktrees.resolveGitMetadata);
+    this.gitPushInspector = options.gitPushInspector ?? new GitPushInspectorImpl(options.developmentGateway ? { managedMetadata: options.developmentGateway.worktrees.resolveGitMetadata } : {});
     this.packageInspector = options.packageInspector ?? new PackageInspectorImpl();
     if (options.dockerInspector !== undefined) {
       this.dockerProcessSupervisor = undefined;
@@ -413,7 +417,7 @@ export class Broker {
     if (TASK_JOB_TOOLS.has(toolName) && !this.taskRunner.available) return "runtime_unavailable";
     if (DEVELOPMENT_TOOL_NAMES.includes(toolName)) {
       const gateway = this.options.developmentGateway;
-      if (!gateway || toolName === "mac_git_push" || toolName === "mac_codex_run" && !gateway.codingAgentReady()) return "runtime_unavailable";
+      if (!gateway || toolName === "mac_codex_run" && !gateway.codingAgentReady()) return "runtime_unavailable";
       try {
         gateway.assertProtectedStorage(this.currentPolicy().filesystemRoots);
         if (DEVELOPMENT_EXECUTION_TOOLS.includes(toolName)) gateway.assertRunner(this.taskRunner);
@@ -441,7 +445,7 @@ export class Broker {
   close(): Promise<void> {
     if (this.closePromise !== undefined) return this.closePromise;
     this.closing = true;
-    const resources = [this.filesystemExecutor, this.processExecutor, this.processSupervisor, this.dockerProcessSupervisor, this.taskRunner, this.options.ownerTerminalExecutor, this.options.ownerTerminalSessions];
+    const resources = [this.filesystemExecutor, this.processExecutor, this.processSupervisor, this.dockerProcessSupervisor, this.taskRunner, this.gitPushInspector, this.options.ownerTerminalExecutor, this.options.ownerTerminalSessions];
     this.closePromise = (async () => {
       let firstError: unknown;
       for (const resource of resources) {
@@ -1181,7 +1185,7 @@ export class Broker {
           request.arguments.project_root !== target.reference) {
         const record = this.options.developmentGateway.worktrees.require(request.arguments.project_root, target.reference, request.principal.principalId);
         execution.auditContext = { project: target.reference, worktree: record.worktree, taskId: record.taskId };
-        if (["mac_git_stage", "mac_git_commit"].includes(request.tool) && this.options.store.hasActiveWorktreeJobs(record.worktree, "job:git-preview")) {
+        if (["mac_git_stage", "mac_git_commit", "mac_git_push"].includes(request.tool) && this.options.store.hasActiveWorktreeJobs(record.worktree, "job:git-preview")) {
           throw new BrokerError("CONFLICT", "Git mutation must wait for the worktree job to settle");
         }
       }
@@ -1587,7 +1591,7 @@ export class Broker {
             execution.patchJobNew = !created.reused;
             this.options.store.linkRequestJob(request.requestId, created.job.jobId, this.now());
           }
-          if (request.tool === "mac_git_stage" || request.tool === "mac_git_commit") {
+          if (request.tool === "mac_git_stage" || request.tool === "mac_git_commit" || request.tool === "mac_git_push") {
             const jobInput = {
               jobId: `job:git-${sha256(canonicalJson({ principalId: request.principal.principalId, requestId: request.requestId })).slice(0, 48)}`,
               edgeId: request.principal.edgeId,
@@ -1603,6 +1607,7 @@ export class Broker {
             } as const;
             const created = this.options.store.createJob(jobInput);
             if (request.tool === "mac_git_stage") execution.gitStageJob = created.job;
+            else if (request.tool === "mac_git_push") execution.gitPushJob = created.job;
             else execution.gitCommitJob = created.job;
             execution.gitWriteJobNew = !created.reused;
             this.options.store.linkRequestJob(request.requestId, created.job.jobId, this.now());
@@ -1696,6 +1701,8 @@ export class Broker {
             ? { kind: "git_stage" as const, job: execution.gitStageJob }
             : execution.gitCommitJob && execution.gitWriteJobNew
               ? { kind: "git_commit" as const, job: execution.gitCommitJob }
+              : execution.gitPushJob && execution.gitWriteJobNew
+              ? { kind: "git_push" as const, job: execution.gitPushJob }
               : execution.appOpenJob && execution.appOpenJobNew
                 ? { kind: "app_open" as const, job: execution.appOpenJob }
                 : execution.appFocusJob && execution.appFocusJobNew
@@ -1743,6 +1750,7 @@ export class Broker {
         else if (pendingJob.kind === "task") execution.taskJob = started;
         else if (pendingJob.kind === "git_stage") execution.gitStageJob = started;
         else if (pendingJob.kind === "git_commit") execution.gitCommitJob = started;
+        else if (pendingJob.kind === "git_push") execution.gitPushJob = started;
         else if (pendingJob.kind === "app_open") execution.appOpenJob = started;
         else if (pendingJob.kind === "app_focus") execution.appFocusJob = started;
         else if (pendingJob.kind === "ui_action") execution.uiActionJob = started;
@@ -2502,6 +2510,9 @@ export class Broker {
       }
       case "mac_git_commit": {
         return this.dispatchGitCommit(request, execution, toolPolicy.timeoutMs);
+      }
+      case "mac_git_push": {
+        return this.dispatchGitPush(request, execution, toolPolicy.timeoutMs);
       }
       case "mac_package_inspect": {
         if (!execution.packageInspect) throw new BrokerError("EXECUTION_FAILED", "Package inspection execution plan is unavailable");
@@ -3995,6 +4006,59 @@ export class Broker {
     }
   }
 
+  private async dispatchGitPush(
+    request: BrokerRequest,
+    execution: ExecutionPlan,
+    timeoutMs: number
+  ): Promise<DispatchResult> {
+    if (!execution.gitPush || !execution.gitPushJob) {
+      throw new BrokerError("EXECUTION_FAILED", "Git push job execution plan is unavailable");
+    }
+    const job = execution.gitPushJob;
+    if (job.state === "queued") throw new BrokerError("CONFLICT", "Git push is already queued", true);
+    if (job.state === "unknown") throw new BrokerError("UNKNOWN_OUTCOME", "Git push outcome is unresolved; inspect its Broker job", true);
+    if (job.state === "cancelled") throw new BrokerError("CANCELLED", "Git push was cancelled before execution");
+    if (job.state !== "running") throw new BrokerError("EXECUTION_FAILED", "Git push job is not running");
+    let mutationStarted = false;
+    try {
+      const control = this.executionControl(request, execution.target, timeoutMs, job.jobId, [], execution.jobLease);
+      const pushed = await this.gitPushInspector.push(execution.gitPush.input,
+        { ...control, beforeMutation: () => { control.beforeMutation(); mutationStarted = true; } });
+      this.ensureActiveAuthority(request, execution.target);
+      const data = { remote: pushed.remote, branch_name: pushed.branch_name, pushed: pushed.pushed };
+      const readbackHash = sha256(canonicalJson({ remote: pushed.remote, ref: `refs/heads/${pushed.branch_name}`,
+        commit: execution.gitPush.input.expected_commit }));
+      execution.gitPushJob = this.options.store.finishJob(job.jobId, request.principal.principalId, job.revision, {
+        state: "completed",
+        resultClass: "success",
+        finishedAtMs: this.now(),
+        stdout: canonicalJson(data)
+      }, execution.jobLease, this.now());
+      return {
+        data,
+        verification: {
+          required: true,
+          status: "verified",
+          strategy: "bounded_result_validation",
+          evidence: {
+            summary: "Remote branch readback matched the approved commit after a non-force push",
+            readback_hash: readbackHash,
+            observed_at: new Date(this.now()).toISOString()
+          }
+        },
+        warnings: [],
+        truncated: false,
+        auditTarget: execution.auditTarget ?? `project:${execution.gitPush.input.project_root}`,
+        auditEvidence: { remote: pushed.remote, branchName: pushed.branch_name, pushed: pushed.pushed,
+          expectedCommit: execution.gitPush.input.expected_commit }
+      };
+    } catch (error) {
+      const brokerError = error instanceof BrokerError ? error : new BrokerError("EXECUTION_FAILED", "Git push failed");
+      execution.gitPushJob = this.finishFailedGitJob(request, execution, job, mutationStarted) ?? execution.gitPushJob;
+      throw brokerError;
+    }
+  }
+
   private async dispatchGitCommit(
     request: BrokerRequest,
     execution: ExecutionPlan,
@@ -5056,6 +5120,18 @@ export class Broker {
         gitCommit: { projectRoot, message, ...(expectedStagedDiffSha256 !== undefined ? { expectedStagedDiffSha256 } : {}) }
       };
     }
+    if (request.tool === "mac_git_push") {
+      assertExactArguments(request.arguments, ["project_root", "remote", "branch_name", "expected_commit", "idempotency_key"]);
+      validateGitPushInput(request.arguments, this.options.developmentGateway?.worktrees.resolveGitMetadata);
+      const projectRoot = request.arguments.project_root as string;
+      assertContentPathAllowed(projectRoot);
+      return {
+        target: { kind: "project", reference: this.options.developmentGateway?.worktrees.originalProject(projectRoot, request.principal.principalId) ?? projectRoot },
+        auditTarget: `project:${projectRoot}`,
+        gitPush: { input: { project_root: projectRoot, remote: "origin", branch_name: request.arguments.branch_name as string,
+          expected_commit: request.arguments.expected_commit as string, idempotency_key: request.arguments.idempotency_key as string } }
+      };
+    }
     if (request.tool === "mac_package_inspect") {
       assertExactArguments(request.arguments, ["project_root", "manager", "check_outdated"]);
       const projectRoot = request.arguments.project_root;
@@ -5629,6 +5705,7 @@ interface ExecutionPlan {
     message: string;
     expectedStagedDiffSha256?: string;
   };
+  gitPush?: { input: import("./git-push.js").GitPushInput };
   packageInspect?: {
     projectRoot: string;
     manager: PackageManagerRequest;
@@ -5724,6 +5801,7 @@ interface ExecutionPlan {
   taskJobNew?: boolean;
   gitStageJob?: BrokerJob;
   gitCommitJob?: BrokerJob;
+  gitPushJob?: BrokerJob;
   gitWriteJobNew?: boolean;
   appOpenJob?: BrokerJob;
   appOpenJobNew?: boolean;
