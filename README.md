@@ -10,7 +10,7 @@ V2 now includes a pinned Docker Desktop execution boundary and a constrained
 Codex inference controller. Tasks use owned Git worktrees, filtered snapshots,
 no host mounts or task network, durable jobs, verified cleanup and audited source
 imports. Ordinary V2 OAuth consent excludes owner-terminal authority; existing
-explicit O1 grants retain their original scopes. Push remains denied. See the
+explicit O1 grants retain their original scopes. `mac_git_push` is enabled in the V2 profile with the guards in [Git push](docs/git-push.md). See the
 [change report](docs/MAC_OPERATOR_V2_CHANGE_REPORT.md) for exact acceptance and
 live release evidence.
 
@@ -48,6 +48,7 @@ to consent to the separate coding grant before using newly enabled tools.
 - [Configuration](CONFIGURATION.md)
 - [Deployment](DEPLOYMENT.md)
 - [Owner OAuth login and local setup](docs/oauth-login-operations.md)
+- [Mac Control Center MVP specification (planned)](docs/MAC_CONTROL_CENTER_MVP_SPEC.md)
 - [Running personal deployment](docs/personal-deployment.md)
 - [Browser Computer Use (G1)](docs/gui-computer-use.md)
 - [V2 development gateway design and threat model](docs/MAC_OPERATOR_V2_DESIGN.md)
@@ -96,7 +97,7 @@ Codex exposes only scoped Broker file tools and registered validations. Its
 trusted authentication manager remains outside the task container; task code
 receives no credentials. `readonly` and `test-only` cannot import source changes.
 Only `workspace-write` can import verified changes to its owned worktree.
-`mac_git_push` always denies execution. Follow the
+`mac_git_push` is non-force and limited as described in [Git push](docs/git-push.md). Follow the
 [V2 operator runbook](docs/MAC_OPERATOR_V2_RUNBOOK.md) for provisioning, migration,
 rollback, approved source exclusions, job recovery and adding projects.
 

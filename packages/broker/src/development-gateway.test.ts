@@ -11,7 +11,8 @@ import { BrokerError, canonicalJson, sha256, signRequest, type BrokerResult, typ
 import { Broker } from "./broker.js";
 import { DevelopmentGateway, decodeAuditCursor, encodeAuditCursor, type CodingAgentProvider } from "./development-gateway.js";
 import { DEVELOPMENT_TOOL_NAMES } from "./development-policy.js";
-import type { GitWriteInspector } from "./git-inspector.js";
+import type { GitMetadataResolver, GitWriteInspector } from "./git-inspector.js";
+import { GitPushInspectorImpl, type GitPushInspector } from "./git-push.js";
 import { ManagedWorktrees } from "./managed-worktrees.js";
 import { createDefaultPolicy } from "./default-policy.js";
 import { EdgeKeyring } from "./edge-keyring.js";
@@ -40,7 +41,7 @@ const scopes: Scope[] = ["mac.control.read", "mac.policy.explain", "mac.project.
 function git(cwd: string, args: string[]): string {
   return execFileSync("/usr/bin/git", args, { cwd, encoding: "utf8", env: { GIT_CONFIG_NOSYSTEM: "1", GIT_CONFIG_GLOBAL: "/dev/null", GIT_CONFIG_SYSTEM: "/dev/null", GIT_TERMINAL_PROMPT: "0" } });
 }
-async function setup(run?: TaskRunner["run"], agent = false, gitWriteInspector?: GitWriteInspector) {
+async function setup(run?: TaskRunner["run"], agent = false, gitWriteInspector?: GitWriteInspector, pushFactory?: (metadata: GitMetadataResolver) => GitPushInspector) {
   const root = await realpath(await mkdtemp(join(tmpdir(), "mac-v2-broker-")));
   const project = join(root, "project"), state = join(root, "state"), trees = join(root, "trees");
   for (const path of [project, state, trees]) await mkdir(path, { mode: 0o700 });
@@ -57,10 +58,10 @@ async function setup(run?: TaskRunner["run"], agent = false, gitWriteInspector?:
   const runner: TaskRunner = { available: true, publicEnablement: "production", mechanism: "sandbox-exec", isolationProof: { schemaVersion: "0.1", sandboxMechanism: "sandbox-exec", sandboxProfile: "deny-default-v0.1", filesystem: "enforced", network: "enforced", credentials: "isolated", persistence: "isolated", credentialIsolation: "sandbox-exec-empty-env-deny-secret-zones-v1", processTree: "owned", processTreePolicy: "single_process", evidenceRef: "test://development-gateway-only" },
     async run(resolved, control) { calls++; assert.deepEqual(resolved.filesystemRoots, [resolved.cwd]); assert.equal(Object.isFrozen(resolved), true); assert.equal(Object.isFrozen(resolved.process), true); return run ? run(resolved, control) : { state: "completed", resultClass: "SUCCEEDED", exitCode: 0, stdout: "fixture validation", stderr: "", truncated: false, durationMs: 1, verification: { status: "verified" } }; } };
   const base = createDefaultPolicy("edge-1", true, scopes, ["edge-key-1"], [], [], [], [project]);
-  const tools = new Map([...base.tools].map(([name, p]) => [name, { ...p, enabled: DEVELOPMENT_TOOL_NAMES.includes(name) || ["mac_git_stage", "mac_git_commit"].includes(name) ? true : p.enabled }]));
+  const tools = new Map([...base.tools].map(([name, p]) => [name, { ...p, enabled: DEVELOPMENT_TOOL_NAMES.includes(name) || ["mac_git_stage", "mac_git_commit", "mac_git_push"].includes(name) ? true : p.enabled }]));
   const policy = { ...base, tools, targetRules: [...base.targetRules, ...scopes.map((scope, i) => ({ ruleId: `v2-project-${i}`, effect: "allow" as const, principalId: "principal-1", scope, target: { kind: "project" as const, reference: project } }))] };
   const store = new BrokerStore(join(root, "broker.sqlite")); const key = randomBytes(32);
-  const broker = new Broker({ store, policy, developmentGateway: gateway, ...(gitWriteInspector ? { gitWriteInspector } : {}), taskRunner: runner, taskProfileRegistry: profiles, now: () => NOW, edgeAuthenticationKeys: new EdgeKeyring([{ edgeId: "edge-1", keyId: "edge-key-1", key, notBeforeMs: NOW - 1000, expiresAtMs: NOW + 120_000 }]) });
+  const broker = new Broker({ store, policy, developmentGateway: gateway, ...(gitWriteInspector ? { gitWriteInspector } : {}), ...(pushFactory ? { gitPushInspector: pushFactory(registry.resolveGitMetadata) } : {}), taskRunner: runner, taskProfileRegistry: profiles, now: () => NOW, edgeAuthenticationKeys: new EdgeKeyring([{ edgeId: "edge-1", keyId: "edge-key-1", key, notBeforeMs: NOW - 1000, expiresAtMs: NOW + 120_000 }]) });
   let index = 0;
   const request = (tool: string, args: Record<string, unknown>): UnsignedBrokerRequest => ({ protocolVersion: "0.1", requestId: `v2-request-${++index}`, contractVersion: "0.1", tool, arguments: args, principal: { principalId: "principal-1", sessionId: "session-1", issuer: "test-issuer", audience: "mac-operator-broker", scopes, issuedAtMs: NOW - 1000, expiresAtMs: NOW + 60_000, edgeId: "edge-1" }, timestampMs: NOW, nonce: `v2-nonce-${index}`, policyAudience: "mac-operator-broker", policyVersion: "policy-0.1", authenticationKeyId: "edge-key-1" });
   const handle = async (tool: string, args: Record<string, unknown>) => checkContract(await broker.handle(signRequest(request(tool, args), key)));
@@ -88,6 +89,32 @@ test("V2 signed Broker worktree/Git workflow preserves the primary checkout and 
     const audit = data(await f.handle("mac_execution_audit", { project_root: f.project, limit: 100 })); assert.ok((audit.events as { tool: string }[]).some(row => row.tool === "mac_git_commit"));
     assert.equal(git(f.project, ["rev-parse", "HEAD"]), before); assert.deepEqual(await readFile(join(f.project, ".git", "index")), index); assert.equal(await readFile(join(f.project, "source.txt"), "utf8"), "original\n"); assert.equal(git(f.project, ["status", "--porcelain"]), ""); assert.equal(f.calls, 0);
   } finally { await f.close(); }
+});
+
+test("mac_git_push pushes one exact worktree commit to a local bare origin under a delegated approval, with audit", async () => {
+  const bareRoot = await realpath(await mkdtemp(join(tmpdir(), "mac-v2-push-origin-"))); const bare = join(bareRoot, "origin.git");
+  git(bareRoot, ["init", "--bare", "-b", "main", bare]);
+  const f = await setup(undefined, false, undefined, managedMetadata => new GitPushInspectorImpl({ allowProtocol: "file", endpointAllowed: url => url === bare, managedMetadata })); try {
+    git(f.project, ["remote", "add", "origin", bare]);
+    const { worktree } = await f.create() as { worktree: string };
+    await writeFile(join(worktree, "source.txt"), "pushed edit\n");
+    const stageArgs = { project_root: worktree, paths: ["source.txt"] }; f.approve("mac_git_stage", stageArgs, worktree); const staged = data(await f.handle("mac_git_stage", stageArgs));
+    const commitArgs = { project_root: worktree, message: "Synthetic push fixture", expected_staged_diff_sha256: staged.staged_diff_sha256 };
+    f.approve("mac_git_commit", commitArgs, worktree); const commit = data(await f.handle("mac_git_commit", commitArgs)).commit_id as string;
+    const args = { project_root: worktree, remote: "origin", branch_name: "codex/task-1", expected_commit: commit, idempotency_key: "push-1" };
+    // No approval: the single-use approval boundary still applies.
+    assert.equal((await f.handle("mac_git_push", args)).ok, false);
+    f.approve("mac_git_push", args, worktree);
+    const pushed = data(await f.handle("mac_git_push", args)); assert.deepEqual(pushed, { remote: "origin", branch_name: "codex/task-1", pushed: true });
+    assert.equal(git(bare, ["rev-parse", "refs/heads/codex/task-1"]).trim(), commit);
+    // A protected branch is refused even with a valid approval.
+    git(worktree, ["branch", "release/9", commit]);
+    const protectedArgs = { ...args, branch_name: "release/9", idempotency_key: "push-2" }; f.approve("mac_git_push", protectedArgs, worktree);
+    const refused = failure(await f.handle("mac_git_push", protectedArgs)); assert.equal(refused.result_class, "POLICY_DENIED");
+    assert.throws(() => git(bare, ["rev-parse", "--verify", "refs/heads/release/9"]));
+    const audit = data(await f.handle("mac_execution_audit", { project_root: f.project, limit: 100 })); assert.ok((audit.events as { tool: string }[]).some(row => row.tool === "mac_git_push"));
+    assert.equal(f.calls, 0);
+  } finally { await f.close(); await rm(bareRoot, { recursive: true, force: true }); }
 });
 
 test("V2 registered validation commands use bounded managed jobs and reject arbitrary input", async () => {
@@ -125,18 +152,17 @@ test("V2 a task idempotency key held by another tool or payload names the holder
   } finally { await f.close(); }
 });
 
-test("V2 dry-run/preflight never execute; unprovisioned coding and push fail closed", async () => {
+test("V2 dry-run/preflight never execute; unprovisioned coding fails closed and malformed push is refused", async () => {
   const f = await setup(); try {
     const { worktree } = await f.create();
     assert.equal(f.broker.enabledRuntimeCapabilityNames().includes("mac_codex_run"), false);
-    assert.equal(f.broker.enabledRuntimeCapabilityNames().includes("mac_git_push"), false);
     assert.equal(f.broker.enabledRuntimeCapabilityNames().includes("mac_test_run"), true);
     const preflight = data(await f.handle("mac_codex_preflight", { project_root: f.project, worktree })); assert.equal(preflight.permission, "deny"); assert.ok((preflight.reason_codes as string[]).includes("CODING_AGENT_ADAPTER_UNAVAILABLE"));
     const proposed = { project_root: f.project, worktree, task_id: "task-1", max_runtime: 500, idempotency_key: "dry-test" };
     const explanation = data(await f.handle("mac_policy_explain", { proposed_tool: "mac_test_run", target: { kind: "project", reference: f.project }, proposed_arguments: proposed })); assert.equal(explanation.decision, "allow"); assert.equal(f.calls, 0);
     const secretExplain = data(await f.handle("mac_policy_explain", { proposed_tool: "mac_codex_run", target: { kind: "project", reference: f.project }, proposed_arguments: { ...proposed, task: "Synthetic fixture", execution_profile: "readonly", network_policy: "none", allowed_paths: [".env"] } }));
     assert.equal(secretExplain.decision, "deny"); assert.ok((secretExplain.reason_codes as string[]).includes("SECRET_PATH_ACCESS")); assert.equal(f.calls, 0);
-    const push = await f.handle("mac_git_push", { project_root: f.project, worktree, remote: "origin", branch_name: "codex/task-1", idempotency_key: "push" }); assert.equal(push.ok, false); assert.equal(push.result_class, "POLICY_DENIED"); assert.equal(f.calls, 0);
+    const push = await f.handle("mac_git_push", { project_root: f.project, worktree, remote: "origin", branch_name: "codex/task-1", idempotency_key: "push" }); assert.equal(push.ok, false); assert.equal(push.result_class, "PRECONDITION_FAILED"); assert.equal(f.calls, 0);
     const unauthorizedRoot = join(f.root, "unauthorized"); await mkdir(unauthorizedRoot); git(unauthorizedRoot, ["init", "-b", "main"]);
     const unauthorized = await f.handle("mac_git_worktree_list", { project_root: unauthorizedRoot }); assert.equal(unauthorized.ok, false); assert.equal(unauthorized.result_class, "POLICY_DENIED");
     const traversal = await f.handle("mac_git_worktree_list", { project_root: `${f.project}/../project` }); assert.equal(traversal.ok, false);
