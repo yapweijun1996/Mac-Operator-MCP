@@ -21,6 +21,7 @@ const entrySchema = z.object({
 }).strict();
 const runtimeSchema = z.object({
   schemaVersion: z.literal("0.1"), ownerProjectRoot: path, developmentProjects: z.array(path).min(1).max(8),
+  gitPushDeniedProjects: z.array(path).max(8).default([]),
   stateRoot: path, worktreeRoot: path, taskProfiles: z.array(id).min(1).max(256), socketPath: path,
   engineId: id, imageId: image, codexExecutable: path, codexExecutableSha256: z.literal(CODEX_CONTROLLER_EXECUTABLE_SHA256),
   codexVersion: z.literal(CODEX_CONTROLLER_VERSION), evidencePath: path, evidenceSha256: digest,
@@ -37,6 +38,8 @@ export const REQUIRED_CONTAINER_EVIDENCE = [
 
 export function loadPersonalDevelopmentRuntimeConfig(configPath: string): PersonalDevelopmentRuntimeConfig {
   const config = runtimeSchema.parse(JSON.parse(readAuthFile(configPath, 131072).toString("utf8")));
+  if (new Set(config.gitPushDeniedProjects).size !== config.gitPushDeniedProjects.length ||
+      config.gitPushDeniedProjects.some(project => !config.developmentProjects.includes(project))) throw new Error("Git push denial list differs from approved projects");
   if (new Set(config.snapshotExcludedPaths).size !== config.snapshotExcludedPaths.length || new Set(config.developmentProjects).size !== config.developmentProjects.length || new Set(config.taskProfiles).size !== config.taskProfiles.length ||
       config.entries.some(entry => !config.developmentProjects.includes(entry.projectRoot)) ||
       [...config.entries.map(entry => entry.profile)].sort().join() !== [...config.taskProfiles].sort().join()) throw new Error("Development registry differs from approved projects/profiles");
@@ -81,7 +84,7 @@ export async function createPersonalDevelopmentRuntime(config: PersonalDevelopme
   const worktrees = new ManagedWorktrees(config.stateRoot, config.worktreeRoot);
   try {
     const profiles = new ContainerTaskProfileRegistry({ imageId: config.imageId, engineId: config.engineId,
-      entries: config.entries.map(({ type: _type, ...entry }) => entry),
+      entries: config.entries.map(({ type: _type, ...entry }) => entry), agentProjects: config.developmentProjects,
       validateWorkspace: async (cwd, projectRoot, taskId) => {
         if (!config.developmentProjects.includes(projectRoot)) throw new Error("Development project is not registered");
         worktrees.require(cwd, projectRoot, principalId, taskId);
@@ -112,5 +115,6 @@ export async function createPersonalDevelopmentRuntime(config: PersonalDevelopme
 
 export function developmentPolicyConfiguration(config: PersonalDevelopmentRuntimeConfig): V2PolicyConfiguration {
   return { developmentProjects: config.developmentProjects, stateRoot: config.stateRoot,
-    worktreeRoot: config.worktreeRoot, taskProfiles: config.taskProfiles };
+    worktreeRoot: config.worktreeRoot, taskProfiles: config.taskProfiles,
+    ...(config.gitPushDeniedProjects.length === 0 ? {} : { gitPushDeniedProjects: config.gitPushDeniedProjects }) };
 }

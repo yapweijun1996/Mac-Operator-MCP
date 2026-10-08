@@ -32,7 +32,7 @@ export async function upgradePersonalDockerRead(root: string, packageRoot: strin
       ? assertV2Policy(policy, config.principalId, config.issuerId, development, config.guiAccess, docker)
       : assertO1Policy(policy, config.principalId, config.issuerId, config.guiAccess, docker);
     const tools = development ? developmentTools(true) : ownerTools(true);
-    const oauthScopes = scopesForGrantProfile(config.grantProfile, true);
+    const oauthScopes = scopesForGrantProfile(config.grantProfile, true, config.ownerTerminalScope);
     assertPolicy(prior.policy, config.dockerReadAccess);
     if (config.dockerReadAccess) return { changed: false, policyVersion: prior.policy.version, reconnectRequired: true };
     const original = JSON.parse(readAuthFile(join(data, "policy.json")).toString()) as SignedPolicyBundle;

@@ -327,3 +327,29 @@ The upgraded native write adapter requires canonical authorization version 1;
 copy its newly built native binary together with the matching JavaScript.
 Older binaries fail source writes closed. O1 terminal smoke evidence continues
 to belong to the separate owner authority, not to V2 isolation acceptance.
+
+## Adding a development project (`development-project-add`)
+
+Offline, owner-approved migration for an existing V2 installation. It appends exact-path development projects to the
+protected `personal/development-runtime.json` and signs one new policy revision. It never edits the signed policy by hand
+and the result must pass `assertV2Policy()` before anything is written.
+
+- The replacement runtime config may differ from the installed one only by projects appended to `developmentProjects`;
+  every appended project must also be listed in `gitPushDeniedProjects`. Engine, image, evidence, profiles, task entries
+  and existing projects must be unchanged, so tools, scopes, keys, kill switches and existing push rules stay as signed.
+- Added projects receive project-scoped read/write, Git, package, agent, task, job and audit rules plus a path rule for
+  their filesystem root, but no `mac.git.push` rule. Adding a root renumbers the `owner-r1-N` read rule identifiers; the
+  migration compares rules by content and refuses any removed or changed rule.
+- A project without registered task profiles can run Codex, Git, file and job tools; tests and builds need a later
+  migration once its manifest is part of the project root.
+- Existing OAuth grants keep their scopes; no reconnect is needed. Re-running with the same config is a no-op.
+- A per-file copy of the replaced files is written to `personal/project-add-backup-<revision>/` with a SHA-256 manifest.
+
+```sh
+scripts/deploy-development-project-add.zsh <built-release-dir> <full-commit-id> <replacement-runtime-config>
+```
+
+The script stages an immutable release, proves it opens a private copy of the live state, refuses while Jobs are
+queued or running, stops the service, takes a full state backup (`backups/project-add-before-<stamp>`), runs the
+migration, restarts under PM2, checks health, restarts once more to prove persistence and restores the backup and
+previous release on any failure.

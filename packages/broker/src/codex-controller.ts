@@ -5,8 +5,8 @@ import { homedir, tmpdir } from "node:os";
 import { isAbsolute, join } from "node:path";
 import { containsSecretRepresentation, redactBoundedText } from "./secret-policy.js";
 
-export const CODEX_CONTROLLER_VERSION = "0.153.4";
-export const CODEX_CONTROLLER_EXECUTABLE_SHA256 = "b973d440acac501fd2594a43e7ca9ce41e0a65b9dfb28d0d7a7837c99e1261e3";
+export const CODEX_CONTROLLER_VERSION = "0.160.1";
+export const CODEX_CONTROLLER_EXECUTABLE_SHA256 = "09fa44fdc37a5fc70dc1ace31235f90468a2e193d0e85f7552eab068ea2582be";
 
 const MAX_PROTOCOL_BYTES = 4 * 1024 * 1024;
 const MAX_LINE_BYTES = 256 * 1024;

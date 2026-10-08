@@ -57,7 +57,7 @@ export async function upgradePersonalGitPush(root: string, packageRoot: string, 
       throw new Error("Existing Edge binding does not match the signed policy");
     }
     // OAuth consent for V2 stays the coding set: it never includes the owner terminal scope, unlike the policy grant.
-    const scopes = [...scopesForGrantProfile("v2", config.dockerReadAccess)];
+    const scopes = [...scopesForGrantProfile("v2", config.dockerReadAccess, config.ownerTerminalScope)];
     const edge = validateEdgeServiceStartupConfig({ ...previousEdge, packageRoot, contractsDirectory: join(packageRoot, "tool-contracts"),
       sourceRevision, oauthScopes: scopes, policyVersion: verified.policy.version });
     const edgeSettings = JSON.parse(readAuthFile(join(root, "auth/edge-auth-settings.json")).toString()) as Record<string, unknown>;

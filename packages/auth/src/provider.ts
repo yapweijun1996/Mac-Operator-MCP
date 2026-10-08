@@ -44,7 +44,7 @@ export class AuthProvider implements OAuth2Server.AuthorizationCodeModel, OAuth2
   }
 
   async validateScope(_user: OAuth2Server.User, _client: OAuth2Server.Client, scope?: string[]): Promise<string[] | false> {
-    const supportedScopes: readonly string[] = scopesForGrantProfile(this.config.grantProfile, this.config.dockerReadAccess);
+    const supportedScopes: readonly string[] = scopesForGrantProfile(this.config.grantProfile, this.config.dockerReadAccess, this.config.ownerTerminalScope);
     const values = scope ?? [...supportedScopes];
     return values.length > 0 && values.length <= supportedScopes.length && new Set(values).size === values.length &&
       values.every(value => supportedScopes.includes(value)) && values.includes("mac.control.read") ? values : false;
