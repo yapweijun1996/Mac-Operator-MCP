@@ -127,10 +127,10 @@ async function fixture(options: FixtureOptions = {}) {
       entries: [{ profile: PROFILE, projectRoot: project, manifestPath: "package.json", manifestSha256: sha256(manifest), scriptName: "test", scriptValue: "node --test", command: ["/usr/local/bin/node", "--test"], timeoutMs: 2000, outputCapBytes: 4096 }],
       async validateWorkspace(cwd, projectRoot, taskId) { registry.require(cwd, projectRoot, "principal-1", taskId); return { owner: "principal-1", isWorktree: true }; },
       async validateRuntime() { return true; },
-      async preflight() { return { installed: true, version: "0.153.4", authentication: "authenticated", supportedModels: ["coding-test"], executableSha256: "b".repeat(64), catalogSha256: "c".repeat(64), reasonCodes: [] }; }
+      async preflight() { return { installed: true, version: "0.160.1", authentication: "authenticated", supportedModels: ["coding-test"], executableSha256: "b".repeat(64), catalogSha256: "c".repeat(64), reasonCodes: [] }; }
     });
     const provider: CodingAgentProvider = {
-      readiness: { installed: true, version: "0.153.4", authentication: "ready", supportedModels: ["coding-test"], enforcedProfiles: ["readonly", "workspace-write", "test-only"], hostGitDenied: true, networkPolicies: ["none"] },
+      readiness: { installed: true, version: "0.160.1", authentication: "ready", supportedModels: ["coding-test"], enforcedProfiles: ["readonly", "workspace-write", "test-only"], hostGitDenied: true, networkPolicies: ["none"] },
       async resolve(input, record) { return profiles.resolveAgent({ cwd: record.worktree, projectRoot: record.projectRoot, taskId: record.taskId, task: input.task as string, executionProfile: input.execution_profile as "readonly" | "workspace-write" | "test-only", maxRuntimeMs: input.max_runtime as number, ...(input.model === undefined ? {} : { model: input.model as string }), ...(input.allowed_paths === undefined ? {} : { allowedPaths: input.allowed_paths as string[] }) }); }
     };
     gateway = new DevelopmentGateway({ worktrees: registry, codingAgent: provider, commands: [{ projectRoot: project, type: "test", profile: PROFILE }] });

@@ -11,7 +11,7 @@ const FAKE_CHILD = `
 const fs=require('node:fs'),readline=require('node:readline');
 const [scenario,log,...args]=process.argv.slice(2);
 const send=x=>process.stdout.write(JSON.stringify(x)+'\\n');
-if(args[0]==='--version'){process.stdout.write('codex-cli 0.153.4\\n');process.exit();}
+if(args[0]==='--version'){process.stdout.write('codex-cli 0.160.1\\n');process.exit();}
 if(args[0]==='debug'){process.stdout.write(JSON.stringify({models:[{slug:'fake-model',shell_type:'unified_exec',apply_patch_tool_type:'freeform',experimental_supported_tools:['unsafe_tool']}]}));process.exit();}
 const rl=readline.createInterface({input:process.stdin});
 const threadId='thread-test-1',turnId='turn-test-1';
@@ -84,7 +84,7 @@ async function fixture(t: TestContext, scenario = "plain", outputCapBytes?: numb
 test("Codex preflight verifies binary, strips unsafe model metadata and omits identity", async t => {
   const f = await fixture(t);
   const result = await f.controller.preflight();
-  assert.equal(result.installed, true); assert.equal(result.version, "0.153.4"); assert.equal(result.authentication, "authenticated");
+  assert.equal(result.installed, true); assert.equal(result.version, "0.160.1"); assert.equal(result.authentication, "authenticated");
   assert.deepEqual(result.supportedModels, ["fake-model"]); assert.deepEqual(result.reasonCodes, []);
   assert.doesNotMatch(JSON.stringify(result), /must-not-leak|private-plan/u);
   const home = join(f.directory, (await readdir(f.directory)).find(name => name.startsWith("controller-"))!);

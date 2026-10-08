@@ -10,7 +10,7 @@ import type { CodexControllerPreflight } from "./codex-controller.js";
 const IMAGE = `sha256:${"a".repeat(64)}`;
 const ENGINE = "engine-test-1234";
 const errorClass = (expected: string) => (error: unknown) => error instanceof BrokerError && error.errorClass === expected;
-const ready = (): CodexControllerPreflight => ({ installed: true, version: "0.153.4", authentication: "authenticated",
+const ready = (): CodexControllerPreflight => ({ installed: true, version: "0.160.1", authentication: "authenticated",
   supportedModels: ["coding-test"], executableSha256: "b".repeat(64), catalogSha256: "c".repeat(64), reasonCodes: [] });
 
 async function fixture() {
