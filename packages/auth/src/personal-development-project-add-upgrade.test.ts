@@ -131,7 +131,7 @@ test("development-project-add appends push-denied projects and keeps every exist
     const edge = JSON.parse(await readFile(join(personal, "edge-service.json"), "utf8")) as { policyVersion: string; oauthScopes: string[] };
     assert.equal(edge.policyVersion, after.policy.version);
     assert.deepEqual([...edge.oauthScopes].sort(), [...V2_CODING_SCOPES].sort());
-    const backup = join(personal, `project-add-backup-${before.payload.revision}`);
+    const backup = join(personal, `development-project-add-backup-${before.payload.revision}`);
     assert.equal(JSON.parse(await readFile(join(backup, "personal__policy.json"), "utf8")).payload.revision, before.payload.revision);
 
     await execFileAsync(process.execPath, [entrypoint(), "development-project-add", root, "abcdef2", nextPath, "--enable"], { timeout: 30_000 });
@@ -162,6 +162,68 @@ test("development-project-add refuses configs that widen anything beyond push-de
       await assert.rejects(execFileAsync(process.execPath, [entrypoint(), "development-project-add", root, "abcdef1", nextPath, "--enable"], { timeout: 30_000 }), /./u);
       assert.equal(await readFile(join(personal, "policy.json"), "utf8"), before);
     }
+  } finally {
+    await rm(root, { recursive: true, force: true }); await rm(project, { recursive: true, force: true });
+    if (base !== undefined) await rm(base, { recursive: true, force: true });
+  }
+});
+
+test("development-project-push releases push only for the named projects and refuses wider changes", { skip: !supported }, async () => {
+  const { root, project, personal, auth } = await provision();
+  let base: string | undefined;
+  try {
+    const installed = await installV2(root, personal, auth);
+    base = installed.base;
+    const added = { ...installed.runtimeConfig, developmentProjects: [installed.dirs.first, installed.dirs.second],
+      gitPushDeniedProjects: [installed.dirs.second] };
+    await execFileAsync(process.execPath, [entrypoint(), "development-project-add", root, "abcdef1", await writeNext(base, added), "--enable"], { timeout: 30_000 });
+    const before = JSON.parse(await readFile(join(personal, "policy.json"), "utf8")) as SignedPolicyBundle;
+    const pushRules = (bundle: SignedPolicyBundle) => bundle.payload.target_rules.filter(rule => rule.scope === PUSH_SCOPE).map(rule => rule.target.reference).sort();
+    assert.deepEqual(pushRules(before), [installed.dirs.first]);
+
+    for (const bad of [
+      { ...added, gitPushDeniedProjects: [] , engineId: "other-engine" },
+      { ...added, developmentProjects: [installed.dirs.first], gitPushDeniedProjects: [] },
+      { ...added, gitPushDeniedProjects: [installed.dirs.second, installed.dirs.first] },
+    ]) {
+      await assert.rejects(execFileAsync(process.execPath, [entrypoint(), "development-project-push", root, "abcdef2", await writeNext(base, bad), "--enable"], { timeout: 30_000 }), /./u);
+      assert.equal(JSON.stringify(JSON.parse(await readFile(join(personal, "policy.json"), "utf8"))), JSON.stringify(before));
+    }
+
+    const released = { ...added, gitPushDeniedProjects: [] };
+    await execFileAsync(process.execPath, [entrypoint(), "development-project-push", root, "abcdef2", await writeNext(base, released), "--enable"], { timeout: 30_000 });
+    const after = await installed.verifier.verifyFile(join(personal, "policy.json"));
+    const nextConfiguration = developmentPolicyConfiguration(loadPersonalDevelopmentRuntimeConfig(join(personal, "development-runtime.json")));
+    assert.doesNotThrow(() => assertV2Policy(after.policy, auth.principalId, auth.issuerId, nextConfiguration));
+    const upgraded = JSON.parse(await readFile(join(personal, "policy.json"), "utf8")) as SignedPolicyBundle;
+    assert.deepEqual(pushRules(upgraded), [installed.dirs.first, installed.dirs.second].sort());
+    assert.equal(after.policy.revision, before.payload.revision + 1);
+  } finally {
+    await rm(root, { recursive: true, force: true }); await rm(project, { recursive: true, force: true });
+    if (base !== undefined) await rm(base, { recursive: true, force: true });
+  }
+});
+
+test("owner-terminal-scope only adds the terminal scope to the default V2 consent", { skip: !supported }, async () => {
+  const { root, project, personal, auth } = await provision();
+  let base: string | undefined;
+  try {
+    const installed = await installV2(root, personal, auth);
+    base = installed.base;
+    const policyBefore = await readFile(join(personal, "policy.json"), "utf8");
+    await assert.rejects(execFileAsync(process.execPath, [entrypoint(), "owner-terminal-scope", root, "abcdef1"], { timeout: 20_000 }));
+    await execFileAsync(process.execPath, [entrypoint(), "owner-terminal-scope", root, "abcdef1", "--enable"], { timeout: 30_000 });
+    assert.equal(await readFile(join(personal, "policy.json"), "utf8"), policyBefore, "no policy revision is signed");
+    const expected = [...V2_CODING_SCOPES, "mac.terminal.exec"].sort();
+    const edge = JSON.parse(await readFile(join(personal, "edge-service.json"), "utf8")) as { oauthScopes: string[]; sourceRevision: string };
+    assert.deepEqual([...edge.oauthScopes].sort(), expected);
+    assert.equal(edge.sourceRevision, "abcdef1");
+    const settings = JSON.parse(await readFile(join(root, "auth/edge-auth-settings.json"), "utf8")) as { oauthScopes: string[] };
+    assert.deepEqual([...settings.oauthScopes].sort(), expected);
+    const config = JSON.parse(await readFile(join(root, "auth/auth-config.json"), "utf8")) as { ownerTerminalScope?: boolean; ownerTerminalConnection?: boolean };
+    assert.equal(config.ownerTerminalScope, true);
+    assert.equal(config.ownerTerminalConnection, undefined);
+    await execFileAsync(process.execPath, [entrypoint(), "owner-terminal-scope", root, "abcdef2", "--enable"], { timeout: 30_000 });
   } finally {
     await rm(root, { recursive: true, force: true }); await rm(project, { recursive: true, force: true });
     if (base !== undefined) await rm(base, { recursive: true, force: true });

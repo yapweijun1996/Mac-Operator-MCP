@@ -24,6 +24,25 @@ const MAX_ADDED_PROJECTS = 4;
  */
 export async function upgradePersonalDevelopmentProjectAdd(root: string, packageRoot: string, sourceRevision: string,
   nextRuntimeConfigPath: string): Promise<{ revision: number; addedProjects: string[]; backup: string }> {
+  const result = await migratePersonalDevelopmentConfig(root, packageRoot, sourceRevision, nextRuntimeConfigPath, {
+    name: "development_project_add", assertRuntime: assertRuntimeAppendOnly,
+    assertPolicy: (before, after, installed, _next, changed) => assertOnlyProjectsAdded(before, after, installed.developmentProjects.length, changed, _next.ownerProjectRoot) });
+  return { revision: result.revision, addedProjects: result.changedProjects, backup: result.backup };
+}
+
+export interface DevelopmentConfigMigration {
+  /** Audit tool suffix; also names the backup directory. */
+  name: string;
+  /** Throws unless `next` differs from `installed` only as this migration allows; returns the affected projects. */
+  assertRuntime(installed: PersonalDevelopmentRuntimeConfig, next: PersonalDevelopmentRuntimeConfig): string[];
+  /** Throws unless the signed policy changes only as this migration allows. */
+  assertPolicy(before: SignedPolicyBundle["payload"], after: SignedPolicyBundle["payload"], installed: PersonalDevelopmentRuntimeConfig,
+    next: PersonalDevelopmentRuntimeConfig, changed: string[]): void;
+}
+
+/** Shared offline flow: verify, rebuild the V2 policy from a replacement runtime config, sign revision+1, back up, switch atomically. */
+export async function migratePersonalDevelopmentConfig(root: string, packageRoot: string, sourceRevision: string, nextRuntimeConfigPath: string,
+  migration: DevelopmentConfigMigration): Promise<{ revision: number; changedProjects: string[]; backup: string }> {
   assertPrivateDirectory(root);
   if (!/^[a-f0-9]{7,64}$/u.test(sourceRevision)) throw new Error("Source revision required");
   const data = join(root, "personal");
@@ -40,15 +59,15 @@ export async function upgradePersonalDevelopmentProjectAdd(root: string, package
     const nextConfiguration = developmentPolicyConfiguration(next);
     if (canonicalJson(installed) === canonicalJson(next)) {
       assertV2Policy(prior.policy, config.principalId, config.issuerId, nextConfiguration, config.guiAccess, config.dockerReadAccess);
-      return { revision: prior.policy.revision, addedProjects: [], backup: "" };
+      return { revision: prior.policy.revision, changedProjects: [], backup: "" };
     }
-    const addedProjects = assertRuntimeAppendOnly(installed, next);
+    const addedProjects = migration.assertRuntime(installed, next);
     assertV2Policy(prior.policy, config.principalId, config.issuerId, developmentPolicyConfiguration(installed), config.guiAccess, config.dockerReadAccess);
     const original = JSON.parse(readAuthFile(join(data, "policy.json")).toString()) as SignedPolicyBundle;
     const now = Date.now();
     const rebuilt = buildV2PolicyDocument(original.payload, config.principalId, config.issuerId, nextConfiguration, config.guiAccess, config.dockerReadAccess);
     const payload = { ...rebuilt, revision: original.payload.revision + 1, issued_at_ms: now };
-    assertOnlyProjectsAdded(original.payload, payload, installed.developmentProjects.length, addedProjects, next.ownerProjectRoot);
+    migration.assertPolicy(original.payload, payload, installed, next, addedProjects);
     const bytes = Buffer.from(canonicalJson(payload));
     const privateBytes = readAuthFile(join(root, "personal-policy-private.key"));
     let bundle: SignedPolicyBundle;
@@ -64,15 +83,15 @@ export async function upgradePersonalDevelopmentProjectAdd(root: string, package
       sourceRevision, policyVersion: verified.policy.version });
     const edgeSettings = JSON.parse(readAuthFile(join(root, "auth/edge-auth-settings.json")).toString()) as Record<string, unknown>;
     const policyInput = JSON.parse(readAuthFile(join(root, "auth/broker-policy-input.json")).toString()) as Record<string, unknown>;
-    const backup = await backupFiles(root, data, payload.revision - 1);
+    const backup = await backupFiles(root, data, payload.revision - 1, migration.name.replaceAll("_", "-"));
     store = new BrokerStore(join(data, "broker.sqlite"), { runtimeFence: true,
       auditAnchor: { path: join(data, "audit.anchor"), keySource: { keyId: "personal-audit-1", loadKey: () => readAuthFile(join(data, "audit.key"), 32) } } });
     const manager = new PolicyManager(prior.policy, store);
     manager.restore(prior);
-    const requestId = `development-project-add-${payload.revision}`;
-    store.appendAudit({ requestId, principalId: config.principalId, tool: "internal_development_project_add", eventType: "intent", decision: "allow",
+    const requestId = `${migration.name.replaceAll("_", "-")}-${payload.revision}`;
+    store.appendAudit({ requestId, principalId: config.principalId, tool: `internal_${migration.name}`, eventType: "intent", decision: "allow",
       resultClass: "INTENT_RECORDED", targetRef: "host:development-projects", policyVersion: verified.policy.version, timestampMs: now,
-      evidence: { sourceRevision, priorPolicyVersion: prior.policy.version, addedProjects, gitPushDenied: true, backup } });
+      evidence: { sourceRevision, priorPolicyVersion: prior.policy.version, changedProjects: addedProjects, backup } });
     manager.activate(verified);
     await replaceJson(join(data, "development-runtime.json"), next);
     await replaceJson(join(data, "policy.json"), bundle);
@@ -93,10 +112,10 @@ export async function upgradePersonalDevelopmentProjectAdd(root: string, package
         for (const grant of desktopGrants) authStore.put("desktop_grant", grant.id, { ...grant, policyVersion: verified.policy.version });
       });
     } finally { authStore.close(); }
-    store.appendAudit({ requestId, principalId: config.principalId, tool: "internal_development_project_add", eventType: "completion", decision: "allow",
+    store.appendAudit({ requestId, principalId: config.principalId, tool: `internal_${migration.name}`, eventType: "completion", decision: "allow",
       resultClass: "SUCCEEDED", targetRef: "host:development-projects", policyVersion: verified.policy.version, timestampMs: Date.now(),
-      evidence: { sourceRevision, addedProjects, browserGrantCount, desktopGrantCount, existingOAuthScopesExpanded: false } });
-    return { revision: payload.revision, addedProjects, backup };
+      evidence: { sourceRevision, changedProjects: addedProjects, browserGrantCount, desktopGrantCount, existingOAuthScopesExpanded: false } });
+    return { revision: payload.revision, changedProjects: addedProjects, backup };
   } finally { store?.close(); await lock.close(); }
 }
 
@@ -154,8 +173,8 @@ export function assertOnlyProjectsAdded(before: PolicyPayload, after: PolicyPayl
   }
 }
 
-async function backupFiles(root: string, data: string, revision: number): Promise<string> {
-  const directory = join(data, `project-add-backup-${revision}`);
+async function backupFiles(root: string, data: string, revision: number, name: string): Promise<string> {
+  const directory = join(data, `${name}-backup-${revision}`);
   await mkdir(directory, { mode: 0o700 });
   const manifest: Record<string, string> = {};
   for (const file of [join(data, "development-runtime.json"), join(data, "policy.json"), join(data, "edge-service.json"),

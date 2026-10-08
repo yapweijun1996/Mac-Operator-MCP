@@ -14,3 +14,5 @@ export * from "./personal-development-approval.js";
 
 export * from "./personal-development-upgrade.js";
 export * from "./personal-development-project-add-upgrade.js";
+export * from "./personal-development-project-push-upgrade.js";
+export * from "./personal-owner-terminal-scope-upgrade.js";

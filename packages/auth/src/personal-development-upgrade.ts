@@ -53,7 +53,7 @@ export async function upgradePersonalDevelopment(root: string, packageRoot: stri
     const previousEdge = validateEdgeServiceStartupConfig(JSON.parse(readAuthFile(join(data, "edge-service.json")).toString()));
     if (previousEdge.dataRoot !== data || previousEdge.runtimeRoot !== join(data, "run")) throw new Error("Development migration does not relocate existing state");
     const edge = validateEdgeServiceStartupConfig({ ...previousEdge, packageRoot, contractsDirectory: join(packageRoot, "tool-contracts"),
-      sourceRevision, oauthScopes: [...scopesForGrantProfile("v2", config.dockerReadAccess)], policyVersion: verified.policy.version });
+      sourceRevision, oauthScopes: [...scopesForGrantProfile("v2", config.dockerReadAccess, config.ownerTerminalScope)], policyVersion: verified.policy.version });
     const keyConfig = JSON.parse(readAuthFile(join(data, "approval-keys.json")).toString()) as { schemaVersion: "0.1"; revision: number; keys: Record<string, unknown>[] };
     if (keyConfig.keys.length !== 2 || keyConfig.keys.filter(key => key.allowUnattended === false).length !== 1 ||
         keyConfig.keys.filter(key => key.keyId === "personal-terminal-1" && key.issuerId === `terminal-approver-${sha256(config.principalId).slice(0, 32)}` && key.allowUnattended === true).length !== 1 ||
@@ -75,7 +75,7 @@ export async function upgradePersonalDevelopment(root: string, packageRoot: stri
     await replaceJson(join(data, "development-runtime.json"), development);
     await replaceJson(join(data, "policy.json"), bundle);
     await replaceJson(join(data, "edge-service.json"), edge);
-    await replaceJson(join(root, "auth/edge-auth-settings.json"), { ...JSON.parse(readAuthFile(join(root, "auth/edge-auth-settings.json")).toString()), grantProfile: "v2", oauthScopes: [...scopesForGrantProfile("v2", config.dockerReadAccess)] });
+    await replaceJson(join(root, "auth/edge-auth-settings.json"), { ...JSON.parse(readAuthFile(join(root, "auth/edge-auth-settings.json")).toString()), grantProfile: "v2", oauthScopes: [...scopesForGrantProfile("v2", config.dockerReadAccess, config.ownerTerminalScope)] });
     await replaceJson(join(root, "auth/broker-policy-input.json"), { principal: payload.principal_grants[0], target_rules: payload.target_rules,
       enabled_tools: [...developmentTools(config.dockerReadAccess)], filesystem_roots: payload.filesystem_roots });
     const authStore = new AuthStore(join(root, "auth"));

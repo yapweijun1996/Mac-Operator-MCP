@@ -6,8 +6,8 @@ export { READ_SCOPES, D1_ADDITIONAL_SCOPES, W1_ADDITIONAL_SCOPES, W1_READ_SCOPES
   G1_GUI_SCOPES, G1_SCOPES, O1_SCOPES, V2_SCOPES, V2_CODING_SCOPES, D1_SCOPES } from "@mac-operator/contracts";
 export const OAUTH_SCOPES = [...D1_SCOPES, ...G1_GUI_SCOPES, "mac.terminal.exec", "mac.agent.read", "mac.agent.run", "mac.audit.read", "mac.git.push"] as const;
 export type GrantProfile = "r1" | "w1" | "g1" | "o1" | "d1" | "v2";
-export function scopesForGrantProfile(profile: GrantProfile, dockerReadAccess = false): readonly Scope[] {
-  const scopes: readonly Scope[] = profile === "v2" ? V2_CODING_SCOPES : profile === "o1" ? O1_SCOPES : profile === "d1" ? D1_SCOPES : profile === "g1" ? G1_SCOPES : profile === "w1" ? W1_SCOPES : READ_SCOPES;
+export function scopesForGrantProfile(profile: GrantProfile, dockerReadAccess = false, ownerTerminalScope = false): readonly Scope[] {
+  const scopes: readonly Scope[] = profile === "v2" ? (ownerTerminalScope ? V2_SCOPES : V2_CODING_SCOPES) : profile === "o1" ? O1_SCOPES : profile === "d1" ? D1_SCOPES : profile === "g1" ? G1_SCOPES : profile === "w1" ? W1_SCOPES : READ_SCOPES;
   return dockerReadAccess && !scopes.includes("mac.docker.read") ? [...scopes, "mac.docker.read"] : scopes;
 }
 export const READ_TOOLS = [
@@ -69,16 +69,18 @@ export const configSchema = z.object({
   grantProfile: z.enum(["r1", "w1", "g1", "o1", "d1", "v2"]).default("r1"),
   guiAccess: z.enum(["browsers", "desktop"]).optional(),
   ownerTerminalConnection: z.boolean().optional(),
-  dockerReadAccess: z.boolean().optional()
+  dockerReadAccess: z.boolean().optional(),
+  ownerTerminalScope: z.boolean().optional()
 }).strict().refine(value => value.resource === new URL("mcp", value.issuer).href &&
   (new URL(value.issuer).pathname === "/" || (value.grantProfile === "o1" && value.ownerTerminalConnection !== true)) &&
   (value.ownerTerminalConnection !== true || value.grantProfile === "v2") &&
+  (value.ownerTerminalScope !== true || value.grantProfile === "v2" && value.ownerTerminalConnection !== true && new URL(value.issuer).pathname === "/") &&
   (value.guiAccess !== "desktop" || ["g1", "o1", "v2"].includes(value.grantProfile)) &&
   (value.dockerReadAccess !== true || ["o1", "v2"].includes(value.grantProfile) && new URL(value.issuer).pathname === "/"));
 export type AuthConfig = z.infer<typeof configSchema>;
 export function ownerTerminalAuthConfig(config: AuthConfig): AuthConfig {
   if (config.grantProfile !== "v2" || config.ownerTerminalConnection !== true) throw new Error("Separate owner terminal consent is not enabled");
-  const { ownerTerminalConnection: _enabled, dockerReadAccess: _docker, ...base } = config;
+  const { ownerTerminalConnection: _enabled, dockerReadAccess: _docker, ownerTerminalScope: _scope, ...base } = config;
   const context = ownerTerminalOAuthContext(new URL(config.issuer));
   return configSchema.parse({ ...base, issuer: context.issuer.href, resource: context.resource.href, grantProfile: "o1" });
 }
