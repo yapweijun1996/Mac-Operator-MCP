@@ -239,7 +239,8 @@ async function start(root: string) {
     if (guiProfile) browserAuthStore = new AuthStore(join(root, "auth"));
     browserApprovalController = approvalIssuerRuntime === undefined ? undefined : createPersonalApprovalBrowserController({
       store, ...(browserAuthStore ? { authStore: browserAuthStore } : {}), approvalIssuerRuntime, socketPath: join(runtime, "approval.sock"),
-      allowDesktop: config.guiAccess === "desktop"
+      allowDesktop: config.guiAccess === "desktop",
+      ...(config.defaultBrowserAccess === true ? { defaultBrowserPrincipalId: config.principalId } : {})
     });
     const authRevocationQueue = createAuthRevocationQueue({
       isConnected: () => edge?.connected === true,

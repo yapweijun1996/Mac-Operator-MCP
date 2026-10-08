@@ -380,3 +380,47 @@ test("browser launch consent shares the finite grant without authorizing arbitra
   f.setNow(NOW + GUI_SESSION_MS);
   assert.equal(await f.sessions.authorize(operation), false);
 });
+
+test("default browser access grants ordinary Chrome browsing to the owner only, and never overrides explicit approval or revocation", async t => {
+  const f = await fixture(t);
+  const issue = async (approval: Parameters<ConstructorParameters<typeof GuiSessionApprovals>[1]>[0]) => {
+    f.store.issueApproval({ ...approval, approverPrincipalId: "browser-owner" });
+  };
+  const make = (principal?: string) => new GuiSessionApprovals(f.store, issue, () => NOW, f.auth(),
+    principal === undefined ? {} : { defaultBrowserPrincipalId: principal });
+  assert.equal(await make().authorize(f.operation), false);
+  assert.equal(f.auth().browserGrants().length, 0);
+
+  const sessions = make("owner-1");
+  assert.equal(await sessions.authorize({ ...f.operation, principalId: "other" }), false);
+  assert.equal(await sessions.authorize({ ...f.operation, appId: "com.apple.TextEdit" }), false);
+  assert.equal(await sessions.authorize({ ...f.operation, requiresExplicitApproval: true }), false);
+  assert.equal(await sessions.authorize({ ...f.operation, tool: "mac_write_file_atomic" }), false);
+  assert.equal(f.auth().browserGrants().length, 0);
+  assert.equal(f.auth().desktopGrants().length, 0);
+
+  assert.equal(await sessions.authorize(f.operation), true);
+  const [grant] = f.auth().browserGrants();
+  assert.equal(grant?.revoked, false);
+  assert.equal(grant?.policyVersion, "policy-1");
+  assert.equal(grant?.appId, "bundle:com.google.Chrome");
+  assert.equal(f.auth().desktopGrants().length, 0);
+
+  f.reopen();
+  const reopened = new GuiSessionApprovals(f.store, issue, () => NOW, f.auth(), { defaultBrowserPrincipalId: "owner-1" });
+  assert.equal(await reopened.authorize({ ...f.operation, requestId: "operation-2" }), true);
+  assert.equal(f.auth().browserGrants().length, 1);
+
+  reopened.revoke(grant!.id);
+  assert.equal(await reopened.authorize({ ...f.operation, requestId: "operation-3" }), false);
+  assert.equal(f.auth().browserGrants().length, 1);
+  assert.equal(await reopened.authorize({ ...f.operation, requestId: "operation-4", policyVersion: "policy-2" }), true);
+  assert.equal(f.auth().browserGrants().filter(record => !record.revoked && record.policyVersion === "policy-2").length, 1);
+});
+
+test("defaultBrowserAccess config is limited to GUI grant profiles", () => {
+  const base = { version: 1, issuer: "https://mcp.example.com/", resource: "https://mcp.example.com/mcp", issuerId: "mac-operator-auth",
+    principalId: "owner-1", keyId: "key-1", port: 3444, allowedRedirectUris: ["https://claude.ai/api/mcp/auth_callback"] };
+  assert.equal(configSchema.safeParse({ ...base, grantProfile: "g1", defaultBrowserAccess: true }).success, true);
+  assert.equal(configSchema.safeParse({ ...base, grantProfile: "r1", defaultBrowserAccess: true }).success, false);
+});
