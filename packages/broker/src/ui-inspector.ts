@@ -821,6 +821,10 @@ export function parseUiTypeResult(result: ProcessExecutionResult, execution: UiT
   const record = parsed as Record<string, unknown>;
   if (record.status === "error") {
     if (!hasExactFields(record, ["status", "error"])) throw new BrokerError("VERIFICATION_FAILED", "Accessibility input returned malformed metadata");
+    if (snapshot.nativeVisual === true && isBoundedBrowserNavigation(execution) &&
+        (record.error === "ax_enumeration_failed" || record.error === "window_correlation_failed")) {
+      throw new BrokerError("VERIFICATION_FAILED", "Browser navigation was dispatched but its postcondition could not be re-verified because the window changed while the page loaded; observe the window to confirm the result");
+    }
     throwGuiWindowError(record.error);
     switch (record.error) {
       case "target_unsupported": throw new BrokerError("UNSUPPORTED_CAPABILITY", "Accessibility input target is not a text control");
@@ -835,7 +839,7 @@ export function parseUiTypeResult(result: ProcessExecutionResult, execution: UiT
     throw new BrokerError("VERIFICATION_FAILED", "Accessibility input returned malformed metadata");
   }
   if (record.status !== "ok" || record.app_id !== snapshot.appId || record.window_index !== snapshot.windowIndex ||
-      record.window_title !== snapshot.windowTitle || record.element_index !== snapshot.elementIndex || record.role !== snapshot.role ||
+      stableGuiWindowTitle(String(record.window_title)) !== stableGuiWindowTitle(snapshot.windowTitle) || record.element_index !== snapshot.elementIndex || record.role !== snapshot.role ||
       record.characters_accepted !== inputText.length || !Array.isArray(record.keys_accepted) ||
       record.keys_accepted.length !== keys.length || record.keys_accepted.some((key, index) => key !== keys[index]) ||
       record.submitted !== submit || record.focus_confirmed !== true || record.secure !== false) {
@@ -1029,6 +1033,15 @@ function sanitizeText(value: string, maxLength: number): string {
   return value.replace(/[\u0000-\u001f\u007f]/gu, "�").slice(0, maxLength);
 }
 
+/**
+ * Chrome appends a live memory annotation to its window title, for example
+ * "Jobs | LinkedIn - High memory usage - 816 MB - Google Chrome". The number changes between calls, so
+ * titles are compared without it. Native window identity remains the binding; titles are selectors only.
+ */
+export function stableGuiWindowTitle(title: string): string {
+  return title.replace(/ - High memory usage - [0-9][0-9.,]*\s?(?:KB|MB|GB)\b/gu, "");
+}
+
 export function opaqueWindowId(appId: string, windowIndex: number, windowTitle: string, nativeIdentity?: string): string {
   return `window:${sha256(canonicalJson(nativeIdentity === undefined ? { appId, windowIndex, windowTitle } : { appId, nativeIdentity })).slice(0, 48)}`;
 }
@@ -1155,7 +1168,7 @@ export function assertRetainedUiTargetMatches(snapshot: UiSnapshotRecord, observ
 
 function assertRetainedUiTargetIdentityMatches(snapshot: UiSnapshotRecord, observed: SafeUiObservation, requireFocusedInput: boolean): void {
   if (!observed.focused || observed.appId !== snapshot.appId || observed.windowId !== snapshot.windowId ||
-      observed.windowTitle !== snapshot.windowTitle || !observed.screenshot ||
+      stableGuiWindowTitle(observed.windowTitle ?? "") !== stableGuiWindowTitle(snapshot.windowTitle) || !observed.screenshot ||
       snapshot.nativeWindowIdentity !== undefined && observed.nativeWindowIdentity !== snapshot.nativeWindowIdentity) {
     throw new BrokerError("TARGET_NOT_FOUND", "Approved UI target changed; observe it and request a new approval");
   }

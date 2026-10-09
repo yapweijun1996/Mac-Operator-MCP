@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { normalizeAppId, parseAppFocusResult } from "./app-control.js";
 import { nativeWindowIdentity, throwGuiWindowError } from "./gui-window.js";
-import { isBoundedBrowserNavigation, opaqueElementId, opaqueWindowId, parseUiObserveResult, parseUiScreenshotResult, parseUiTypeResult, UiSnapshotRegistry } from "./ui-inspector.js";
+import { isBoundedBrowserNavigation, stableGuiWindowTitle, opaqueElementId, opaqueWindowId, parseUiObserveResult, parseUiScreenshotResult, parseUiTypeResult, UiSnapshotRegistry } from "./ui-inspector.js";
 import type { ProcessExecutionResult } from "./process-supervisor.js";
 
 const app = "bundle:com.google.Chrome", identity = "485:1790918400000:46";
@@ -92,4 +92,26 @@ test("navigation reports actual post-navigation focus only with verified native 
   assert.equal(parseUiTypeResult(output(verified), execution).reobserved.role, "AXWebArea");
   assert.throws(() => parseUiTypeResult(output({ ...verified, navigation_verified: false }), execution), /navigation postcondition/u);
   assert.throws(() => parseUiTypeResult(output(verified), { ...execution, snapshot: { ...snapshot, browserNavigation: false } }), /malformed/u);
+});
+
+test("window titles are compared without Chrome's live memory annotation", () => {
+  assert.equal(stableGuiWindowTitle("Jobs | LinkedIn - High memory usage - 816 MB - Google Chrome - YAP"), "Jobs | LinkedIn - Google Chrome - YAP");
+  assert.equal(stableGuiWindowTitle("Jobs | LinkedIn - High memory usage - 811 MB - Google Chrome - YAP"),
+    stableGuiWindowTitle("Jobs | LinkedIn - High memory usage - 1.2 GB - Google Chrome - YAP"));
+  assert.equal(stableGuiWindowTitle("Jobs | LinkedIn - Google Chrome - YAP"), "Jobs | LinkedIn - Google Chrome - YAP");
+  assert.notEqual(stableGuiWindowTitle("Jobs | LinkedIn - Google Chrome"), stableGuiWindowTitle("Feed | LinkedIn - Google Chrome"));
+});
+
+test("a transient window re-resolution failure after browser navigation is reported as unverified, not as a bad window", () => {
+  const observed = observation();
+  const registry = new UiSnapshotRegistry(); registry.recordObservation(observed, "owner", "session", 1000);
+  const snapshot = registry.resolve(observed.nodes[0]!.elementRef, "owner", "session", 1001);
+  const execution = { snapshot, text: "https://example.com/", keys: [], submit: true };
+  for (const error of ["ax_enumeration_failed", "window_correlation_failed"]) {
+    assert.throws(() => parseUiTypeResult(output({ status: "error", error }), execution),
+      (failure: unknown) => failure instanceof Error && "errorClass" in failure && failure.errorClass === "VERIFICATION_FAILED" &&
+        /dispatched but its postcondition could not be re-verified/u.test(failure.message));
+  }
+  assert.throws(() => parseUiTypeResult(output({ status: "error", error: "ax_enumeration_failed" }), { ...execution, text: "plain text", submit: false }),
+    /Accessibility window enumeration or metadata read failed/u);
 });
