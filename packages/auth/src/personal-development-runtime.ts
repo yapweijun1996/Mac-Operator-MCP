@@ -1,11 +1,10 @@
-import { createConnection } from "node:net";
 import { lstatSync, mkdirSync, realpathSync } from "node:fs";
 import { isAbsolute, join, resolve } from "node:path";
 import { z } from "zod";
 import { sha256 } from "@mac-operator/contracts";
 import { CodexController, CODEX_CONTROLLER_EXECUTABLE_SHA256, CODEX_CONTROLLER_VERSION, ContainerTaskProfileRegistry,
-  ContainerTaskRunner, DevelopmentGateway, DockerContainerEngine, DockerEngineInspector, ManagedWorktrees, MacOsPeerCredentialVerifier,
-  loadNativePeerAdapter, safeSnapshotPath, assertContentPathAllowed, type CodingAgentProvider, type RegisteredDevelopmentCommand, type TaskIsolationProof } from "@mac-operator/broker";
+  ContainerTaskRunner, DevelopmentGateway, DockerContainerEngine, DockerEngineInspector, ManagedWorktrees,
+  captureContainerEnginePeer, safeSnapshotPath, assertContentPathAllowed, type CodingAgentProvider, type RegisteredDevelopmentCommand, type TaskIsolationProof } from "@mac-operator/broker";
 import { readAuthFile } from "./cli.js";
 import type { V2PolicyConfiguration } from "./v2-policy.js";
 
@@ -64,15 +63,13 @@ export async function createPersonalDevelopmentRuntime(config: PersonalDevelopme
       throw new Error("Development control storage is not a private canonical directory");
     }
   }
-  const socket = createConnection(config.socketPath);
-  let peer;
-  try {
-    await new Promise<void>((ok, fail) => { socket.setTimeout(5000, () => fail(new Error("Engine peer connection timed out"))); socket.once("connect", ok); socket.once("error", fail); });
-    peer = new MacOsPeerCredentialVerifier({ expectedUid: process.getuid!() }).verify(socket);
-  } finally { socket.destroy(); }
-  const identity = loadNativePeerAdapter().getProcessIdentity(peer.pid) as { pid: number; startTimeMicros: number };
+  const peer = await captureContainerEnginePeer(config.socketPath, process.getuid!());
+  // The same probe re-pins the engine after a restart, but only for the approved engine ID and the daemon
+  // executable seen here. Without a reported executable the pin stays immutable (fail closed, as before).
   const engine = new DockerContainerEngine({ socketPath: config.socketPath,
-    peerPolicy: { expectedUid: peer.uid, expectedGid: peer.gid, allowedProcessIdentity: { pid: identity.pid, startTimeMicros: identity.startTimeMicros } } });
+    peerPolicy: { expectedUid: peer.uid, expectedGid: peer.gid, allowedProcessIdentity: { pid: peer.pid, startTimeMicros: peer.startTimeMicros } },
+    ...(peer.executable === undefined ? {} : { revalidation: { approvedEngineId: config.engineId, peerExecutable: peer.executable,
+      onRevalidation: event => console.log(JSON.stringify({ event: "container_engine_revalidation", time: new Date().toISOString(), ...event })) } }) });
   const information = await engine.info(), inspectedImage = await engine.inspectImage(config.imageId);
   if (information.id !== config.engineId || inspectedImage.id !== config.imageId) throw new Error("Approved Engine/image identity changed");
   const controller = new CodexController({ executable: config.codexExecutable,

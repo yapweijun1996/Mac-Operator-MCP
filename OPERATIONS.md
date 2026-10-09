@@ -135,6 +135,20 @@ The packaged service must instantiate `BrokerServiceEntrypoint` with `createMacO
 
 **Open follow-ups.** Decide whether V2 is needed; if so, fix the YAP test as above, rebuild the image on OrbStack, re-run the 16-check acceptance, then run the offline `development --enable` upgrade; or make Docker an optional dependency so a missing engine only disables the container tools instead of failing startup.
 
+## Incident note: Docker and Codex denied after the container engine restarted (2026-10-09)
+
+**Symptom.** `mac_docker_status` and `mac_codex_run` failed with `Container Engine socket path or ownership changed or is unsafe` while `mac_health` was healthy. The audit showed `mac_docker_status` as `AUTHORIZED` on `docker_runtime:local` and then `POLICY_DENIED` on completion; `mac_codex_run` was denied while planning (target `unresolved`).
+
+**Root cause.** The Broker pinned the engine socket inode and the engine daemon PID and start time once, at service start, and could never refresh them. OrbStack restarted three hours later and recreated both. Nothing was wrong with the new socket: a fresh engine built against it passes every check. Details with file and line references: `ROOT_CAUSE_REPORT.md`; host evidence: `evidence/2026-10-09-container-engine-restart-revalidation.md`.
+
+**Fix (on branch, not deployed).** `DockerContainerEngine` accepts an opt-in `revalidation` option. When the socket path names a different object than the pinned one, the next request triggers one shared, explicit revalidation instead of a permanent denial. The new socket must pass every first-start check, the daemon must have the same uid, gid and executable path that were pinned at startup, and it must report the approved `engineId` from `development-runtime.json`; otherwise the old pins stay and the request is denied. Nothing is sent to the new daemon before it is accepted. A restart is refused while a task is staging, executing or exporting, and any task container that existed before an accepted restart is fenced (stop and remove only). Each decision is one JSON line in the pm2 out log: `{"event":"container_engine_revalidation","outcome":"accepted"|"refused","reason":"…"}`; reasons are `ENGINE_RESTART_REVALIDATED`, `ENGINE_TASK_ACTIVE`, `ENGINE_SOCKET_UNSAFE`, `ENGINE_SOCKET_REPLACED`, `ENGINE_PEER_UNVERIFIED`, `ENGINE_PEER_OWNER_MISMATCH`, `ENGINE_EXECUTABLE_CHANGED`, `ENGINE_IDENTITY_CHANGED`, `ENGINE_REVALIDATION_COOLDOWN`.
+
+**Until the fix is deployed.** Restarting the service re-pins the current engine at startup (`pm2 restart mac-operator-personal`). This is an owner action; the investigation did not restart anything.
+
+**Two related findings that are not Docker faults.**
+- `mac_policy_explain` cannot name a `docker_runtime` or `docker_object` target (its `target.kind` enum omits them), so explaining a Docker tool returns `TARGET_NOT_AUTHORIZED` even for an authorized principal. Check Docker authorization in the audit (`decision` rows for `docker_runtime:local`) until the contract is widened through a reviewed transition.
+- `mac_stat_path` on a Unix socket node reports `Filesystem target escaped its authorized root or volume`: the native opener cannot `open(2)` a socket (`EOPNOTSUPP`) and every native failure shares that message. Stat the parent directory instead.
+
 ## Upgrade note: G1 to O1 on the default endpoint (2026-10-06)
 
 **Goal.** Allow coding-agent CLIs through the unchanged `https://mac.yapweijun1996.com/mcp` endpoint without depending on Docker, so the V2 container path is not needed.

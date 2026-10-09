@@ -1,6 +1,6 @@
 import { request, Agent } from "node:http";
 import { createConnection, type Socket } from "node:net";
-import { lstatSync, realpathSync } from "node:fs";
+import { lstatSync, realpathSync, type Stats } from "node:fs";
 import { dirname, isAbsolute, resolve } from "node:path";
 import { BrokerError, parseJsonUtf8Strict, sha256 } from "@mac-operator/contracts";
 import { validateDockerObjectRequest, validateDockerLogsRequest, type DockerObjectType, type DockerEngineReadTransport } from "./docker-inspector.js";
@@ -10,6 +10,7 @@ import {
   MacOsPeerCredentialVerifier, loadNativePeerAdapter,
   type PeerCredentialPolicy, type PeerCredentialVerifier
 } from "./peer-credentials.js";
+import { captureContainerEnginePeer, type ContainerEnginePeerProbe } from "./container-engine-peer.js";
 
 const API = "/v1.47";
 const ID_PATTERN = /^[a-f0-9]{64}$/u;
@@ -23,6 +24,9 @@ const PID1_SCRIPT = "const ms=Number(process.argv[1]);if(!Number.isSafeInteger(m
 const TASK_ENVIRONMENT = ["HOME=/home/agent", "PATH=/usr/local/bin:/usr/bin:/bin", "TMPDIR=/tmp", "LANG=C.UTF-8", "NODE_VERSION=", "YARN_VERSION="];
 const STAGING_CHUNK_BYTES = 24 * 1024;
 const STAGING_ARGUMENT_BYTES = 40 * 1024;
+const SOCKET_UNSAFE_MESSAGE = "Container Engine socket path or ownership changed or is unsafe";
+const PEER_UNVERIFIED_MESSAGE = "Container Engine peer identity verification failed";
+const MAX_REVALIDATION_COOLDOWN_MS = 60_000;
 
 export const CONTAINER_LABELS = Object.freeze({
   namespace: "io.mac-operator.boundary",
@@ -34,12 +38,42 @@ export const CONTAINER_LABELS = Object.freeze({
 });
 
 export interface ContainerEngineControl { signal?: AbortSignal; timeoutMs?: number; }
+export type ContainerEngineRevalidationReason =
+  | "ENGINE_TASK_ACTIVE" | "ENGINE_SOCKET_UNSAFE" | "ENGINE_SOCKET_REPLACED" | "ENGINE_PEER_UNVERIFIED"
+  | "ENGINE_PEER_OWNER_MISMATCH" | "ENGINE_EXECUTABLE_CHANGED" | "ENGINE_IDENTITY_CHANGED" | "ENGINE_UNAVAILABLE"
+  | "ENGINE_REVALIDATION_COOLDOWN";
+/** Static, non-secret record of one revalidation decision, suitable for an operator log line. */
+export interface ContainerEngineRevalidationEvent {
+  outcome: "accepted" | "refused";
+  reason: "ENGINE_RESTART_REVALIDATED" | ContainerEngineRevalidationReason;
+  engineId: string;
+  previous: { inode: number; pid: number };
+  current?: { inode: number; pid: number };
+  fencedWorkspaces: number;
+}
+export interface ContainerEngineRevalidation {
+  /** Engine ID approved by operator configuration; a restarted engine must report exactly this ID. */
+  approvedEngineId: string;
+  /** Daemon executable observed when the identity was first pinned; a restarted daemon must run the same file. */
+  peerExecutable: string;
+  /** Delay after a refused attempt before the next one is tried. Defaults to 2000 ms. */
+  failureCooldownMs?: number;
+  /** Observes every accepted or refused decision. Must not throw; failures are ignored. */
+  onRevalidation?: (event: ContainerEngineRevalidationEvent) => void;
+  /** Test seam, honoured only together with peerVerifier; production always uses the native probe. */
+  capturePeer?: ContainerEnginePeerProbe;
+}
 export interface ContainerEngineOptions {
   socketPath: string;
   peerPolicy: PeerCredentialPolicy;
   requestTimeoutMs?: number;
   maxResponseBytes?: number;
   maxArchiveBytes?: number;
+  /**
+   * Opt-in recovery from a legitimate engine restart. Without it the pinned socket and daemon identity
+   * can never change and a restart keeps failing closed until the Broker itself restarts.
+   */
+  revalidation?: ContainerEngineRevalidation;
   /** Test seam; production always uses the native peer verifier and ACL checks. */
   peerVerifier?: PeerCredentialVerifier;
 }
@@ -80,6 +114,12 @@ export interface ContainerExecOptions { command: readonly string[]; timeoutMs: n
 export interface ContainerExecResult { exitCode: number; stdout: string; stderr: string; truncated: false; }
 
 type RecordValue = Record<string, unknown>;
+/** The identity one request is checked against. Revalidation verifies a candidate set before adopting it. */
+interface EnginePins {
+  socketIdentity: { device: number; inode: number };
+  peerPolicy: Required<Pick<PeerCredentialPolicy, "expectedUid" | "expectedGid" | "allowedProcessIdentity">>;
+  verifier: PeerCredentialVerifier;
+}
 interface EngineResponse { status: number; bytes: Buffer; }
 interface WorkspacePhase { handle: ContainerTaskHandle; phase: "new" | "staging" | "ready" | "executing" | "exporting" | "blocked"; activeExecutions: number; }
 interface StagingChunk { path: string; offset: number; data: string; final: boolean; size: number; sha256: string; }
@@ -90,20 +130,26 @@ const EXPORT_CHUNK_BYTES = 256 * 1024;
 /** Fixed Unix-only Engine operations; request paths and container authority never come from MCP callers. */
 export class DockerContainerEngine {
   private readonly socketPath: string;
-  private readonly socketIdentity: { device: number; inode: number };
-  private readonly verifier: PeerCredentialVerifier;
+  // Pinned identity. Only a successful, explicit revalidation() may replace these three together.
+  private socketIdentity: { device: number; inode: number };
+  private verifier: PeerCredentialVerifier;
+  private peerPolicy: Required<Pick<PeerCredentialPolicy, "expectedUid" | "expectedGid" | "allowedProcessIdentity">>;
   private readonly requestTimeoutMs: number;
   private readonly maxResponseBytes: number;
   private readonly maxArchiveBytes: number;
   private readonly productionAclChecks: boolean;
   private readonly ownerUid: number;
-  private readonly peerPolicy: Required<Pick<PeerCredentialPolicy, "expectedUid" | "expectedGid" | "allowedProcessIdentity">>;
+  private readonly verifierSeam: PeerCredentialVerifier | undefined;
+  private readonly revalidationConfig: Required<Omit<ContainerEngineRevalidation, "onRevalidation" | "capturePeer">> &
+    Pick<ContainerEngineRevalidation, "onRevalidation"> & { capturePeer: ContainerEnginePeerProbe } | undefined;
+  private revalidating: Promise<void> | undefined;
+  private revalidationRefusedAt = 0;
   private engineId: string | undefined;
   private readonly workspaces = new Map<string, WorkspacePhase>();
 
   constructor(options: ContainerEngineOptions) {
     const uid = process.getuid?.();
-    if (!isPlainDataRecord(options) || Object.keys(options).some(key => !["socketPath", "peerPolicy", "requestTimeoutMs", "maxResponseBytes", "maxArchiveBytes", "peerVerifier"].includes(key)) || uid === undefined || uid < 1 || !isAbsolute(options.socketPath) ||
+    if (!isPlainDataRecord(options) || Object.keys(options).some(key => !["socketPath", "peerPolicy", "requestTimeoutMs", "maxResponseBytes", "maxArchiveBytes", "revalidation", "peerVerifier"].includes(key)) || uid === undefined || uid < 1 || !isAbsolute(options.socketPath) ||
         resolve(options.socketPath) !== options.socketPath || realpathSync(options.socketPath) !== options.socketPath ||
         !isPlainDataRecord(options.peerPolicy) || options.peerPolicy.expectedUid !== uid ||
         !Number.isSafeInteger(options.peerPolicy.expectedGid) || !isPlainDataRecord(options.peerPolicy.allowedProcessIdentity) ||
@@ -118,12 +164,29 @@ export class DockerContainerEngine {
     this.maxResponseBytes = integer(options.maxResponseBytes ?? MAX_RESPONSE_BYTES, 256, MAX_RESPONSE_BYTES, "response limit");
     this.maxArchiveBytes = integer(options.maxArchiveBytes ?? MAX_ARCHIVE_BYTES, 512, MAX_ARCHIVE_BYTES, "archive limit");
     this.productionAclChecks = options.peerVerifier === undefined;
+    this.verifierSeam = options.peerVerifier;
+    this.revalidationConfig = this.parseRevalidation(options.revalidation, options.peerVerifier !== undefined);
     this.verifier = options.peerVerifier ?? new MacOsPeerCredentialVerifier({
       ...this.peerPolicy
     });
-    this.assertSocket();
-    const stat = lstatSync(this.socketPath);
+    // The pinned identity is taken from the same lstat that passed the safety checks, with no gap in between.
+    const stat = this.inspectSocketStructure();
     this.socketIdentity = { device: stat.dev, inode: stat.ino };
+  }
+
+  private parseRevalidation(value: ContainerEngineRevalidation | undefined, testSeam: boolean): DockerContainerEngine["revalidationConfig"] {
+    if (value === undefined) return undefined;
+    if (!isPlainDataRecord(value) || Object.keys(value).some(key => !["approvedEngineId", "peerExecutable", "failureCooldownMs", "onRevalidation", "capturePeer"].includes(key)) ||
+        typeof value.approvedEngineId !== "string" || value.approvedEngineId.length < 1 || value.approvedEngineId.length > 128 ||
+        typeof value.peerExecutable !== "string" || !isAbsolute(value.peerExecutable) || value.peerExecutable.length > 4096 || value.peerExecutable.includes("\0") ||
+        value.onRevalidation !== undefined && typeof value.onRevalidation !== "function" ||
+        value.capturePeer !== undefined && (typeof value.capturePeer !== "function" || !testSeam)) {
+      throw denied("Container Engine revalidation configuration is invalid");
+    }
+    return { approvedEngineId: value.approvedEngineId, peerExecutable: value.peerExecutable,
+      failureCooldownMs: integer(value.failureCooldownMs ?? 2_000, 0, MAX_REVALIDATION_COOLDOWN_MS, "revalidation cooldown"),
+      ...(value.onRevalidation === undefined ? {} : { onRevalidation: value.onRevalidation }),
+      capturePeer: value.capturePeer ?? captureContainerEnginePeer };
   }
 
   /** No caller-controlled HTTP method, route, socket or body crosses this read facade. */
@@ -169,7 +232,10 @@ export class DockerContainerEngine {
   }
 
   async info(control?: ContainerEngineControl): Promise<ContainerEngineInfo> {
-    const raw = object(await this.json("GET", "/info", undefined, control));
+    return this.acceptInfo(object(await this.json("GET", "/info", undefined, control)));
+  }
+
+  private acceptInfo(raw: RecordValue): ContainerEngineInfo {
     const id = textField(raw.ID, 128, "engine identity");
     if (this.engineId !== undefined && this.engineId !== id) throw denied("Container Engine identity changed");
     if (raw.OSType !== "linux" || raw.CgroupVersion !== "2" || !["aarch64", "arm64"].includes(String(raw.Architecture)) ||
@@ -463,7 +529,19 @@ export class DockerContainerEngine {
 
   private exchange(method: string, path: string, body: Buffer | undefined, control: ContainerEngineControl | undefined,
     byteCap: number, statuses: number[], contentType = "application/json"): Promise<EngineResponse> {
-    this.assertSocket();
+    // A recreated socket is never trusted implicitly: only the explicit revalidation below can accept it, and
+    // every request waits for that decision, so nothing reaches an unverified daemon.
+    if (this.revalidationConfig !== undefined && (this.revalidating !== undefined || this.socketIdentityDrifted())) {
+      return this.revalidate().then(() => this.exchangeVerified(method, path, body, control, byteCap, statuses, contentType));
+    }
+    return this.exchangeVerified(method, path, body, control, byteCap, statuses, contentType);
+  }
+
+  private currentPins(): EnginePins { return { socketIdentity: this.socketIdentity, peerPolicy: this.peerPolicy, verifier: this.verifier }; }
+
+  private exchangeVerified(method: string, path: string, body: Buffer | undefined, control: ContainerEngineControl | undefined,
+    byteCap: number, statuses: number[], contentType = "application/json", pins: EnginePins = this.currentPins()): Promise<EngineResponse> {
+    this.assertSocket(pins.socketIdentity);
     if (control?.signal?.aborted) return Promise.reject(new BrokerError("CANCELLED", "Container Engine request was cancelled"));
     const timeout = integer(control?.timeoutMs ?? this.requestTimeoutMs, 1, MAX_RUNTIME_MS, "request timeout");
     return new Promise((resolvePromise, reject) => {
@@ -481,12 +559,12 @@ export class DockerContainerEngine {
         };
         socket.once("connect", () => {
           try {
-            this.assertSocket();
-            const peer = this.verifier.verify(socket);
-            if (peer.uid !== this.peerPolicy.expectedUid || peer.gid !== this.peerPolicy.expectedGid ||
-                peer.pid !== this.peerPolicy.allowedProcessIdentity.pid || settled) throw new Error("peer");
+            this.assertSocket(pins.socketIdentity);
+            const peer = pins.verifier.verify(socket);
+            if (peer.uid !== pins.peerPolicy.expectedUid || peer.gid !== pins.peerPolicy.expectedGid ||
+                peer.pid !== pins.peerPolicy.allowedProcessIdentity.pid || settled) throw new Error("peer");
             complete(null);
-          } catch { socket.destroy(); complete(denied("Container Engine peer identity verification failed")); }
+          } catch { socket.destroy(); complete(denied(PEER_UNVERIFIED_MESSAGE)); }
         });
         socket.once("error", (error) => complete(error));
         return undefined;
@@ -534,13 +612,12 @@ export class DockerContainerEngine {
     });
   }
 
-  private assertSocket(): void {
-    let socket;
+  /** Every invariant of a safe engine socket except the pinned identity. Returns the stat that passed. */
+  private inspectSocketStructure(): Stats {
     try {
-      socket = lstatSync(this.socketPath);
+      const socket = lstatSync(this.socketPath);
       if (!socket.isSocket() || socket.isSymbolicLink() || socket.uid !== this.ownerUid || (socket.mode & 0o022) !== 0 ||
-          realpathSync(this.socketPath) !== this.socketPath ||
-          (this.socketIdentity !== undefined && (socket.dev !== this.socketIdentity.device || socket.ino !== this.socketIdentity.inode))) throw new Error("socket");
+          realpathSync(this.socketPath) !== this.socketPath) throw new Error("socket");
       // The owner home may carry the normal deny-delete ACL. Mandatory daemon
       // PID/start-time verification prevents a forged peer even across a path race.
       let path = dirname(this.socketPath);
@@ -553,7 +630,106 @@ export class DockerContainerEngine {
         path = next;
       }
       if (this.productionAclChecks && loadNativePeerAdapter().hasExtendedAclEntries(this.socketPath) !== false) throw new Error("ACL");
-    } catch { throw denied("Container Engine socket path or ownership changed or is unsafe"); }
+      return socket;
+    } catch { throw denied(SOCKET_UNSAFE_MESSAGE); }
+  }
+
+  private assertSocket(identity: { device: number; inode: number }): void {
+    const socket = this.inspectSocketStructure();
+    if (socket.dev !== identity.device || socket.ino !== identity.inode) throw denied(SOCKET_UNSAFE_MESSAGE);
+  }
+
+  /** True when the path now names a different filesystem object than the pinned one. Any other state is left to assertSocket(). */
+  private socketIdentityDrifted(): boolean {
+    try {
+      const socket = lstatSync(this.socketPath);
+      return socket.dev !== this.socketIdentity.device || socket.ino !== this.socketIdentity.inode;
+    } catch { return false; }
+  }
+
+  /**
+   * Explicitly re-pins the socket and daemon identity after a legitimate engine restart. The new socket must
+   * pass every check a first start passes, the daemon must be owned by the same user and group and run the same
+   * executable that was first pinned, and it must report the operator-approved engine ID. Concurrent callers share
+   * one attempt; any refusal leaves the previous pins in place so the engine keeps failing closed.
+   */
+  revalidate(): Promise<void> {
+    const config = this.revalidationConfig;
+    if (config === undefined) return Promise.reject(denied(SOCKET_UNSAFE_MESSAGE));
+    this.revalidating ??= this.performRevalidation(config).finally(() => { this.revalidating = undefined; });
+    return this.revalidating;
+  }
+
+  private async performRevalidation(config: NonNullable<DockerContainerEngine["revalidationConfig"]>): Promise<void> {
+    const previous = this.currentPins();
+    const report = (event: Omit<ContainerEngineRevalidationEvent, "engineId" | "previous">): void => {
+      try {
+        config.onRevalidation?.({ ...event, engineId: config.approvedEngineId,
+          previous: { inode: previous.socketIdentity.inode, pid: previous.peerPolicy.allowedProcessIdentity.pid } });
+      } catch { /* an observer must never change the decision */ }
+    };
+    const refuse = (reason: ContainerEngineRevalidationReason, message: string): never => {
+      if (reason !== "ENGINE_REVALIDATION_COOLDOWN") this.revalidationRefusedAt = Date.now();
+      report({ outcome: "refused", reason, fencedWorkspaces: 0 });
+      throw denied(message);
+    };
+    if (this.revalidationRefusedAt > 0 && Date.now() - this.revalidationRefusedAt < config.failureCooldownMs) {
+      return refuse("ENGINE_REVALIDATION_COOLDOWN", "Container Engine revalidation was refused moments ago");
+    }
+    // 1. A restart orphans whatever a task was doing; never re-pin underneath an operation in flight.
+    for (const workspace of this.workspaces.values()) {
+      if (workspace.activeExecutions > 0 || workspace.phase === "staging" || workspace.phase === "exporting") {
+        return refuse("ENGINE_TASK_ACTIVE", "Container Engine changed while a task was active");
+      }
+    }
+    // 2. The new socket must satisfy every static invariant, and stay the same object while the daemon is read.
+    let first: Stats;
+    try { first = this.inspectSocketStructure(); } catch { return refuse("ENGINE_SOCKET_UNSAFE", SOCKET_UNSAFE_MESSAGE); }
+    let peer;
+    try { peer = await config.capturePeer(this.socketPath, this.ownerUid); }
+    catch { return refuse("ENGINE_PEER_UNVERIFIED", PEER_UNVERIFIED_MESSAGE); }
+    let second: Stats;
+    try { second = this.inspectSocketStructure(); } catch { return refuse("ENGINE_SOCKET_UNSAFE", SOCKET_UNSAFE_MESSAGE); }
+    if (first.dev !== second.dev || first.ino !== second.ino) return refuse("ENGINE_SOCKET_REPLACED", SOCKET_UNSAFE_MESSAGE);
+    // 3. Same user, same group, same daemon executable as the identity that was approved at startup.
+    if (peer.uid !== this.ownerUid || peer.gid !== previous.peerPolicy.expectedGid) {
+      return refuse("ENGINE_PEER_OWNER_MISMATCH", "Container Engine peer owner differs from the approved owner");
+    }
+    if (peer.executable !== config.peerExecutable) {
+      return refuse("ENGINE_EXECUTABLE_CHANGED", "Container Engine daemon executable differs from the approved one");
+    }
+    // 4. Ask the daemon for its identity through the candidate pins only. Nothing else is sent to it and the
+    //    pins in force stay unchanged until it reports the operator-approved engine ID.
+    const peerPolicy = { expectedUid: this.ownerUid, expectedGid: previous.peerPolicy.expectedGid,
+      allowedProcessIdentity: { pid: peer.pid, startTimeMicros: peer.startTimeMicros } };
+    const candidate: EnginePins = { socketIdentity: { device: second.dev, inode: second.ino }, peerPolicy,
+      verifier: this.verifierSeam ?? new MacOsPeerCredentialVerifier({ ...peerPolicy }) };
+    try {
+      const response = await this.exchangeVerified("GET", "/info", undefined, { timeoutMs: this.requestTimeoutMs }, this.maxResponseBytes, [200], "application/json", candidate);
+      const raw = object(parseJsonUtf8Strict(response.bytes));
+      if (raw.ID !== config.approvedEngineId) throw denied("Container Engine identity changed");
+      this.acceptInfo(raw);
+    } catch (error) {
+      if (this.socketIdentityDriftedFrom(second)) return refuse("ENGINE_SOCKET_REPLACED", SOCKET_UNSAFE_MESSAGE);
+      if (error instanceof BrokerError && error.message === PEER_UNVERIFIED_MESSAGE) return refuse("ENGINE_PEER_UNVERIFIED", PEER_UNVERIFIED_MESSAGE);
+      if (error instanceof BrokerError && ["EXECUTION_FAILED", "TIMEOUT", "CANCELLED"].includes(error.errorClass)) {
+        return refuse("ENGINE_UNAVAILABLE", "Container Engine is not ready to be revalidated");
+      }
+      return refuse("ENGINE_IDENTITY_CHANGED", "Container Engine identity changed");
+    }
+    // 5. Adopt the verified pins. Containers that existed before the restart can no longer be staged, executed or
+    //    exported; they may only be stopped and removed through the full per-container identity checks.
+    this.socketIdentity = candidate.socketIdentity; this.peerPolicy = candidate.peerPolicy; this.verifier = candidate.verifier;
+    let fenced = 0;
+    for (const workspace of this.workspaces.values()) { workspace.phase = "blocked"; fenced++; }
+    this.revalidationRefusedAt = 0;
+    report({ outcome: "accepted", reason: "ENGINE_RESTART_REVALIDATED", fencedWorkspaces: fenced,
+      current: { inode: second.ino, pid: peer.pid } });
+  }
+
+  private socketIdentityDriftedFrom(expected: Stats): boolean {
+    try { const socket = lstatSync(this.socketPath); return socket.dev !== expected.dev || socket.ino !== expected.ino; }
+    catch { return true; }
   }
 }
 
