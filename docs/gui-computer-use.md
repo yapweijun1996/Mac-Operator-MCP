@@ -164,6 +164,16 @@ An example browser flow is: open Chrome, focus it, observe, send
 `shortcut(COMMAND_L)`, type a complete HTTPS URL into the focused address bar with `submit=true`, inspect the new screenshot, then click, type, scroll, and
 observe until the page result is visible.
 
+### Browser title changes and navigation results
+
+Window titles are selectors, never identity. Chrome appends a live annotation such as
+`High memory usage - 816 MB` to the window title, so retained-target checks compare titles without
+that annotation; native window identity (PID, launch generation and CGWindowID) still binds every
+action. After a browser address-bar navigation, the native adapter re-resolves the window while the page
+loads. If that re-resolution fails transiently, `mac_ui_type` returns `VERIFICATION_FAILED` with a
+message that the navigation was dispatched but not re-verified. This is not a bad window: observe the
+window to confirm the result. Retrying the identical request would navigate again.
+
 ### Reliability integration probe
 
 AX references use a stable breadth-first traversal of the selected window.
