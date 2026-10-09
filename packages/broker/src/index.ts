@@ -124,6 +124,7 @@ export * from "./development-policy.js";
 export * from "./development-gateway.js";
 
 export * from "./container-engine.js";
+export * from "./container-engine-peer.js";
 export * from "./container-job-metadata.js";
 export * from "./container-task-profile.js";
 export * from "./container-task-runner.js";
