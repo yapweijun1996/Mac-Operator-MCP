@@ -2,6 +2,7 @@ import { randomBytes } from "node:crypto";
 import { isAbsolute, resolve } from "node:path";
 import { BrokerError, parseJsonUtf8Strict } from "@mac-operator/contracts";
 import {
+  ContainerNotFoundError, ContainerCreationError,
   type ContainerTaskHandle, type DockerContainerEngine, type ContainerExecResult
 } from "./container-engine.js";
 import {
@@ -198,17 +199,13 @@ export class ContainerTaskRunner implements TaskRunner {
     };
     const timer = setTimeout(() => { reason = "timeout"; abort.abort(); }, timeoutMs);
     const monitor = setInterval(() => { try { check(); } catch { abort.abort(); } }, 25);
-    try {
-      check();
-      const currentEngine = await this.engine!.info();
-      if (currentEngine.id !== this.engineId) deny("Container Engine changed after accepted host evidence");
-      const image = await this.engine!.inspectImage(this.imageId!);
-      if (image.id !== this.imageId) deny("Container image changed after accepted host evidence");
-      check();
-      createAttempted = true;
-      handle = await this.engine!.create({ image: this.imageId!, taskId: profile.containerExecution!.taskId,
-        owner: profile.containerExecution!.owner, nonce: randomBytes(32).toString("hex"), maxRuntimeMs: timeoutMs,
-        readonlyWorkspace: profile.containerExecution!.readonlyWorkspace });
+    const recordCreation = (created: ContainerTaskHandle): void => {
+      if (handle !== undefined) {
+        if (Object.entries(handle).some(([key, value]) => value !== created[key as keyof ContainerTaskHandle])) deny("Container creation identity changed");
+        return;
+      }
+      // Capture the exact handle before persistence so even an acknowledgement failure can clean up.
+      handle = created;
       const recordedAtMs = Date.now();
       const metadata: Omit<ContainerTaskJobMetadata, "taskDescriptorDigest"> = {
         schemaVersion: "0.1", containerId: handle.id, engineId: handle.engineId, imageId: handle.imageId, taskId: handle.taskId,
@@ -216,10 +213,30 @@ export class ContainerTaskRunner implements TaskRunner {
         memoryBytes: handle.memoryBytes, nanoCpus: handle.nanoCpus, pidsLimit: handle.pidsLimit,
         recordedAtMs, deadlineAtMs: Math.max(recordedAtMs + 1, Math.min(deadline, recordedAtMs + handle.maxRuntimeMs))
       };
-      // Async acknowledgements cannot prove durable ownership before guest code starts.
       enter("ownership");
       const acknowledged = control.onContainerCreated!(Object.freeze(metadata));
       if (acknowledged !== undefined) throw new BrokerError("AUDIT_UNAVAILABLE", "Container ownership persistence must complete synchronously");
+    };
+    try {
+      check();
+      const currentEngine = await this.engine!.info({ signal: abort.signal, timeoutMs: remaining(deadline) });
+      if (currentEngine.id !== this.engineId) deny("Container Engine changed after accepted host evidence");
+      check();
+      const image = await this.engine!.inspectImage(this.imageId!, { signal: abort.signal, timeoutMs: remaining(deadline) });
+      if (image.id !== this.imageId) deny("Container image changed after accepted host evidence");
+      check();
+      createAttempted = true;
+      let created: ContainerTaskHandle;
+      try { created = await this.engine!.create({ image: this.imageId!, taskId: profile.containerExecution!.taskId,
+        owner: profile.containerExecution!.owner, nonce: randomBytes(32).toString("hex"), maxRuntimeMs: timeoutMs,
+        readonlyWorkspace: profile.containerExecution!.readonlyWorkspace },
+        { signal: abort.signal, timeoutMs: remaining(deadline), onCreated: recordCreation }); }
+      catch (error) {
+        if (error instanceof ContainerCreationError) recordCreation(error.handle);
+        throw error;
+      }
+      recordCreation(created);
+      handle = created;
       check();
       enter("start");
       await this.engine!.start(handle, { signal: abort.signal, timeoutMs: remaining(deadline) });
@@ -287,10 +304,15 @@ export class ContainerTaskRunner implements TaskRunner {
       await this.engine!.remove(handle, { timeoutMs: 10_000 });
       return true;
     } catch (error) {
-      // Absence proves teardown only after a successful exact Engine readback;
-      // a missing container never proves that its development task succeeded.
+      // A lifecycle or Engine route's 404 cannot establish exact container absence.
+      // Require a fresh container inspection followed by the pinned Engine readback.
       if (error instanceof BrokerError && error.errorClass === "TARGET_NOT_FOUND") {
-        try { return (await this.engine!.info({ timeoutMs: 10_000 })).id === handle.engineId; } catch { return false; }
+        try { await this.engine!.inspect(handle, { timeoutMs: 10_000 }); }
+        catch (absence) {
+          if (absence instanceof ContainerNotFoundError && absence.containerId === handle.id && absence.engineId === handle.engineId) {
+            try { return (await this.engine!.info({ timeoutMs: 10_000 })).id === handle.engineId; } catch { return false; }
+          }
+        }
       }
       return false;
     }

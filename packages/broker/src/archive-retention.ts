@@ -8,7 +8,7 @@ import { validateProtectedDirectory } from "./persistence-backup.js";
 const AUDIT_ARCHIVE_PATTERN = /^audit-export-(\d{1,16})-([a-f0-9]{24})\.json\.enc$/u;
 const LEDGER_ARCHIVE_PATTERN = /^ledger-export-(\d{1,16})-([a-f0-9]{24})\.json\.enc$/u;
 const ARCHIVE_TEMP_PATTERN = /^\.(?:audit|ledger)-export-\d{1,16}-[a-f0-9]{24}\.json\.enc\.tmp-[a-f0-9]{24}$/u;
-const ARCHIVE_QUARANTINE_PATTERN = /^\.(?:audit|ledger)-export-\d{1,16}-[a-f0-9]{24}\.json\.enc\.prune-\d{1,16}-[a-f0-9]{24}$/u;
+const ARCHIVE_QUARANTINE_PATTERN = /^\.?(?:audit|ledger)-export-\d{1,16}-[a-f0-9]{24}\.json\.enc\.prune-\d{1,16}-[a-f0-9]{24}$/u;
 const MAX_ARCHIVE_FILES = 512;
 const MAX_ARCHIVE_RETAIN_COUNT = 100_000;
 const MAX_ARCHIVE_MIN_AGE_MS = 365 * 24 * 60 * 60 * 1000;

@@ -18,6 +18,7 @@ const threadId='thread-test-1',turnId='turn-test-1';
 let attempts=0;
 const invalidAttempt=()=>{attempts++;send({id:90+attempts,method:'item/tool/call',params:{threadId,turnId,callId:'call-test-'+attempts,tool:'gateway_probe',namespace:null,arguments:{path:'README.md',unexpected:true}}});};
 const event=(method,params)=>send({method,params:{threadId,turnId,...params}});
+const lateTool=()=>({id:91,method:'item/tool/call',params:{threadId,turnId,callId:'call-after-completion',tool:'gateway_probe',namespace:null,arguments:{path:'README.md'}}});
 const finish=()=>{event('rawResponse/completed',{responseId:'resp-safe-test',usage:{}});event('item/agentMessage/delta',{itemId:'message-test-1',delta:scenario==='secret'?'password=fixture-password-value '+ 'sk-proj-'+ 'a'.repeat(32):'Gateway probe complete. '+(scenario==='bounded'?'x'.repeat(4000):'')});event('turn/completed',{turn:{id:turnId,status:'completed'}});};
 rl.on('line',line=>{const m=JSON.parse(line);fs.appendFileSync(log,JSON.stringify(m)+'\\n',{mode:0o600});
  if(m.method==='initialize')send({id:m.id,result:{userAgent:'fake-codex'}});
@@ -28,6 +29,9 @@ rl.on('line',line=>{const m=JSON.parse(line);fs.appendFileSync(log,JSON.stringif
   event('turn/started',{turn:{id:turnId,status:'inProgress'}});send({id:m.id,result:{turn:{id:scenario==='wrong-turn-response'?'turn-other':turnId,status:'inProgress'}}});
   if(scenario==='wrong-turn-response')return;
   if(scenario==='timeout')return;
+  if(scenario.startsWith('completed-packet-')){
+   process.stdout.write(JSON.stringify({method:'turn/completed',params:{threadId,turnId,turn:{id:turnId,status:scenario.slice('completed-packet-'.length)}}})+'\\n'+JSON.stringify(lateTool())+'\\n');return;
+  }
   if(scenario==='malformed'){process.stdout.write('{this-is-not-json}\\n');return;}
   if(scenario==='large-line'){process.stdout.write('x'.repeat(300000));return;}
   if(scenario==='wrong-response'){send({id:999,result:{}});return;}
@@ -51,7 +55,7 @@ rl.on('line',line=>{const m=JSON.parse(line);fs.appendFileSync(log,JSON.stringif
  else if(m.id>=91&&m.result)finish();
  else if(m.method==='turn/interrupt')send({id:m.id,result:{}});
 });
-rl.once('close',()=>process.exit());
+rl.once('close',()=>{if(scenario==='late-completed-tool')process.stdout.write(JSON.stringify(lateTool())+'\\n',()=>process.exit());else process.exit();});
 `;
 
 async function fixture(t: TestContext, scenario = "plain", outputCapBytes?: number) {
@@ -117,6 +121,18 @@ test("only the declared dynamic tool runs and control-plane requests never expos
   assert.ok(f.environments.every(environment => Object.keys(environment).every(key => ["HOME", "CODEX_HOME", "PATH", "LANG", "CODEX_NON_INTERACTIVE", "CODEX_INTERNAL_APP_SERVER_REMOTE_CONTROL_DISABLED"].includes(key))));
   assert.ok(f.children.every(child => child.exitCode !== null || child.signalCode !== null));
 });
+
+for (const scenario of ["completed-packet-completed", "completed-packet-failed", "completed-packet-interrupted", "late-completed-tool"]) {
+  test(`Codex admits no dynamic tool after terminal completion: ${scenario}`, async t => {
+    const f = await fixture(t, scenario);
+    const result = await f.controller.run(f.request);
+    assert.equal(f.handlerCalls(), 0, "a terminal turn has no remaining tool authority");
+    assert.deepEqual(result.toolCalls, []);
+    assert.equal(result.status, "failed");
+    assert.ok(result.reasonCodes.includes("CODEX_TOOL_AFTER_COMPLETION"), JSON.stringify(result));
+    assert.ok(f.children.every(child => child.exitCode !== null || child.signalCode !== null));
+  });
+}
 
 test("workspace-write instructions authorize exact supplied file tools while retaining host denial", async t => {
   const f = await fixture(t, "profile-write");

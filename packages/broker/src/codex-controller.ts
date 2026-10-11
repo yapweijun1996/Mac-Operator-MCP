@@ -379,6 +379,8 @@ export class CodexController {
       });
       session.validateTurnResponse(turn);
       const completed = await session.completion;
+      // A violation in the same protocol packet as the terminal turn cannot reach the already-settled completion Promise.
+      session.assertNoFailure();
       result.status = completed === "completed" ? "completed" : "failed";
       if (completed !== "completed") result.reasonCodes.push("CODEX_TURN_FAILED");
       if (result.argumentRejections?.length && !result.toolCalls.some(call => call.success)) {
@@ -392,7 +394,12 @@ export class CodexController {
       result.status = code === "CODEX_CANCELLED" ? "cancelled" : code === "CODEX_TIMEOUT" ? "timed_out" : "failed";
     } finally {
       clearTimeout(deadline); input.signal?.removeEventListener("abort", onAbort);
-      handlersAbort.abort(); await session?.close(); result.output = redactBoundedText(output, this.options.outputCapBytes ?? 16_384).text; result.durationMs = Date.now() - started;
+      handlersAbort.abort(); await session?.close();
+      // A tool request that arrives while the finished session drains still violates the terminal turn.
+      if (session?.failure?.reasonCode === "CODEX_TOOL_AFTER_COMPLETION" && !result.reasonCodes.includes("CODEX_TOOL_AFTER_COMPLETION")) {
+        result.status = "failed"; result.reasonCodes.push("CODEX_TOOL_AFTER_COMPLETION");
+      }
+      result.output = redactBoundedText(output, this.options.outputCapBytes ?? 16_384).text; result.durationMs = Date.now() - started;
     }
     return result;
   }
@@ -441,6 +448,14 @@ class ControllerSession {
   private send(value: unknown): void {
     if (this.failed) return;
     this.child.stdin.write(JSON.stringify(value) + "\n");
+  }
+
+  get failure(): ControllerError | undefined {
+    return this.failed;
+  }
+
+  assertNoFailure(): void {
+    if (this.failed) throw this.failed;
   }
 
   async initialize(experimental = false): Promise<void> {
@@ -506,6 +521,8 @@ class ControllerSession {
       if (this.inboundIds.has(identity)) throw new ControllerError("CODEX_DUPLICATE_REQUEST_ID");
       this.inboundIds.add(identity);
       if (message.method !== "item/tool/call" || !this.toolHandler) throw new ControllerError("CODEX_UNEXPECTED_SERVER_REQUEST");
+      // A completed turn has no remaining tool authority; admit nothing before the handler can run.
+      if (this.completed) throw new ControllerError("CODEX_TOOL_AFTER_COMPLETION");
       this.validateTurn(params);
       const id = message.id;
       this.activeTools++;

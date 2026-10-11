@@ -5,9 +5,11 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import test from "node:test";
 import { createWorkspaceArchive, parseWorkspaceArchive } from "./container-snapshot.js";
-import { sha256 } from "@mac-operator/contracts";
+import { ContainerTaskRunner } from "./container-task-runner.js";
+import type { ContainerTaskJobMetadata } from "./container-job-metadata.js";
+import { BrokerError, sha256 } from "@mac-operator/contracts";
 import {
-  DockerContainerEngine, CONTAINER_LABELS,
+  DockerContainerEngine, CONTAINER_LABELS, ContainerNotFoundError, ContainerCreationError,
   type ContainerEngineOptions, type ContainerTaskHandle
 } from "./container-engine.js";
 
@@ -195,6 +197,91 @@ test("Container Engine pins identity, ignores ambient contexts and creates the f
     assert.equal((await f.engine.inspect(handle)).id, CONTAINER_ID);
     const source = await import("node:fs/promises").then(fs => fs.readFile(new URL("./container-engine.js", import.meta.url), "utf8"));
     assert.doesNotMatch(source, /process\.env|DOCKER_HOST|child_process/u);
+  } finally { await f.close(); }
+});
+
+test("Only an exact container GET 404 produces container absence evidence", async () => {
+  const f = await fixture();
+  try {
+    const handle = await f.engine.create(TASK);
+    f.responseOverride = (req, res) => {
+      if (req.url !== "/v1.47/info") return false;
+      res.writeHead(404); res.end("{}"); return true;
+    };
+    await assert.rejects(f.engine.inspect(handle), error => error instanceof BrokerError &&
+      error.errorClass === "TARGET_NOT_FOUND" && !(error instanceof ContainerNotFoundError));
+    f.responseOverride = (req, res) => {
+      if (req.url !== `/v1.47/containers/${CONTAINER_ID}/json`) return false;
+      res.writeHead(404); res.end("{}"); return true;
+    };
+    await assert.rejects(f.engine.inspect(handle), error => error instanceof ContainerNotFoundError &&
+      error.containerId === handle.id && error.engineId === handle.engineId);
+  } finally { await f.close(); }
+});
+
+test("Confirmed creation retains recovery identity before an inspection timeout and fences start", async () => {
+  const f = await fixture({ requestTimeoutMs: 25 });
+  let confirmed: ContainerTaskHandle | undefined;
+  try {
+    f.delayRoute = `/v1.47/containers/${CONTAINER_ID}/json`;
+    await assert.rejects(f.engine.create(TASK, { onCreated: handle => { confirmed = handle; } }), error =>
+      error instanceof ContainerCreationError && error.errorClass === "TIMEOUT" && error.handle.id === CONTAINER_ID);
+    assert.equal(confirmed?.id, CONTAINER_ID);
+    assert.equal(Object.isFrozen(confirmed), true);
+    assert.ok(f.requests.some(request => request.path === "/v1.47/containers/create"));
+    await assert.rejects(f.engine.start(confirmed!), /verified newly created/u);
+    assert.ok(!f.requests.some(request => request.path.endsWith("/start")));
+    f.delayRoute = undefined;
+    await f.engine.kill(confirmed!, { timeoutMs: 2000 });
+    await f.engine.remove(confirmed!, { timeoutMs: 2000 });
+    assert.ok(f.requests.some(request => request.method === "DELETE"));
+  } finally { await f.close(); }
+});
+
+test("A failed creation inspection never permits cleanup against mismatched labels", async () => {
+  const f = await fixture();
+  let confirmed: ContainerTaskHandle | undefined;
+  try {
+    f.inspectMutation = raw => { raw.Config.Labels[CONTAINER_LABELS.nonce] = "wrong-owner-nonce"; };
+    await assert.rejects(f.engine.create(TASK, { onCreated: handle => { confirmed = handle; } }), error =>
+      error instanceof ContainerCreationError && error.handle.id === CONTAINER_ID);
+    await assert.rejects(f.engine.kill(confirmed!));
+    assert.ok(!f.requests.some(request => request.method === "DELETE" || request.path.endsWith("/kill?signal=SIGKILL")));
+    f.inspectMutation = undefined;
+    await f.engine.kill(confirmed!);
+    await f.engine.remove(confirmed!);
+  } finally { await f.close(); }
+});
+
+test("The runner durably records a confirmed 201 before failed inspection and removes only verified ownership", async () => {
+  const f = await fixture();
+  let persisted: Omit<ContainerTaskJobMetadata, "taskDescriptorDigest"> | undefined;
+  let rejectedInspection = false;
+  try {
+    f.responseOverride = (req, res) => {
+      if (req.url !== `/v1.47/containers/${CONTAINER_ID}/json` || rejectedInspection) return false;
+      assert.equal(persisted?.containerId, CONTAINER_ID);
+      rejectedInspection = true;
+      res.writeHead(500); res.end("{}"); return true;
+    };
+    const runner = new ContainerTaskRunner({ engine: f.engine, imageId: IMAGE, engineId: ENGINE,
+      enabled: true, hostEvidenceAccepted: true,
+      isolationProof: { schemaVersion: "0.1", sandboxMechanism: "docker-container", sandboxProfile: "container-task-v1",
+        filesystem: "enforced", network: "enforced", credentials: "isolated", persistence: "isolated",
+        credentialIsolation: "docker-container-no-host-credentials-v1", processTree: "owned", processTreePolicy: "owned_group",
+        evidenceRef: "docs/container-host-unit-test", containerImage: { imageId: IMAGE, engineId: ENGINE } },
+      registeredCommands: [{ name: "test", executable: "/usr/local/bin/node", args: ["--test"] }] });
+    const result = await runner.run({ profile: "test", cwd: "/unit/worktree",
+      process: { executable: "/usr/local/bin/node", args: ["--test"], cwd: "/unit/worktree", timeoutMs: 1000, outputCapBytes: 8192 },
+      filesystemRoots: ["/unit/worktree"], networkPolicy: "none", networkAllowlist: [], credentialPolicy: "none",
+      processTreePolicy: "owned_group", sandboxProfile: "container-task-v1", verificationStrategy: "exit_status_and_declared_task_verification",
+      containerExecution: { imageId: IMAGE, engineId: ENGINE, taskId: TASK.taskId, owner: TASK.owner, readonlyWorkspace: false } },
+    { timeoutMs: 1000, shouldCancel: () => false, onContainerCreated: value => { persisted = value; } });
+    assert.equal(result.state, "failed");
+    assert.equal(result.containerCleanupVerified, true);
+    assert.equal(persisted?.containerId, CONTAINER_ID);
+    assert.ok(f.requests.some(request => request.method === "DELETE"));
+    assert.ok(!f.requests.some(request => request.path.endsWith("/start")));
   } finally { await f.close(); }
 });
 

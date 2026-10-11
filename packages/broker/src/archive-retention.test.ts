@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import fs from "node:fs";
+import { mkdtemp, readFile, readdir, rm, symlink, writeFile } from "node:fs/promises";
+import { syncBuiltinESMExports } from "node:module";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -46,6 +48,71 @@ test("archive pruning retains recent artifacts and the newest bounded set per ar
     assert.deepEqual(result.retainedLedger, []);
     assert.ok((await readFile(auditRecent)).byteLength > 0);
   } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+for (const kind of ["audit", "ledger"] as const) {
+  for (const prefix of ["", "."]) {
+    test(`archive pruning rejects ${prefix ? "legacy" : "current"} ${kind} quarantine artifacts before deleting archives`, async () => {
+      const directory = await mkdtemp(join(tmpdir(), "mac-broker-archive-quarantine-"));
+      const archive = archivePath(directory, kind, 1_000, "a".repeat(24));
+      const quarantine = join(directory, `${prefix}${kind}-export-500-${"b".repeat(24)}.json.enc.prune-1000-${"c".repeat(24)}`);
+      try {
+        await createArchiveFixture(archive);
+        const original = await readFile(archive);
+        await writeFile(quarantine, "unfinished", { mode: 0o600 });
+        await assert.rejects(
+          pruneArchiveArtifacts(directory, { retainAuditCount: 0, retainLedgerCount: 0, minAgeMs: 0, nowMs: 2_000 }),
+          (error: unknown) => error instanceof BrokerError && error.errorClass === "AUDIT_UNAVAILABLE" && /unfinished/u.test(error.message)
+        );
+        assert.deepEqual(await readFile(archive), original);
+        assert.equal(await readFile(quarantine, "utf8"), "unfinished");
+      } finally {
+        await rm(directory, { recursive: true, force: true });
+      }
+    });
+  }
+}
+
+test("archive pruning fails closed on retry after deletion and restoration both fail", async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), "mac-broker-archive-quarantine-fault-"));
+  const archive = archivePath(directory, "audit", 1_000, "a".repeat(24));
+  const originalUnlink = fs.promises.unlink;
+  const originalLink = fs.promises.link;
+  try {
+    await createArchiveFixture(archive);
+    const original = await readFile(archive);
+    t.mock.method(fs.promises, "unlink", async (path: Parameters<typeof originalUnlink>[0]) => {
+      if (String(path).includes(".prune-")) throw Object.assign(new Error("synthetic deletion failure"), { code: "EIO" });
+      return originalUnlink(path);
+    });
+    t.mock.method(fs.promises, "link", async (from: Parameters<typeof originalLink>[0], to: Parameters<typeof originalLink>[1]) => {
+      if (String(from).includes(".prune-")) throw Object.assign(new Error("synthetic restoration failure"), { code: "EIO" });
+      return originalLink(from, to);
+    });
+    syncBuiltinESMExports();
+    const options = { retainAuditCount: 0, retainLedgerCount: 0, minAgeMs: 0, nowMs: 2_000 };
+    await assert.rejects(
+      pruneArchiveArtifacts(directory, options),
+      (error: unknown) => error instanceof BrokerError && error.errorClass === "AUDIT_UNAVAILABLE"
+    );
+    t.mock.restoreAll();
+    syncBuiltinESMExports();
+    const remnants = await readdir(directory);
+    assert.equal(remnants.length, 1);
+    assert.match(remnants[0]!, /^audit-export-1000-[a-f0-9]{24}\.json\.enc\.prune-\d+-[a-f0-9]{24}$/u);
+    const quarantine = join(directory, remnants[0]!);
+    assert.deepEqual(await readFile(quarantine), original);
+    await assert.rejects(readFile(archive), (error: unknown) => (error as NodeJS.ErrnoException).code === "ENOENT");
+    await assert.rejects(
+      pruneArchiveArtifacts(directory, options),
+      (error: unknown) => error instanceof BrokerError && error.errorClass === "AUDIT_UNAVAILABLE" && /unfinished/u.test(error.message)
+    );
+    assert.deepEqual(await readFile(quarantine), original);
+  } finally {
+    t.mock.restoreAll();
+    syncBuiltinESMExports();
     await rm(directory, { recursive: true, force: true });
   }
 });

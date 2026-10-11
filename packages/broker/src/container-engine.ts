@@ -38,6 +38,10 @@ export const CONTAINER_LABELS = Object.freeze({
 });
 
 export interface ContainerEngineControl { signal?: AbortSignal; timeoutMs?: number; }
+export interface ContainerCreateControl extends ContainerEngineControl {
+  /** Synchronously retain the confirmed creation identity before post-create inspection awaits. */
+  onCreated?: (handle: ContainerTaskHandle) => void;
+}
 export type ContainerEngineRevalidationReason =
   | "ENGINE_TASK_ACTIVE" | "ENGINE_SOCKET_UNSAFE" | "ENGINE_SOCKET_REPLACED" | "ENGINE_PEER_UNVERIFIED"
   | "ENGINE_PEER_OWNER_MISMATCH" | "ENGINE_EXECUTABLE_CHANGED" | "ENGINE_IDENTITY_CHANGED" | "ENGINE_UNAVAILABLE"
@@ -100,6 +104,28 @@ export interface ContainerTaskHandle {
   readonly memoryBytes: number;
   readonly nanoCpus: number;
   readonly pidsLimit: number;
+}
+/** Only an authenticated exact container inspection can establish this absence. */
+export class ContainerNotFoundError extends BrokerError {
+  readonly containerId: string;
+  readonly engineId: string;
+
+  constructor(handle: ContainerTaskHandle) {
+    super("TARGET_NOT_FOUND", "Exact owned container is absent");
+    this.containerId = handle.id;
+    this.engineId = handle.engineId;
+  }
+}
+/** A confirmed creation remains owned even when its later validation cannot complete. */
+export class ContainerCreationError extends BrokerError {
+  readonly handle: ContainerTaskHandle;
+
+  constructor(handle: ContainerTaskHandle, error: unknown) {
+    super(error instanceof BrokerError ? error.errorClass : "UNKNOWN_OUTCOME",
+      error instanceof BrokerError ? error.message : "Confirmed container creation could not be verified",
+      error instanceof BrokerError ? error.retryable : true);
+    this.handle = snapshotHandle(handle);
+  }
 }
 export interface ContainerEngineInfo {
   id: string; serverVersion: string; osType: "linux"; architecture: string;
@@ -266,8 +292,9 @@ export class DockerContainerEngine {
     return { id: raw.Id, repoDigests: [...raw.RepoDigests] as string[], os: "linux", architecture: "arm64" };
   }
 
-  async create(input: ContainerCreateOptions, control?: ContainerEngineControl): Promise<ContainerTaskHandle> {
+  async create(input: ContainerCreateOptions, control?: ContainerCreateControl): Promise<ContainerTaskHandle> {
     validateCreate(input);
+    if (control?.onCreated !== undefined && typeof control.onCreated !== "function") throw denied("Container creation ownership callback is invalid");
     input = Object.freeze({ ...input });
     const material = normalizeCreate(input);
     const engine = await this.info(control);
@@ -279,8 +306,14 @@ export class DockerContainerEngine {
     const handle: ContainerTaskHandle = Object.freeze({ id: raw.Id, imageId: image.id, engineId: engine.id,
       taskId: material.taskId, owner: material.owner, nonce: material.nonce, maxRuntimeMs: material.maxRuntimeMs,
       readonlyWorkspace: material.readonlyWorkspace, memoryBytes: material.memoryBytes, nanoCpus: material.nanoCpus, pidsLimit: material.pidsLimit });
-    await this.inspect(handle, control);
-    this.workspaces.set(handle.id, { handle, phase: "new", activeExecutions: 0 });
+    const workspace: WorkspacePhase = { handle, phase: "blocked", activeExecutions: 0 };
+    this.workspaces.set(handle.id, workspace);
+    try {
+      const acknowledged = control?.onCreated?.(handle);
+      if (acknowledged !== undefined) throw new BrokerError("AUDIT_UNAVAILABLE", "Container creation ownership must be retained synchronously");
+      await this.inspect(handle, control);
+      workspace.phase = "new";
+    } catch (error) { throw new ContainerCreationError(handle, error); }
     return handle;
   }
 
@@ -288,7 +321,19 @@ export class DockerContainerEngine {
     handle = snapshotHandle(handle);
     const engine = await this.info(control);
     if (engine.id !== handle.engineId) throw denied("Container belongs to a different Engine");
-    const raw = object(await this.json("GET", `/containers/${handle.id}/json`, undefined, control));
+    let response: unknown;
+    try { response = await this.json("GET", `/containers/${handle.id}/json`, undefined, control); }
+    catch (error) {
+      if (error instanceof BrokerError && error.errorClass === "TARGET_NOT_FOUND") {
+        const workspace = this.workspaces.get(handle.id);
+        if (workspace && Object.entries(workspace.handle).every(([key, value]) => value === handle[key as keyof ContainerTaskHandle])) {
+          this.workspaces.delete(handle.id);
+        }
+        throw new ContainerNotFoundError(handle);
+      }
+      throw error;
+    }
+    const raw = object(response);
     validateInspection(raw, handle);
     const state = object(raw.State);
     if (!["running", "created", "exited"].includes(String(state.Status)) || state.Paused === true || state.Restarting === true || state.Dead === true ||
@@ -301,8 +346,10 @@ export class DockerContainerEngine {
 
   async start(handle: ContainerTaskHandle, control?: ContainerEngineControl): Promise<ContainerInspection> {
     handle = snapshotHandle(handle);
+    if (this.requireWorkspace(handle).phase !== "new") throw denied("Only a verified newly created workspace can start");
     const prior = await this.inspect(handle, control);
     if (prior.running || prior.status !== "created") throw denied("Only an owned newly created container can start");
+    if (this.requireWorkspace(handle).phase !== "new") throw denied("Container creation authority changed before start");
     await this.json("POST", `/containers/${handle.id}/start`, undefined, control, [204]);
     const next = await this.inspect(handle, control);
     if (!next.running) throw new BrokerError("VERIFICATION_FAILED", "Container start did not read back as running");

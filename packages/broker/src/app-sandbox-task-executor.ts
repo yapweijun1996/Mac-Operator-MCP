@@ -396,7 +396,7 @@ export class NativeAppSandboxTaskExecutor implements AppSandboxTaskExecutor {
       throw new BrokerError("UNKNOWN_OUTCOME", `App Sandbox task outcome could not be established: ${detail}`, true);
     } finally {
       if (socket !== undefined && !socket.destroyed) socket.destroy();
-      networkChannel?.close();
+      await networkChannel?.close();
       networkBrokerSocket?.destroy();
       if (networkHelperDescriptor !== undefined) {
         try { loadNativePeerAdapter().closeUnixDescriptor(networkHelperDescriptor); } catch { /* best-effort cleanup */ }

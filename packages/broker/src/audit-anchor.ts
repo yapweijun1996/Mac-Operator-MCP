@@ -116,6 +116,9 @@ export class AuditAnchorManager {
       const existing = readAnchorIfPresent(this.options.path);
       if (existing !== undefined) {
         if (existing.keyId !== this.options.keySource.keyId) throw new Error("Audit anchor key identity changed");
+        if (!macEquals(existing.mac, anchorMac(this.key, existing.keyId, existing.sequence, existing.eventHash))) {
+          throw new Error("Audit anchor authentication failed");
+        }
         if (existing.sequence > sequence) return;
         if (existing.sequence === sequence && existing.eventHash === eventHash) return;
         if (existing.sequence === sequence) throw new Error("Audit anchor sequence was reused");
