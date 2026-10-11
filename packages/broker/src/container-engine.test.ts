@@ -220,7 +220,9 @@ test("Only an exact container GET 404 produces container absence evidence", asyn
 });
 
 test("Confirmed creation retains recovery identity before an inspection timeout and fences start", async () => {
-  const f = await fixture({ requestTimeoutMs: 25 });
+  // Only the delayed inspection route may time out. The deadline must leave room for the earlier info, image and
+  // create requests even when the whole suite runs in parallel; the delayed route never answers, so any value works.
+  const f = await fixture({ requestTimeoutMs: 400 });
   let confirmed: ContainerTaskHandle | undefined;
   try {
     f.delayRoute = `/v1.47/containers/${CONTAINER_ID}/json`;
