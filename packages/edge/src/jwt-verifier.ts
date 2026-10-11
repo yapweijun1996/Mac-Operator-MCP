@@ -16,8 +16,8 @@ import {
   type OAuthTokenVerifier
 } from "@modelcontextprotocol/server";
 import { SCOPES, type Scope } from "@mac-operator/contracts";
+import { isBrokerId } from "./identity.js";
 
-const ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,127}$/u;
 const DEFAULT_ALGORITHMS: readonly JWSAlgorithm[] = ["RS256", "ES256"];
 const DEFAULT_MAX_TOKEN_BYTES = 8 * 1024;
 const DEFAULT_MAX_TOKEN_AGE_SECONDS = 3_600;
@@ -138,7 +138,7 @@ function validateOptions(options: JwtAccessTokenVerifierOptions): ValidatedOptio
   if (!options || typeof options !== "object") throw new Error("JWT verifier options are required");
   validateHttpsUrl(options.issuer, "JWT issuer URL");
   validateHttpsUrl(options.resourceServerUrl, "JWT resource URL");
-  if (!ID_PATTERN.test(options.issuerId)) throw new Error("JWT issuer ID is malformed");
+  if (!isBrokerId(options.issuerId)) throw new Error("JWT issuer ID is malformed");
   if ((options.jwks === undefined) === (options.jwksUri === undefined)) {
     throw new Error("JWT verifier requires exactly one JWKS source");
   }
@@ -281,8 +281,11 @@ function readClaimId(value: unknown): string {
   return result;
 }
 
+/** An absent claim is optional, but a present one the Broker cannot carry rejects the token rather than being replaced by another identity. */
 function readOptionalClaimId(value: unknown): string | undefined {
-  return typeof value === "string" && ID_PATTERN.test(value) ? value : undefined;
+  if (value === undefined) return undefined;
+  if (!isBrokerId(value)) throw invalidToken();
+  return value;
 }
 
 function readNumericDate(value: unknown): number {

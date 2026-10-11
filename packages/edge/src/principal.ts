@@ -1,8 +1,8 @@
 import { SCOPES, type PrincipalContext, type Scope } from "@mac-operator/contracts";
 import type { AuthInfo } from "@modelcontextprotocol/server";
+import { isBrokerId } from "./identity.js";
 import { isPlainDataArray, isPlainDataRecord } from "./plain-record.js";
 
-const ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u;
 const KNOWN_SCOPES = new Set<string>(SCOPES);
 
 export function projectPrincipal(
@@ -41,7 +41,7 @@ export function projectPrincipal(
 
 function readId(extra: Record<string, unknown> | undefined, key: string): string {
   const value = extra?.[key];
-  if (typeof value !== "string" || !ID_PATTERN.test(value)) {
+  if (!isBrokerId(value)) {
     throw new Error(`Verified access token ${key} is missing or malformed`);
   }
   return value;

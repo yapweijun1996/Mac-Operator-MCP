@@ -71,6 +71,33 @@ test("JWT verifier fails closed for expiry, audience, missing token identity, an
   await assertInvalid(createJwtAccessTokenVerifier({ issuer, issuerId: "issuer-prod", resourceServerUrl, jwks }), noJti);
 });
 
+test("JWT verifier rejects identity claims the Broker contract cannot carry instead of failing later", async () => {
+  const { publicKey, privateKey } = await generateKeyPair("RS256");
+  const verifier = createJwtAccessTokenVerifier({ issuer, issuerId: "issuer-prod", resourceServerUrl, jwks: await createJwks(publicKey) });
+  const unsupported = [
+    { clientId: "client@example.test" },
+    { subject: "owner@example.test" },
+    { sessionId: "session/one" },
+    { tokenId: "token/one" },
+    { tokenId: "token@one" }
+  ];
+  for (const override of unsupported) {
+    await assertInvalid(verifier, await createToken(privateKey, override));
+  }
+  // The characters the Broker contract does allow keep working end to end.
+  const accepted = await verifier.verifyAccessToken(await createToken(privateKey,
+    { subject: "owner:a.b_c-d", sessionId: "s:1", clientId: "client:1", tokenId: "tok.1" }));
+  assert.equal(accepted.extra?.principalId, "owner:a.b_c-d");
+  assert.equal(accepted.extra?.sessionId, "s:1");
+  assert.equal(accepted.clientId, "client:1");
+});
+
+test("JWT verifier rejects an issuer ID the Broker contract cannot carry", () => {
+  for (const issuerId of ["issuer@prod", "issuer/prod", "-issuer", ""]) {
+    assert.throws(() => createJwtAccessTokenVerifier({ issuer, issuerId, resourceServerUrl, jwks: { keys: [] } }), /issuer ID is malformed/u);
+  }
+});
+
 test("JWT verifier bounds and caches a remote JWKS fetch", async () => {
   const { publicKey, privateKey } = await generateKeyPair("RS256");
   const jwks = await createJwks(publicKey);
@@ -288,18 +315,21 @@ async function createJwks(publicKey: CryptoKey, keyId = "key-1"): Promise<JSONWe
 
 async function createToken(
   privateKey: CryptoKey,
-  options: { audience?: string; expiresAt?: number; tokenId?: string | null; keyId?: string } = {}
+  options: {
+    audience?: string; expiresAt?: number; tokenId?: string | null; keyId?: string;
+    subject?: string; sessionId?: string; clientId?: string;
+  } = {}
 ): Promise<string> {
   const now = Math.floor(Date.now() / 1_000);
   const token = new SignJWT({
-    sid: "session-1",
-    azp: "client-1",
+    sid: options.sessionId ?? "session-1",
+    azp: options.clientId ?? "client-1",
     scope: "mac.control.read mac.app.control"
   })
     .setProtectedHeader({ alg: "RS256", kid: options.keyId ?? "key-1", typ: "at+jwt" })
     .setIssuer(issuer.href)
     .setAudience(options.audience ?? resourceServerUrl.href)
-    .setSubject("principal-1")
+    .setSubject(options.subject ?? "principal-1")
     .setIssuedAt(now - 5)
     .setExpirationTime(options.expiresAt ?? now + 300);
   if (options.tokenId !== null) token.setJti(options.tokenId ?? "token-1");
