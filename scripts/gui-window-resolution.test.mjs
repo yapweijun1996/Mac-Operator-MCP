@@ -5,7 +5,7 @@ import { execFileSync } from "node:child_process";
 import { join, resolve } from "node:path";
 
 let directory, executable;
-const options = { env: { PATH: "/usr/bin:/bin:/usr/sbin:/sbin" }, timeout: 30000, maxBuffer: 65536 };
+const options = { cwd: resolve("."), shell: false, env: { PATH: "/usr/bin:/bin:/usr/sbin:/sbin" }, timeout: 30000, maxBuffer: 65536 };
 before(async () => {
   if (process.platform !== "darwin") return;
   directory = await mkdtemp("/tmp/mop-window-tests-");
@@ -53,6 +53,29 @@ int main(int argc, const char *argv[]) { @autoreleasepool {
     assert(!browserNavigationAncestors(@[@"AXTextField",@"AXWebArea",@"AXToolbar",@"AXWindow"]));
     assert(!browserNavigationAncestors(@[@"AXTextField",@"AXToolbar",@"AXWebArea",@"AXWindow"]));
     assert(!browserNavigationAncestors(@[@"AXTextField",@"AXGroup",@"AXWindow"]));
+  } else if ([scenario isEqualToString:@"navigation-retry"]) {
+    __block NSUInteger calls = 0, waits = 0, checks = 0;
+    GuiWindowTarget *target = [GuiWindowTarget new];
+    assert(verifyNavigationReadback(^GuiWindowTarget *(NSString **failure) {
+      calls++;
+      if (calls < 3) { *failure = calls == 1 ? @"ax_enumeration_failed" : @"window_correlation_failed"; return nil; }
+      return target;
+    }, ^BOOL(GuiWindowTarget *current) { checks++; return current == target; }, ^{ waits++; }, &reason));
+    assert(calls == 3 && waits == 2 && checks == 1);
+    for (NSString *denial in @[@"accessibility_permission", @"stale_target", @"sensitive_window", @"window_ambiguous", @"window_not_found"]) {
+      calls = waits = checks = 0;
+      assert(!verifyNavigationReadback(^GuiWindowTarget *(NSString **failure) { calls++; *failure = denial; return nil; },
+        ^BOOL(GuiWindowTarget *current) { checks++; return YES; }, ^{ waits++; }, &reason));
+      assert(calls == 1 && waits == 0 && checks == 0 && [reason isEqualToString:denial]);
+    }
+    calls = waits = 0;
+    assert(!verifyNavigationReadback(^GuiWindowTarget *(NSString **failure) { calls++; *failure = @"ax_enumeration_failed"; return nil; },
+      ^BOOL(GuiWindowTarget *current) { return YES; }, ^{ waits++; }, &reason));
+    assert(calls == 30 && waits == 29 && [reason isEqualToString:@"navigation_unverified"]);
+    calls = waits = checks = 0;
+    assert(!verifyNavigationReadback(^GuiWindowTarget *(NSString **failure) { calls++; return target; },
+      ^BOOL(GuiWindowTarget *current) { checks++; return NO; }, ^{ waits++; }, &reason));
+    assert(calls == 30 && checks == 30 && waits == 29 && [reason isEqualToString:@"navigation_unverified"]);
   } else if ([scenario isEqualToString:@"navigation-readback"]) {
     assert(boundedNavigationInput(@"https://example.com/path",@[],YES));
     assert(!boundedNavigationInput(@"https://example.com/path",@[@"TAB",@"ENTER"],NO));
@@ -78,6 +101,7 @@ for (const [scenario, name] of [
   ["ambiguous", "native correlation fails closed for indistinguishable windows"],
   ["unavailable", "native correlation rejects stale, absent, hidden and wrong-process windows"],
   ["navigation", "native toolbar authority excludes web fields and webpage toolbar impersonation"],
+  ["navigation-retry", "native navigation retries transient discovery, bounds retries and rejects authority loss immediately"],
   ["navigation-readback", "native navigation verifies the exact toolbar address despite normal focus movement"]
 ]) test(name, { skip: process.platform !== "darwin" }, () => execFileSync(executable, [scenario], options));
 test("native node serialization returns strict booleans and masks secure labels", { skip: process.platform !== "darwin" }, () => {

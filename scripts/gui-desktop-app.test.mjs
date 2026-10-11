@@ -5,10 +5,11 @@ import { execFileSync } from "node:child_process";
 import { join, resolve } from "node:path";
 
 let directory, executable;
-const options = { env: { PATH: "/usr/bin:/bin:/usr/sbin:/sbin" }, timeout: 30000, maxBuffer: 65536 };
+const options = { cwd: resolve("."), shell: false, env: { PATH: "/usr/bin:/bin:/usr/sbin:/sbin" }, timeout: 30000, maxBuffer: 65536 };
 before(async () => {
   if (process.platform !== "darwin") return;
   directory = await mkdtemp("/tmp/mop-desktop-app-tests-");
+  options.env.TMPDIR = directory;
   executable = join(directory, "desktop-fixture");
   const source = join(directory, "fixture.m");
   await writeFile(source, `

@@ -10,7 +10,11 @@ import { setTimeout as delay } from "node:timers/promises";
 import { promisify } from "node:util";
 import { ownedDocumentCleanupAcknowledged } from "./gui-fixture-acknowledgment.mjs";
 
-const exec = promisify(execFile);
+const executeFile = promisify(execFile);
+const exec = (file, args, options = {}) => executeFile(file, args, {
+  cwd: directory ?? "/", env: { PATH: "/usr/bin:/bin:/usr/sbin:/sbin", ...(directory ? { TMPDIR: directory } : {}) }, shell: false,
+  timeout: 10_000, maxBuffer: 65_536, killSignal: "SIGKILL", ...options
+});
 const prepareOnly = process.argv.includes("--prepare-only");
 const enabled = process.env.MOPS_REAL_GUI === "1";
 const onlyChrome = process.env.MOPS_REAL_GUI_ONLY_CHROME === "1";
@@ -36,7 +40,7 @@ async function screenshotMarker(observed, diagnostics = false) {
   const input = Buffer.from(observed.screenshot.image_base64, "base64");
   assert(input.length > 0 && input.length <= 480_000, "OCR screenshot exceeds the bounded image budget");
   return new Promise((resolve, reject) => {
-    const child = spawn(screenshotUtility, diagnostics ? ["--diagnostics"] : [], { stdio: ["pipe", "pipe", "pipe"], env: { PATH: "/usr/bin:/bin" } });
+    const child = spawn(screenshotUtility, diagnostics ? ["--diagnostics"] : [], { cwd: directory, shell: false, timeout: 10_000, killSignal: "SIGKILL", stdio: ["pipe", "pipe", "pipe"], env: { PATH: "/usr/bin:/bin" } });
     let output = "", outputBytes = 0, settled = false;
     const finish = (error, value) => {
       if (settled) return;

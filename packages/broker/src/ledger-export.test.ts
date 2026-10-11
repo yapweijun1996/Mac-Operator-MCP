@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { randomBytes } from "node:crypto";
+import { createDecipheriv, randomBytes } from "node:crypto";
 import { lstat, mkdtemp, readFile, readdir, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -7,11 +7,24 @@ import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
 import { BrokerError, canonicalJson, sha256 } from "@mac-operator/contracts";
 import { BrokerStore, BROKER_SCHEMA_VERSION } from "./persistence.js";
+import type { BrokerJob, RequestRecord } from "./persistence.js";
+import { createLedgerArchive } from "./ledger-export.js";
 
 const archiveKey = {
   keyId: "ledger-export-test-1",
   loadKey: () => Buffer.from("0123456789abcdef0123456789abcdef", "ascii")
 };
+
+async function readArchivePayload(path: string): Promise<{ requests: RequestRecord[]; jobs: BrokerJob[] }> {
+  const encrypted = await readFile(path);
+  assert.equal(encrypted.subarray(0, 8).toString("ascii"), "MOPSLDG1");
+  const keyIdBytes = encrypted.readUInt16BE(9);
+  const headerBytes = 11 + keyIdBytes + 12;
+  const decipher = createDecipheriv("aes-256-gcm", archiveKey.loadKey(), encrypted.subarray(11 + keyIdBytes, headerBytes));
+  decipher.setAAD(encrypted.subarray(0, headerBytes));
+  decipher.setAuthTag(encrypted.subarray(encrypted.length - 16));
+  return JSON.parse(Buffer.concat([decipher.update(encrypted.subarray(headerBytes, encrypted.length - 16)), decipher.final()]).toString("utf8"));
+}
 
 test("BrokerStore exports terminal Request and Job history without deleting live records", async () => {
   const directory = await mkdtemp(join(tmpdir(), "mac-broker-ledger-export-"));
@@ -85,6 +98,108 @@ test("BrokerStore exports terminal Request and Job history without deleting live
     assert.equal(store.requestRecord("ledger-request-denied")?.state, "DENIED");
     assert.equal(store.ownedJob("job:ledger-terminal", "principal-1")?.state, "completed");
     assert.equal(store.ownedJob("job:ledger-active", "principal-1")?.state, "queued");
+  } finally {
+    store.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("encrypted Request archives preserve populated, null, and absent Edge key identities", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "mac-broker-ledger-request-key-"));
+  const store = new BrokerStore(join(directory, "broker.sqlite"));
+  try {
+    store.admitRequest({
+      requestId: "request-key-value",
+      edgeId: "edge-1",
+      edgeKeyId: "edge-1:key-1",
+      nonce: "request-key-nonce",
+      nonceExpiresAtMs: 10_000,
+      principalId: "principal-1",
+      sessionId: "session-1",
+      tool: "mac_health",
+      policyVersion: "policy-0.1",
+      payloadDigest: "a".repeat(64),
+      mutation: false,
+      receivedAtMs: 1
+    });
+    store.failRequest({
+      requestId: "request-key-value",
+      principalId: "principal-1",
+      tool: "mac_health",
+      eventType: "decision",
+      decision: "deny",
+      resultClass: "SCOPE_DENIED",
+      targetRef: "host:broker",
+      policyVersion: "policy-0.1",
+      evidence: { reason: "test" },
+      timestampMs: 2
+    });
+    const live = store.requestRecord("request-key-value")!;
+    const legacy: RequestRecord = { ...live, requestId: "request-key-absent" };
+    delete legacy.edgeKeyId;
+    const requests = [legacy, { ...live, requestId: "request-key-null", edgeKeyId: null }, live];
+    const manifest = await createLedgerArchive(requests, [], directory, { keySource: archiveKey, nowMs: 1_700_000_000_105 });
+    const archived = await readArchivePayload(manifest.path);
+    assert.deepEqual(archived.requests, requests);
+    assert.equal(Object.hasOwn(archived.requests[0]!, "edgeKeyId"), false);
+    assert.equal(archived.requests[1]!.edgeKeyId, null);
+    assert.equal(archived.requests[2]!.edgeKeyId, "edge-1:key-1");
+    assert.equal(manifest.snapshotDigest, sha256(canonicalJson({ requests, jobs: [] })));
+    assert.deepEqual(await BrokerStore.inspectLedgerArchive(manifest.path, archiveKey), manifest);
+
+    const liveManifest = await store.exportLedgerArchive(directory, { keySource: archiveKey, nowMs: 1_700_000_000_106 });
+    assert.equal(liveManifest.snapshotDigest, sha256(canonicalJson({ requests: [live], jobs: [] })));
+  } finally {
+    store.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("Job archives accept full-length Edge key components and reject mismatched identities", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "mac-broker-ledger-job-key-"));
+  const store = new BrokerStore(join(directory, "broker.sqlite"));
+  const edgeId = `edge-${"a".repeat(123)}`;
+  const keyId = `key-${"b".repeat(124)}`;
+  try {
+    store.createJob({
+      jobId: "job:ledger-long-key",
+      edgeId,
+      edgeKeyId: `${edgeId}:${keyId}`,
+      ownerPrincipalId: "principal-1",
+      ownerSessionId: "session-1",
+      tool: "mac_task_run",
+      targetRef: "task:test",
+      policyVersion: "policy-0.1",
+      payloadDigest: "a".repeat(64),
+      idempotencyKey: "ledger-long-key",
+      createdAtMs: 1
+    });
+    store.startJob("job:ledger-long-key", "principal-1", 0, 2);
+    const job = store.finishJob("job:ledger-long-key", "principal-1", 1, {
+      state: "completed",
+      resultClass: "success",
+      finishedAtMs: 3,
+      exitCode: 0
+    });
+    assert.equal(job.ownerEdgeKeyId?.length, 257);
+    const manifest = await store.exportLedgerArchive(directory, { keySource: archiveKey, nowMs: 1_700_000_000_107 });
+    assert.deepEqual((await readArchivePayload(manifest.path)).jobs, [job]);
+    assert.equal(manifest.snapshotDigest, sha256(canonicalJson({ requests: [], jobs: [job] })));
+    assert.deepEqual(await BrokerStore.inspectLedgerArchive(manifest.path, archiveKey), manifest);
+
+    const invalidIdentities = [
+      { ownerEdgeId: edgeId, ownerEdgeKeyId: `other-edge:${keyId}` },
+      { ownerEdgeId: null, ownerEdgeKeyId: `${edgeId}:${keyId}` },
+      { ownerEdgeId: edgeId, ownerEdgeKeyId: `${edgeId}:${keyId}x` },
+      { ownerEdgeId: edgeId, ownerEdgeKeyId: `${edgeId}:` },
+      { ownerEdgeId: `${edgeId}x`, ownerEdgeKeyId: `${edgeId}x:${keyId}` }
+    ];
+    for (const identity of invalidIdentities) {
+      await assert.rejects(
+        createLedgerArchive([], [{ ...job, ...identity }], directory, { keySource: archiveKey }),
+        (error: unknown) => error instanceof BrokerError && error.errorClass === "AUDIT_UNAVAILABLE"
+      );
+    }
   } finally {
     store.close();
     await rm(directory, { recursive: true, force: true });

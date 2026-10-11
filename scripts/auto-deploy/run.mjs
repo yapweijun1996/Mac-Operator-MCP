@@ -9,9 +9,10 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { preflightState } from "./preflight.mjs";
+import { cutoverRelease } from "./cutover.mjs";
 import { setTimeout as delay } from "node:timers/promises";
 import {
-  classifyRelation, decideAction, isHealthy, parseFailedTestFiles, parsePm2Service, patchEdgeConfig, releaseName, selectPrunable
+  classifyRelation, decideAction, isHealthy, parseFailedTestFiles, parsePm2Service, releaseName, selectPrunable
 } from "./lib.mjs";
 
 const HOME = homedir();
@@ -39,10 +40,10 @@ const log = (event, detail = {}) => {
 };
 const notify = (title, message) => {
   log("notify", { title, message });
-  spawnSync("/usr/bin/osascript", ["-e", `display notification ${JSON.stringify(message)} with title ${JSON.stringify(title)}`], { env, timeout: 10_000 });
+  spawnSync("/usr/bin/osascript", ["-e", `display notification ${JSON.stringify(message)} with title ${JSON.stringify(title)}`], { cwd: HOME, env, shell: false, timeout: 10_000, maxBuffer: 65_536 });
 };
 const run = (file, args, options = {}) => {
-  const result = spawnSync(file, args, { env, encoding: "utf8", maxBuffer: 64 * 1024 * 1024, ...options });
+  const result = spawnSync(file, args, { cwd: HOME, env, shell: false, timeout: 60_000, encoding: "utf8", maxBuffer: 64 * 1024 * 1024, ...options });
   return { ok: result.status === 0, status: result.status, stdout: result.stdout ?? "", stderr: result.stderr ?? "" };
 };
 const git = (args, cwd = CHECKOUT) => run("/usr/bin/git", args, { cwd, timeout: 600_000 });
@@ -133,8 +134,19 @@ function copyTree(from, to) {
   if (!copied.ok) throw new Error(`state copy failed: ${copied.stderr.trim().slice(0, 200)}`);
 }
 
+function stopService() {
+  if (run("pm2", ["stop", SERVICE], { timeout: 60_000 }).ok) return true;
+  const listed = run("pm2", ["jlist"], { timeout: 30_000 });
+  if (!listed.ok) return false;
+  const live = parsePm2Service(listed.stdout.slice(listed.stdout.indexOf("[")), SERVICE);
+  return live === undefined || live.status === "stopped";
+}
+
 function startService(release, stateRoot, execPath) {
-  run("pm2", ["delete", SERVICE], { timeout: 30_000 });
+  if (!run("pm2", ["delete", SERVICE], { timeout: 30_000 }).ok) {
+    const listed = run("pm2", ["jlist"], { timeout: 30_000 });
+    if (!listed.ok || parsePm2Service(listed.stdout.slice(listed.stdout.indexOf("[")), SERVICE) !== undefined) return false;
+  }
   return run("pm2", ["start", execPath, "--name", SERVICE, ...PM2_FLAGS, "--cwd", release, "--", `${release}/packages/auth/dist/personal-service.js`, "start", stateRoot],
     { cwd: release, timeout: 60_000 }).ok;
 }
@@ -160,25 +172,18 @@ async function healthy(edge) {
 async function cutover({ target, short, release, stateRoot, edgePath, previous }) {
   const stamp = new Date().toISOString().replace(/[-:]/gu, "").slice(0, 15);
   const backup = join(MAC_ROOT, "backups", `auto-${stamp}-${short}`);
-  const execPath = service()?.execPath ?? "/opt/homebrew/bin/node";
-  run("pm2", ["stop", SERVICE], { timeout: 60_000 });
-  await delay(4_000);
-  mkdirSync(backup, { recursive: true, mode: 0o700 });
-  copyTree(stateRoot, join(backup, "state"));
-  const priorEdge = JSON.parse(readFileSync(edgePath, "utf8"));
-  const patched = patchEdgeConfig(priorEdge, { packageRoot: release, sourceRevision: target });
-  writeFileSync(`${edgePath}.tmp`, `${JSON.stringify(patched, null, 2)}\n`, { mode: 0o600 });
-  renameSync(`${edgePath}.tmp`, edgePath);
-  const ok = startService(release, stateRoot, execPath) && await healthy(patched);
-  if (ok) { run("pm2", ["save"], { timeout: 30_000 }); return { ok: true, backup }; }
-  log("rollback-start", { backup });
-  run("pm2", ["delete", SERVICE], { timeout: 30_000 });
   const failedState = join(MAC_ROOT, "backups", `auto-failed-${stamp}-${short}`);
-  renameSync(stateRoot, failedState);
-  copyTree(join(backup, "state"), stateRoot);
-  const restored = startService(previous, stateRoot, execPath) && await healthy(priorEdge);
-  if (restored) run("pm2", ["save"], { timeout: 30_000 });
-  return { ok: false, restored, backup, failedState };
+  const execPath = service()?.execPath ?? "/opt/homebrew/bin/node";
+  mkdirSync(join(MAC_ROOT, "backups"), { recursive: true, mode: 0o700 });
+  return cutoverRelease({ target, release, stateRoot, edgePath, previous, backup, failedState }, {
+    stop: stopService,
+    settle: () => delay(4_000),
+    copyTree,
+    start: (packageRoot) => startService(packageRoot, stateRoot, execPath),
+    healthy,
+    save: () => run("pm2", ["save"], { timeout: 30_000 }).ok,
+    log
+  });
 }
 
 function prune(keepPaths) {
@@ -236,7 +241,8 @@ async function once({ dryRun }) {
       notify("Auto-deploy succeeded", `${short} is live${built.flaky.length > 0 ? ` (flaky tests passed alone: ${built.flaky.length})` : ""}`);
     } else {
       writeState({ ...state, failed: target });
-      notify("Auto-deploy ROLLED BACK", `${short} was unhealthy; previous release ${outcome.restored ? "restored" : "COULD NOT BE RESTORED - check pm2"}`);
+      log("cutover-failed", { target, error: outcome.error, recoveryError: outcome.recoveryError, restored: outcome.restored });
+      notify("Auto-deploy failed", `${short}: previous release ${outcome.restored ? "restored" : "COULD NOT BE RESTORED - check pm2"}`);
     }
   } finally { rmSync(LOCK_DIR, { recursive: true, force: true }); }
 }
@@ -245,7 +251,7 @@ function install() {
   mkdirSync(LOGS, { recursive: true, mode: 0o700 });
   ensureCheckout();
   const script = join(CHECKOUT, "scripts/auto-deploy/run.mjs");
-  const node = execFileSync("which", ["node"], { env, encoding: "utf8" }).trim();
+  const node = execFileSync("which", ["node"], { cwd: HOME, env, shell: false, timeout: 10_000, maxBuffer: 65_536, encoding: "utf8" }).trim();
   const plist = `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">

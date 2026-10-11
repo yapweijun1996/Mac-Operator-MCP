@@ -28,7 +28,15 @@ const ALLOWED_SCRIPT_FILES = new Set([
   "scripts/record-host-readiness.mjs",
   "scripts/privileged-helper-handoff.test.mjs",
   "scripts/gui-hit-testing.test.mjs",
-  "scripts/gui-transport.test.mjs"
+  "scripts/gui-transport.test.mjs",
+  "scripts/auto-deploy/preflight.mjs",
+  "scripts/auto-deploy/run.mjs",
+  "scripts/deployment-recovery.test.mjs",
+  "scripts/gui-desktop-app.test.mjs",
+  "scripts/gui-focus-regression.test.mjs",
+  "scripts/gui-window-resolution.test.mjs",
+  "scripts/probe-gui-ax-metadata.mjs",
+  "scripts/probe-gui-observation-reliability.mjs"
 ]);
 const CHILD_PROCESS_IMPORT = /from\s+["']node:child_process["']/u;
 const CHILD_PROCESS_CALL = /\b(?:spawn|spawnSync|execFile|execFileSync|fork)\s*\(/u;
@@ -46,6 +54,14 @@ const PRODUCTION_BOUNDARY_REQUIREMENTS = new Map([
   ]]
 ]);
 const SCRIPT_BOUNDARY_REQUIREMENTS = new Map([
+  ["scripts/auto-deploy/preflight.mjs", [/\bcwd\s*:/u, /\benv\s*:/u, /\bmaxBuffer\s*:/u, /\btimeout\s*:/u, /killSignal/u]],
+  ["scripts/auto-deploy/run.mjs", [/\bcwd\s*:/u, /\benv\s*(?::|,)/u, /\bmaxBuffer\s*:/u, /\btimeout\s*:/u]],
+  ["scripts/deployment-recovery.test.mjs", [/\bcwd\s*:/u, /\benv\s*:/u, /\bmaxBuffer\s*:/u, /\btimeout\s*:/u]],
+  ["scripts/gui-desktop-app.test.mjs", [/\bcwd\s*:/u, /\benv\s*:/u, /\bmaxBuffer\s*:/u, /\btimeout\s*:/u]],
+  ["scripts/gui-focus-regression.test.mjs", [/\bcwd\s*:/u, /\benv\s*:/u, /\bmaxBuffer\s*:/u, /\btimeout\s*:/u]],
+  ["scripts/gui-window-resolution.test.mjs", [/\bcwd\s*:/u, /\benv\s*:/u, /\bmaxBuffer\s*:/u, /\btimeout\s*:/u]],
+  ["scripts/probe-gui-ax-metadata.mjs", [/\bcwd\s*:/u, /\benv\s*:/u, /\bmaxBuffer\s*:/u, /\btimeout\s*:/u]],
+  ["scripts/probe-gui-observation-reliability.mjs", [/\bcwd\s*:/u, /\benv\s*:/u, /\bmaxBuffer\s*:/u, /\btimeout\s*:/u, /outputBytes/u, /\.kill\(/u]],
   ["scripts/check-completion-audit.mjs", [/\bcwd\s*:/u, /\benv\s*:/u, /\bmaxBuffer\s*:/u, /\btimeout\s*:/u]],
   ["scripts/check-style.mjs", [/\bcwd\s*:/u, /\benv\s*:/u, /\bmaxBuffer\s*:/u, /\btimeout\s*:/u]],
   ["scripts/probe-app-sandbox-boundary.mjs", [/\bcwd\s*:/u, /\benv\s*:/u, /MAX_CHILD_OUTPUT_BYTES/u, /CHILD_TIMEOUT_MS/u, /\.kill\(/u]],

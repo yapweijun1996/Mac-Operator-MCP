@@ -28,12 +28,17 @@ Mac; keep push access to `main` limited to the owner.
 5. Create an immutable release `releases/personal-YYYYMMDD-<short>`.
 6. Defer to the next poll while any Job is queued or running.
 7. Stop the service, copy the complete protected state to
-   `backups/auto-<timestamp>-<short>`, rebind only `packageRoot`,
+   `backups/auto-<timestamp>-<short>/state.partial`, publish it as `state` only
+   after copying succeeds, rebind only `packageRoot`,
    `contractsDirectory` and `sourceRevision`, start the new release and require
    an online process with zero restarts plus `401` from `/mcp` (and
    `/terminal/mcp` when enabled).
-8. Unhealthy: stop, restore the full state backup, restart the previous release
-   and notify `ROLLED BACK`. Healthy: `pm2 save`, prune old auto releases and
+8. A failed cutover, including a thrown copy, configuration or startup error,
+   attempts to restart the previous release. Before live state changes, the
+   intact state stays in place. After changes, recovery requires a confirmed
+   service stop and a completed backup; it stages the restore copy before moving
+   live state. Failed recovery preserves the available state and reports an
+   explicit failure. Healthy: `pm2 save`, prune old auto releases and
    backups (the newest five are kept, plus the live and previous releases;
    hand-named releases are never pruned), notify.
 
@@ -63,7 +68,14 @@ Notification Center.
 
 ## Manual rollback
 
-Use the `backups/auto-*` directory named in the notification: stop the service,
+Use the `backups/auto-*` directory recorded in the deployment log: stop the service,
 restore its `state` directory over the protected state root, restore the previous
 `packageRoot` in `personal/edge-service.json` if needed and start that release,
 as in [personal deployment](personal-deployment.md).
+
+The manual `.zsh` cutover scripts source `deployment-state.zsh` and
+`deployment-service.zsh` from their own directory; keep those helpers with the
+scripts. An incomplete `state.partial` directory is never a rollback source.
+Release scripts check health after both starts: zero restarts after the initial
+start and exactly one after the explicit final restart. An additional automatic
+restart fails the deployment before it is saved or reported as successful.

@@ -36,6 +36,7 @@ function controlledSupervisor() {
     run(value: ProcessExecutionRequest) { request = value; return new Promise<ProcessExecutionResult>((yes, no) => { resolve = yes; reject = no; }); },
     async close() { resolve({ ...completed, state: "cancelled", resultClass: "CANCELLED" }); }
   }, ready() { request!.onStdinReady!({ write: () => true, end: () => undefined }); }, finish(result = completed) { resolve(result); },
+  output(value: Buffer) { request!.onOutputChunk!(value); },
   fail(error: unknown) { reject(error); }, get started() { return request !== undefined; } };
 }
 
@@ -137,6 +138,55 @@ test("session manager stays disabled without opt-in", async () => {
   } finally { await manager.close(); }
 });
 
+test("session output is sanitized before paging, including chunks split across reads", { skip: !supported }, async () => {
+  const controlled = controlledSupervisor();
+  const manager = new OwnerTerminalSessionManager({ enabled: true, supervisor: controlled.supervisor });
+  try {
+    const start = manager.start("owner", { ...base, cwd: "/tmp" });
+    await waitFor(() => controlled.started);
+    controlled.ready();
+    const { sessionId } = await start;
+    const secret = "ghp_" + "A".repeat(32);
+    let cursor = 0;
+    let output = "";
+    const readPages = () => {
+      for (;;) {
+        const page = manager.read("owner", sessionId, cursor, 1);
+        if (page.nextCursor === cursor) break;
+        assert.equal(Buffer.byteLength(page.data), 1);
+        cursor = page.nextCursor;
+        output += page.data;
+      }
+    };
+    for (const byte of Buffer.from(`ready % ${secret}\ndone % `)) {
+      controlled.output(Buffer.from([byte]));
+      readPages();
+    }
+    assert.equal(output, "ready % [REDACTED]\ndone % ");
+    assert.equal(manager.read("owner", sessionId, 0).data, output);
+    // Arbitrary cursor slices contain only the already-sanitized bytes.
+    for (let offset = 0; offset < cursor; offset++) assert.equal(manager.read("owner", sessionId, offset, 1).data, output[offset]);
+  } finally { await manager.close(); }
+});
+
+test("session small reads reject incomplete UTF-8 pages and invalid character cursors", { skip: !supported }, async () => {
+  const controlled = controlledSupervisor();
+  const manager = new OwnerTerminalSessionManager({ enabled: true, supervisor: controlled.supervisor });
+  try {
+    const start = manager.start("owner", { ...base, cwd: "/tmp" });
+    await waitFor(() => controlled.started);
+    controlled.ready();
+    const { sessionId } = await start;
+    for (const byte of Buffer.from("\u754c\n")) controlled.output(Buffer.from([byte]));
+    for (const maxBytes of [1, 2]) assert.throws(() => manager.read("owner", sessionId, 0, maxBytes), /cannot fit/u);
+    const page = manager.read("owner", sessionId, 0, 3);
+    assert.equal(page.data, "\u754c");
+    assert.equal(page.nextCursor, 3);
+    assert.equal(manager.read("owner", sessionId, page.nextCursor, 1).data, "\n");
+    for (const cursor of [1, 2]) assert.throws(() => manager.read("owner", sessionId, cursor), /character boundary/u);
+  } finally { await manager.close(); }
+});
+
 test("interactive PTY session accepts stdin, reads by cursor and ends on exit", { skip: !supported }, async () => {
   const root = await realpath(await mkdtemp("/tmp/owner-session-test-"));
   const manager = new OwnerTerminalSessionManager({ enabled: true });
@@ -214,7 +264,7 @@ test("output ring reports dropped bytes and capacity is enforced", { skip: !supp
   try {
     const { sessionId } = await manager.start("owner", { ...base, cwd: "/tmp" });
     await assert.rejects(manager.start("owner", { ...base, cwd: "/tmp" }), /capacity/u);
-    manager.write("owner", sessionId, "head -c 600000 /dev/zero | tr '\\0' 'a'; echo; echo DONE_MARK\n");
+    manager.write("owner", sessionId, "head -c 600000 /dev/zero | tr '\\0' '\\n'; echo DONE_MARK\n");
     // Do not read until the output has overflowed the ring.
     await delay(3_000);
     const first = manager.read("owner", sessionId, 0);

@@ -199,7 +199,7 @@ int main(int argc, const char *argv[]) { @autoreleasepool {
   if (output == nil) return 1; fwrite(output.bytes, 1, output.length, stdout); fputc('\n', stdout); return 0;
 }}
 `);
-    const options = { timeout: 30_000, maxBuffer: 65_536, env: { PATH: "/usr/bin:/bin:/usr/sbin:/sbin", TMPDIR: directory } };
+    const options = { cwd: directory, shell: false, timeout: 30_000, maxBuffer: 65_536, env: { PATH: "/usr/bin:/bin:/usr/sbin:/sbin", TMPDIR: directory } };
     execFileSync("/usr/bin/clang", ["-fobjc-arc", "-fblocks", "-Wno-deprecated-declarations", "-framework", "AppKit", "-framework", "ApplicationServices", source, "-o", executable], options);
     const args = process.argv.slice(2);
     if (args.length > 1 || (args.length === 1 && args[0] !== "--metadata-only")) throw new Error("Only --metadata-only is supported");

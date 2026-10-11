@@ -1,5 +1,20 @@
 # Mac-Operator-MCP Progress
 
+## Codebase bug remediation: DONE locally — 2026-10-11
+
+All 14 findings in `CODEBASE_BUG_REVIEW.md` are fixed and regression-verified.
+Current-source full suite: **2,140 PASS, 0 FAIL, 19 SKIP** across 240 test files.
+Build/native fault build, typecheck, lint, documentation/matrix/process-boundary
+checks, 58 contracts and five native canonical vectors pass. Independent
+terminal/native and deployment review accepted the final changes; 5,656
+synthetic terminal boundary cases also passed. Complete repair details,
+compatibility trade-offs and excluded checks: [bug report](CODEBASE_BUG_REVIEW.md).
+No production deployment, state change, commit or push was performed. Two
+obsolete ignored compiled tests remain excluded from the current-source suite;
+real browser/service acceptance and the 19 skips remain outside this claim.
+External npm advisory and KB transfer operations were not performed after
+automatic approval review rejected the outbound disclosures.
+
 ## Current Mac mini deployment: DONE — 2026-10-05
 
 Latest GitHub main `5fbc317` is installed as `personal-20261005-5fbc317`.

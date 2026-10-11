@@ -3,7 +3,8 @@ import { lstat, realpath } from "node:fs/promises";
 import { homedir } from "node:os";
 import { isAbsolute } from "node:path";
 import { BrokerError } from "@mac-operator/contracts";
-import { assertContentDoesNotContainSecrets, redactBoundedText } from "./secret-policy.js";
+import { assertContentDoesNotContainSecrets } from "./secret-policy.js";
+import { TerminalOutputRedactor } from "./terminal-output-redactor.js";
 import { ProcessSupervisor, type ProcessExecutionResult, type ProcessOwnershipSnapshot, type ProcessStdinSink } from "./process-supervisor.js";
 
 const MAX_WRITE_BYTES = 4_096;
@@ -178,6 +179,7 @@ interface Session {
   tag: string;
   sink?: ProcessStdinSink | undefined;
   chunks: Buffer[];
+  redactor: TerminalOutputRedactor;
   baseOffset: number;
   endOffset: number;
   lastActivityMs: number;
@@ -243,7 +245,7 @@ export class OwnerTerminalSessionManager {
     if ([...this.sessions.values()].filter(session => session.result === undefined).length >= this.maxSessions) {
       throw new BrokerError("CONFLICT", "Terminal session capacity is exhausted", true);
     }
-    const session: Session = { id: `tsess_${randomBytes(12).toString("hex")}`, ownerId, tag: request.tag ?? "", chunks: [], baseOffset: 0, endOffset: 0,
+    const session: Session = { id: `tsess_${randomBytes(12).toString("hex")}`, ownerId, tag: request.tag ?? "", chunks: [], redactor: new TerminalOutputRedactor(), baseOffset: 0, endOffset: 0,
       lastActivityMs: this.now(), idleTimeoutMs: request.idleTimeoutMs, stopRequested: false, inputEnded: false };
     this.sessions.set(session.id, session);
     let markReady!: () => void;
@@ -257,7 +259,7 @@ export class OwnerTerminalSessionManager {
       environment: { HOME: home, LANG: "en_US.UTF-8", LC_ALL: "en_US.UTF-8", TERM: "xterm-256color" },
       timeoutMs: request.lifetimeMs, outputCapBytes: 1,
       keepStdinOpen: true, streamOutput: true,
-      onOutputChunk: chunk => this.append(session, chunk),
+      onOutputChunk: chunk => this.append(session, Buffer.from(session.redactor.push(chunk), "utf8")),
       onStdinReady: sink => { session.sink = sink; inputReady = true; markReady(); },
       shouldCancel: () => {
         if (request.shouldCancel() || session.stopRequested) return true;
@@ -324,17 +326,20 @@ export class OwnerTerminalSessionManager {
     const dropped = from - cursor;
     const all = Buffer.concat(session.chunks);
     let slice = all.subarray(from - session.baseOffset);
+    if (slice.byteLength > 0 && (slice[0]! & 0xc0) === 0x80) {
+      throw new BrokerError("PRECONDITION_FAILED", "Terminal read cursor is not a UTF-8 character boundary");
+    }
     let truncated = false;
     if (slice.byteLength > maxBytes) {
       let end = maxBytes;
       // Do not split a UTF-8 sequence.
       while (end > 0 && (slice[end]! & 0xc0) === 0x80) end -= 1;
+      if (end === 0) throw new BrokerError("PRECONDITION_FAILED", "Terminal read size cannot fit the next UTF-8 character");
       slice = slice.subarray(0, end);
       truncated = true;
     }
-    const redacted = redactBoundedText(slice.toString("utf8"), MAX_READ_BYTES * 2);
-    const base = { data: redacted.text, nextCursor: from + slice.byteLength, droppedBytes: dropped,
-      truncated: truncated || redacted.truncated, finished: session.result !== undefined };
+    const base = { data: slice.toString("utf8"), nextCursor: from + slice.byteLength, droppedBytes: dropped,
+      truncated, finished: session.result !== undefined };
     return session.result === undefined ? base : { ...base, state: session.result.state, exitCode: session.result.exitCode };
   }
 
@@ -382,6 +387,15 @@ export class OwnerTerminalSessionManager {
   }
 
   private append(session: Session, chunk: Buffer): void {
+    if (chunk.length === 0) return;
+    if (chunk.byteLength > RING_BYTES) {
+      let start = chunk.byteLength - RING_BYTES;
+      while (start < chunk.byteLength && (chunk[start]! & 0xc0) === 0x80) start += 1;
+      session.baseOffset = session.endOffset + start;
+      session.endOffset += chunk.byteLength;
+      session.chunks = [chunk.subarray(start)];
+      return;
+    }
     session.chunks.push(chunk);
     session.endOffset += chunk.byteLength;
     let retained = session.endOffset - session.baseOffset;
@@ -393,6 +407,7 @@ export class OwnerTerminalSessionManager {
   }
 
   private async finish(session: Session, result: ProcessExecutionResult, request: OwnerTerminalSessionStart): Promise<void> {
+    this.append(session, Buffer.from(session.redactor.finish(), "utf8"));
     session.sink = undefined;
     session.inputEnded = true;
     // The caller owns the authoritative ledger commit. Do not publish finished

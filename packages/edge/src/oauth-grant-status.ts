@@ -48,14 +48,12 @@ export function createOAuthGrantStatusReader(options: { url: URL; key: Buffer; f
   };
 }
 
-/** Check current issuer authority for every token use; outages never permit access. */
+/** Check current issuer authority; an unavailable status rejects this request without confirming revocation. */
 export function createOAuthGrantRevocationCheck(options: { url: URL; key: Buffer; fetch?: typeof fetch }) {
   const readStatus = createOAuthGrantStatusReader(options);
   return async (context: JwtRevocationContext): Promise<boolean> => {
-    try {
-      const status = await readStatus(context);
-      return isOAuthGrantRevoked(context, status);
-    } catch { return true; }
+    const status = await readStatus(context);
+    return isOAuthGrantRevoked(context, status);
   };
 }
 

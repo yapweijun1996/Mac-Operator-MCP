@@ -228,6 +228,24 @@ test("discovery, host checks, redirect allowlist and S256 scope/resource boundar
   assert.equal((await f.request("/token", { grant_type: "password", username: "owner", password })).status, 400);
 });
 
+test("registration at capacity preserves an already authenticated consent flow", async t => {
+  const f = await fixture(t);
+  const clientId = await f.register();
+  const session = await f.login(clientId);
+  f.store().transaction(() => {
+    for (let index = 0; index < 999; index++) {
+      const id = `unused-client-${index}`;
+      f.store().put("client", id, { id, name: "Unused client", redirectUris: [redirectUri], expiresAt: Number.MAX_SAFE_INTEGER });
+    }
+  });
+  await f.register();
+  const consent = await f.request("/oauth/consent", { csrf: session.csrf, decision: "allow" }, session.cookie, { origin: new URL(issuer).origin });
+  assert.equal(consent.status, 303);
+  const code = new URL(consent.headers.get("location")!).searchParams.get("code");
+  assert.ok(code);
+  assert.equal((await f.exchange(clientId, code)).status, 200);
+});
+
 test("native loopback callbacks require a canonical explicit port and preserve HTTPS issuer/resource", async t => {
   const callback = "http://127.0.0.1:61989/callback";
   const f = await fixture(t, undefined, "r1", undefined, false, callback);
@@ -1107,11 +1125,12 @@ test("grant status authentication, endpoint failure and malformed responses fail
   const f = await fixture(t); const tokens = await f.issue();
   assert.equal((await f.request("/oauth/status", { sessionId: String(decodeJwt(tokens.access_token).sid), subject: "owner-1" })).status, 401);
   const context = { issuerId: "mac-operator-auth", subject: "owner-1", sessionId: "1".repeat(64), tokenId: "token-1", expiresAt: 9999999999, scopes: ["mac.control.read"] };
-  for (const body of [{ active: true }, { active: false, scopes: ["mac.control.read"] }, { active: true, scopes: [] }]) {
+  for (const body of [{ active: false, scopes: ["mac.control.read"] }, { active: true, scopes: [] }]) {
     const check = createOAuthGrantRevocationCheck({ url: new URL("/oauth/status", issuer), key: randomBytes(32), fetch: async () => Response.json(body) });
     assert.equal(await check(context), true);
   }
-  assert.equal(await createOAuthGrantRevocationCheck({ url: new URL("/oauth/status", issuer), key: randomBytes(32), fetch: async () => { throw new Error("offline"); } })(context), true);
+  await assert.rejects(createOAuthGrantRevocationCheck({ url: new URL("/oauth/status", issuer), key: randomBytes(32), fetch: async () => Response.json({ active: true }) })(context), /malformed/u);
+  await assert.rejects(createOAuthGrantRevocationCheck({ url: new URL("/oauth/status", issuer), key: randomBytes(32), fetch: async () => { throw new Error("offline"); } })(context), /offline/u);
 });
 
 test("concurrent refresh exchanges revoke the family and never extend absolute expiry", async t => {

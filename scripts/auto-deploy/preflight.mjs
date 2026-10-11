@@ -44,7 +44,8 @@ function attempt({ packageRoot, stateRoot, nodePath }) {
   try {
     const data = copyState(stateRoot, scratch);
     const probe = spawnSync(nodePath, ["--input-type=module", "-e", PROBE, packageRoot, data],
-      { encoding: "utf8", timeout: 120_000, env: { ...process.env, NODE_NO_WARNINGS: "1" } });
+      { cwd: packageRoot, shell: false, encoding: "utf8", timeout: 120_000, killSignal: "SIGKILL", maxBuffer: 65_536,
+        env: { PATH: "/usr/bin:/bin:/usr/sbin:/sbin", NODE_NO_WARNINGS: "1" } });
     if (probe.status === 0) return { ok: true };
     return { ok: false, why: (probe.stdout || probe.stderr || `probe exited ${probe.status}`).trim().slice(0, 300) };
   } catch (error) {

@@ -245,6 +245,24 @@ static BOOL elementEnabled(AXUIElementRef element) {
 
 #import "gui_window.h"
 
+/** Retry discovery only while the original window authority remains valid. */
+static BOOL verifyNavigationReadback(GuiWindowTarget *(^resolve)(NSString **),
+                                    BOOL (^verify)(GuiWindowTarget *), void (^wait)(void), NSString **reason) {
+  for (NSUInteger attempt = 0; attempt < 30; attempt++) {
+    NSString *failure = nil;
+    GuiWindowTarget *current = resolve(&failure);
+    if (current == nil) {
+      if (![failure isEqualToString:@"ax_enumeration_failed"] && ![failure isEqualToString:@"window_correlation_failed"]) {
+        *reason = failure ?: @"navigation_unverified";
+        return NO;
+      }
+    } else if (verify(current)) return YES;
+    if (attempt < 29) wait();
+  }
+  *reason = @"navigation_unverified";
+  return NO;
+}
+
 static NSString *approvedElementAncestryBlockReason(GuiWindowTarget *target, AXUIElementRef element) {
   if (element == NULL) return @"secure_target";
   AXUIElementRef cursor = (AXUIElementRef)CFRetain(element);
@@ -501,15 +519,13 @@ static int typeIntoFocused(GuiWindowTarget *target, const char *expectedRole, co
   }
   // Keep the event sender alive while WindowServer delivers the queued input.
   usleep(250000);
-  AXUIElementRef after = NULL;
   BOOL focusConfirmed = NO;
-  NSString *postRole = nil;
+  __block NSString *postRole = nil;
   if (navigation) {
-    focusConfirmed = NO;
-    for (NSUInteger attempt = 0; attempt < 30; attempt++) {
-      GuiWindowTarget *current = resolveGuiWindow(bundleId, @"", NO, target.identity, &reason);
-      if (current == nil) return fail(reason);
-      after = focusedElement(pid);
+    focusConfirmed = verifyNavigationReadback(^GuiWindowTarget *(NSString **failure) {
+      return resolveGuiWindow(bundleId, @"", NO, target.identity, failure);
+    }, ^BOOL(GuiWindowTarget *current) {
+      AXUIElementRef after = focusedElement(pid);
       CFTypeRef ownerWindow = NULL;
       if (after != NULL) AXUIElementCopyAttributeValue(after, kAXWindowAttribute, &ownerWindow);
       BOOL owned = ownerWindow != NULL && CFEqual(ownerWindow, (__bridge CFTypeRef)current.axWindow);
@@ -519,10 +535,11 @@ static int typeIntoFocused(GuiWindowTarget *target, const char *expectedRole, co
       if (verified) postRole = attributeText(after, kAXRoleAttribute);
       if (ownerWindow != NULL) CFRelease(ownerWindow);
       if (after != NULL) CFRelease(after);
-      if (verified && postRole.length > 0 && postRole.length <= 128) { focusConfirmed = YES; break; }
+      return verified && postRole.length > 0 && postRole.length <= 128;
+    }, ^{
       [NSRunLoop.currentRunLoop runUntilDate:[NSDate dateWithTimeIntervalSinceNow:0.1]];
-    }
-    if (!focusConfirmed) return fail(@"navigation_unverified");
+    }, &reason);
+    if (!focusConfirmed) return fail(reason);
   } else {
     blocked = focusedInputBlockReason(target, (__bridge AXUIElementRef)inputElement, role, label);
     if (blocked != nil) return fail(blocked);
