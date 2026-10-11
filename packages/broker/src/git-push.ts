@@ -96,6 +96,7 @@ export class GitPushInspectorImpl implements GitPushInspector {
         throw new BrokerError("PRECONDITION_FAILED", "Push branch or HEAD differs from the approved binding");
       }
       assertProjectIdentity(input.project_root, identity.identity, this.managedMetadata);
+      assertNoPushMarkerAbsent(input);
     };
     await readLocal();
     if (await this.readRemote(input, endpoint, control) === input.expected_commit) {
@@ -108,6 +109,8 @@ export class GitPushInspectorImpl implements GitPushInspector {
       await this.run(input, ["push", "--porcelain", "--no-verify", "--no-follow-tags", "--recurse-submodules=no",
         "--", endpoint, `${input.expected_commit}:refs/heads/${input.branch_name}`], control, () => {
         assertProjectIdentity(input.project_root, identity.identity, this.managedMetadata);
+        // Last synchronous look before the process exists; the marker may have appeared since the recheck above.
+        assertNoPushMarkerAbsent(input);
         control.beforeMutation!();
         mutationStarted = true;
       });
@@ -171,6 +174,14 @@ export class GitPushInspectorImpl implements GitPushInspector {
       environment: this.environment, timeoutMs: Math.min(control.timeoutMs, 30_000), outputCapBytes: 131_072,
       shouldCancel: control.shouldCancel, ...(beforeSpawn ? { beforeSpawn } : {}) });
   }
+}
+/**
+ * The NO_PUSH marker sits in the checkout root, outside .git, so the project identity guard cannot see it appear
+ * while the network preflight waits. Repository configuration is covered by that guard (it fingerprints .git/config).
+ */
+function assertNoPushMarkerAbsent(input: GitPushInput): void {
+  const optOut = noPushReason("", input.branch_name, input.project_root);
+  if (optOut) throw new BrokerError("POLICY_DENIED", `NO_PUSH: ${optOut}`);
 }
 function clean(result: ProcessExecutionResult): boolean {
   return result.resultClass === "SUCCEEDED" && result.exitCode === 0 && !result.truncated;
