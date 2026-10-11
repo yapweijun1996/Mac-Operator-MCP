@@ -21,6 +21,7 @@ test("AuditAnchorManager publishes and verifies a keyed monotonic tail", async (
     manager.verify(undefined);
     manager.publish(1, firstHash);
     manager.publish(2, secondHash);
+    manager.publish(2, secondHash);
     manager.publish(1, firstHash);
     manager.verify({ sequence: 2, eventHash: secondHash });
     assert.match((await readFile(path, "utf8")), /audit-key-1/u);
@@ -29,6 +30,34 @@ test("AuditAnchorManager publishes and verifies a keyed monotonic tail", async (
     await rm(directory, { recursive: true, force: true });
   }
 });
+
+for (const [name, publishedSequence, forgedSequence] of [
+  ["higher existing tail", 1, 100],
+  ["identical tail", 1, 1],
+  ["advancing tail", 2, 1]
+] as const) {
+  test(`AuditAnchorManager authenticates the existing record before publishing an ${name}`, async () => {
+    const directory = await mkdtemp(join(tmpdir(), "mac-operator-audit-anchor-publish-tamper-"));
+    const path = join(directory, "audit.anchor");
+    const manager = new AuditAnchorManager({ path, keySource: { keyId: "audit-key-1", loadKey: () => key } });
+    try {
+      manager.publish(1, firstHash);
+      const forged = JSON.parse(await readFile(path, "utf8")) as { sequence: number; mac: string };
+      forged.sequence = forgedSequence;
+      forged.mac = "0".repeat(64);
+      const forgedBytes = `${JSON.stringify(forged)}\n`;
+      await writeFile(path, forgedBytes, { mode: 0o600 });
+      assert.throws(
+        () => manager.publish(publishedSequence, publishedSequence === 1 ? firstHash : secondHash),
+        /authentication failed/u
+      );
+      assert.equal(await readFile(path, "utf8"), forgedBytes);
+    } finally {
+      manager.close();
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+}
 
 test("AuditAnchorManager rejects a forged sidecar even when the SQLite tail is unchanged", async () => {
   const directory = await mkdtemp(join(tmpdir(), "mac-operator-audit-anchor-tamper-"));
