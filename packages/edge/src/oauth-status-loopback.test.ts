@@ -6,24 +6,47 @@ import { createServer } from "node:https";
 import { chmod, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import test from "node:test";
+import test, { after } from "node:test";
 import { createLoopbackOAuthStatusFetch } from "./oauth-status-loopback.js";
 
 const execFileAsync = promisify(execFile);
 
+interface CertificateChain {
+  caCert: Buffer;
+  leafCert: Buffer;
+  leafKey: Buffer;
+}
+
+let sharedChain: Promise<CertificateChain> | undefined;
+let sharedRoot: string | undefined;
+
+/**
+ * Generating the chain runs three openssl processes with two RSA-2048 keys, which is slow when the whole suite runs
+ * in parallel. Build it once per file so no test depends on that work finishing inside its own time budget.
+ */
+function sharedCertificateChain(): Promise<CertificateChain> {
+  sharedChain ??= (async () => {
+    const root = await mkdtemp(join(tmpdir(), "mac-oauth-status-loopback-"));
+    sharedRoot = root;
+    const paths = {
+      caKey: join(root, "ca.key"), caCert: join(root, "ca.crt"), leafKey: join(root, "leaf.key"), leafCsr: join(root, "leaf.csr"),
+      leafCert: join(root, "leaf.crt"), serial: join(root, "ca.srl"), extensions: join(root, "leaf.ext")
+    };
+    await generateCertificateChain(paths);
+    return { caCert: await readFile(paths.caCert), leafCert: await readFile(paths.leafCert), leafKey: await readFile(paths.leafKey) };
+  })();
+  return sharedChain;
+}
+
+after(async () => {
+  if (sharedRoot !== undefined) await rm(sharedRoot, { recursive: true, force: true });
+});
+
 test("loopback OAuth status fetch pins issuer host, CA, and fixed local endpoint", async () => {
-  const root = await mkdtemp(join(tmpdir(), "mac-oauth-status-loopback-"));
-  const caKey = join(root, "ca.key");
-  const caCert = join(root, "ca.crt");
-  const leafKey = join(root, "leaf.key");
-  const leafCsr = join(root, "leaf.csr");
-  const leafCert = join(root, "leaf.crt");
-  const serial = join(root, "ca.srl");
-  const extensions = join(root, "leaf.ext");
+  const chain = await sharedCertificateChain();
   let server: ReturnType<typeof createServer> | undefined;
   try {
-    await generateCertificateChain({ caKey, caCert, leafKey, leafCsr, leafCert, serial, extensions });
-    server = createServer({ cert: await readFile(leafCert), key: await readFile(leafKey) });
+    server = createServer({ cert: chain.leafCert, key: chain.leafKey });
     if (!server) throw new Error("Test HTTPS server was not created");
     const activeServer = server;
     let observedHost = "";
@@ -44,7 +67,7 @@ test("loopback OAuth status fetch pins issuer host, CA, and fixed local endpoint
     const address = activeServer.address();
     assert.ok(address && typeof address !== "string");
     const publicUrl = new URL("https://issuer.example.test/oauth/status");
-    const ca = await readFile(caCert);
+    const ca = chain.caCert;
     const fetchStatus = createLoopbackOAuthStatusFetch({
       publicUrl,
       loopbackUrl: new URL(`https://127.0.0.1:${address.port}/oauth/status`),
@@ -76,7 +99,6 @@ test("loopback OAuth status fetch pins issuer host, CA, and fixed local endpoint
       if (!server?.listening) { resolve(); return; }
       server.close(() => resolve());
     });
-    await rm(root, { recursive: true, force: true });
   }
 });
 
@@ -148,18 +170,10 @@ async function withStatusServer(
   respond: (response: ServerResponse) => void,
   run: (fetchStatus: typeof fetch) => Promise<void>
 ): Promise<void> {
-  const root = await mkdtemp(join(tmpdir(), "mac-oauth-status-loopback-"));
-  const caKey = join(root, "ca.key");
-  const caCert = join(root, "ca.crt");
-  const leafKey = join(root, "leaf.key");
-  const leafCsr = join(root, "leaf.csr");
-  const leafCert = join(root, "leaf.crt");
-  const serial = join(root, "ca.srl");
-  const extensions = join(root, "leaf.ext");
+  const chain = await sharedCertificateChain();
   let server: ReturnType<typeof createServer> | undefined;
   try {
-    await generateCertificateChain({ caKey, caCert, leafKey, leafCsr, leafCert, serial, extensions });
-    const activeServer = createServer({ cert: await readFile(leafCert), key: await readFile(leafKey) }, (request, response) => {
+    const activeServer = createServer({ cert: chain.leafCert, key: chain.leafKey }, (request, response) => {
       request.resume();
       request.once("end", () => respond(response));
     });
@@ -174,14 +188,13 @@ async function withStatusServer(
       publicUrl: STATUS_PUBLIC_URL,
       loopbackUrl: new URL(`https://127.0.0.1:${address.port}/oauth/status`),
       serverName: "issuer.example.test",
-      ca: await readFile(caCert)
+      ca: chain.caCert
     }));
   } finally {
     await new Promise<void>(resolve => {
       if (!server?.listening) { resolve(); return; }
       server.close(() => resolve());
     });
-    await rm(root, { recursive: true, force: true });
   }
 }
 
@@ -196,14 +209,14 @@ async function generateCertificateChain(paths: {
 }): Promise<void> {
   await execFileAsync("/usr/bin/openssl", ["req", "-x509", "-newkey", "rsa:2048", "-nodes", "-keyout", paths.caKey,
     "-out", paths.caCert, "-days", "1", "-subj", "/CN=Mac Operator Test CA", "-addext", "basicConstraints=critical,CA:TRUE"],
-  { cwd: dirname(paths.caKey), env: { PATH: "/usr/bin:/bin" }, timeout: 10_000, maxBuffer: 64 * 1024 });
+  { cwd: dirname(paths.caKey), env: { PATH: "/usr/bin:/bin" }, timeout: 30_000, maxBuffer: 64 * 1024 });
   await execFileAsync("/usr/bin/openssl", ["req", "-new", "-newkey", "rsa:2048", "-nodes", "-keyout", paths.leafKey,
     "-out", paths.leafCsr, "-subj", "/CN=issuer.example.test"],
-  { cwd: dirname(paths.caKey), env: { PATH: "/usr/bin:/bin" }, timeout: 10_000, maxBuffer: 64 * 1024 });
+  { cwd: dirname(paths.caKey), env: { PATH: "/usr/bin:/bin" }, timeout: 30_000, maxBuffer: 64 * 1024 });
   await writeFile(paths.extensions, "subjectAltName=DNS:issuer.example.test\n");
   await execFileAsync("/usr/bin/openssl", ["x509", "-req", "-in", paths.leafCsr, "-CA", paths.caCert, "-CAkey", paths.caKey,
     "-CAcreateserial", "-CAserial", paths.serial, "-out", paths.leafCert, "-days", "1", "-extfile", paths.extensions],
-  { cwd: dirname(paths.caKey), env: { PATH: "/usr/bin:/bin" }, timeout: 10_000, maxBuffer: 64 * 1024 });
+  { cwd: dirname(paths.caKey), env: { PATH: "/usr/bin:/bin" }, timeout: 30_000, maxBuffer: 64 * 1024 });
   await chmod(paths.caKey, 0o600);
 }
 
