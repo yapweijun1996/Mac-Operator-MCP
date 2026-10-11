@@ -94,7 +94,7 @@ export class OAuthGrantRevocationMonitor {
   }
 
   track(context: JwtRevocationContext): void {
-    const key = `${context.subject}:${context.sessionId}`;
+    const key = sessionKey(context);
     if (!this.sessions.has(key) && this.sessions.size >= this.maxSessions) {
       this.pruneExpired();
       if (this.sessions.size >= this.maxSessions) throw new Error("OAuth revocation monitor capacity exceeded");
@@ -118,7 +118,7 @@ export class OAuthGrantRevocationMonitor {
    * semantics if Edge cannot reach the Broker yet.
    */
   async notifyRevoked(context: JwtRevocationContext): Promise<void> {
-    const key = `${context.subject}:${context.sessionId}`;
+    const key = sessionKey(context);
     try {
       await this.options.onRevoked(context);
       this.sessions.delete(key);
@@ -129,7 +129,7 @@ export class OAuthGrantRevocationMonitor {
   }
 
   forget(context: JwtRevocationContext): void {
-    this.sessions.delete(`${context.subject}:${context.sessionId}`);
+    this.sessions.delete(sessionKey(context));
   }
 
   start(): void {
@@ -190,6 +190,11 @@ export class OAuthGrantRevocationMonitor {
         scopes: Object.freeze(activeScopes.map(([scope]) => scope)), expiresAt: Math.max(...activeScopes.map(([, expiration]) => expiration)) }) });
     }
   }
+}
+
+/** Colons are valid inside both components, so joining them with ":" is ambiguous; a JSON tuple is collision-free. */
+function sessionKey(context: JwtRevocationContext): string {
+  return JSON.stringify([context.subject, context.sessionId]);
 }
 
 function boundedInteger(value: number, minimum: number, maximum: number, label: string): number {

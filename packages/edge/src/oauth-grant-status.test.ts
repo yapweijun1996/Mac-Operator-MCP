@@ -110,3 +110,55 @@ test("expired terminal tokens do not extend terminal authority with a later read
     assert.ok(reads > 0); assert.equal(revocations, 0);
   } finally { monitor.stop(); }
 });
+
+// Colons are valid inside both identity components, so these two sessions would share the key "owner:a:b" under raw concatenation.
+const colonFirst: JwtRevocationContext = { ...context, subject: "owner:a", sessionId: "b" };
+const colonSecond: JwtRevocationContext = { ...context, subject: "owner", sessionId: "a:b" };
+const describeSession = (value: JwtRevocationContext): string => `${value.subject}|${value.sessionId}`;
+
+function colonMonitor(inspected: string[], revoked: string[]): OAuthGrantRevocationMonitor {
+  return new OAuthGrantRevocationMonitor({
+    intervalMs: 250,
+    readStatus: async value => {
+      inspected.push(describeSession(value));
+      return { active: describeSession(value) !== describeSession(colonFirst), scopes: value.scopes };
+    },
+    onRevoked: async value => { revoked.push(describeSession(value)); }
+  });
+}
+
+test("revocation monitor tracks distinct colon-containing sessions independently", async () => {
+  const inspected: string[] = [];
+  const revoked: string[] = [];
+  const monitor = colonMonitor(inspected, revoked);
+  try {
+    monitor.track(colonFirst); monitor.track(colonSecond);
+    monitor.start(); await delay(700);
+    assert.deepEqual([...new Set(inspected)].sort(), [describeSession(colonFirst), describeSession(colonSecond)].sort());
+    assert.deepEqual(revoked, [describeSession(colonFirst)]);
+  } finally { monitor.stop(); }
+});
+
+test("forgetting one colon-containing session keeps monitoring the other", async () => {
+  const inspected: string[] = [];
+  const monitor = colonMonitor(inspected, []);
+  try {
+    monitor.track(colonFirst); monitor.track(colonSecond);
+    monitor.forget(colonFirst);
+    monitor.start(); await delay(700);
+    assert.deepEqual([...new Set(inspected)], [describeSession(colonSecond)]);
+  } finally { monitor.stop(); }
+});
+
+test("a direct issuer push for one colon-containing session keeps monitoring the other", async () => {
+  const inspected: string[] = [];
+  const revoked: string[] = [];
+  const monitor = colonMonitor(inspected, revoked);
+  try {
+    monitor.track(colonFirst); monitor.track(colonSecond);
+    await monitor.notifyRevoked(colonFirst);
+    assert.deepEqual(revoked, [describeSession(colonFirst)]);
+    monitor.start(); await delay(700);
+    assert.deepEqual([...new Set(inspected)], [describeSession(colonSecond)]);
+  } finally { monitor.stop(); }
+});
