@@ -1548,7 +1548,15 @@ export class BrokerStore {
       const requestDeleteCount = Math.min(requestRows.length, Math.max(0, (requestCountRow?.count as number) - options.retainRequestCount));
       const jobDeleteCount = Math.min(jobRows.length, Math.max(0, (jobCountRow?.count as number) - options.retainJobCount));
       const requests = requestRows.slice(0, requestDeleteCount).map(mapRequest);
-      const jobs = jobRows.slice(0, jobDeleteCount).map(mapJob);
+      const rotatedRequestIds = new Set(requests.map((request) => request.requestId));
+      const linkedRequests = this.database.prepare(
+        "SELECT request_id, job_id FROM requests WHERE job_id IS NOT NULL"
+      ).all() as unknown as Array<Pick<RequestRow, "request_id" | "job_id">>;
+      // Live Requests require live Jobs for startup verification and outcome readback.
+      const retainedJobIds = new Set(linkedRequests
+        .filter((request) => !rotatedRequestIds.has(request.request_id))
+        .map((request) => request.job_id));
+      const jobs = jobRows.filter((job) => !retainedJobIds.has(job.job_id)).slice(0, jobDeleteCount).map(mapJob);
       assertLedgerTombstoneCapacity(this.database, requests.length, jobs.length);
       this.insertAudit({
         requestId: rotationRequestId,

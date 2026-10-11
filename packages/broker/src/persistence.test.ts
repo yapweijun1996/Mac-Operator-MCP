@@ -627,6 +627,47 @@ test("BrokerStore binds the audit tail to an owner-only keyed sidecar", async ()
   }
 });
 
+test("forged higher audit anchors freeze publication and all later store writes", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "mac-operator-audit-anchor-forged-publish-"));
+  const databasePath = join(directory, "broker.sqlite");
+  const anchorPath = join(directory, "audit.anchor");
+  const anchorOptions = {
+    path: anchorPath,
+    keySource: { keyId: "audit-key-forged", loadKey: () => Buffer.alloc(32, 9) }
+  };
+  let store: BrokerStore | undefined = new BrokerStore(databasePath, { auditAnchor: anchorOptions });
+  const event = (number: number) => ({
+    requestId: `anchor-forged-${number}`, principalId: "principal-1", tool: "mac_health",
+    eventType: "completion" as const, decision: "allow" as const, resultClass: "SUCCEEDED",
+    targetRef: "host:broker", policyVersion: "policy-0.1", evidence: {}, timestampMs: number
+  });
+  const unavailable = (error: unknown) => error instanceof BrokerError && error.errorClass === "AUDIT_UNAVAILABLE";
+  try {
+    store.appendAudit(event(1));
+    const validBytes = await readFile(anchorPath, "utf8");
+    const forged = JSON.parse(validBytes) as { sequence: number };
+    forged.sequence = 100;
+    const forgedBytes = `${JSON.stringify(forged)}\n`;
+    await writeFile(anchorPath, forgedBytes, { mode: 0o600 });
+    assert.throws(() => store!.appendAudit(event(2)), unavailable);
+    // Publication follows SQLite COMMIT; the failed append freezes further writes.
+    assert.equal(store.auditRows().length, 2);
+    assert.equal(await readFile(anchorPath, "utf8"), forgedBytes);
+    assert.throws(() => store!.auditIntegrityReadback(), unavailable);
+    assert.throws(() => store!.appendAudit(event(3)), unavailable);
+    assert.equal(store.auditRows().length, 2);
+    await writeFile(anchorPath, validBytes, { mode: 0o600 });
+    assert.throws(() => store!.appendAudit(event(4)), unavailable);
+    assert.equal(store.auditRows().length, 2);
+    store.close();
+    store = undefined;
+    assert.throws(() => new BrokerStore(databasePath, { auditAnchor: anchorOptions }), /Audit anchor does not match/u);
+  } finally {
+    store?.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 test("audit anchor publication outage leaves the store ahead and blocks restart", async () => {
   const directory = await mkdtemp(join(tmpdir(), "mac-operator-audit-anchor-outage-"));
   const databasePath = join(directory, "broker.sqlite");
