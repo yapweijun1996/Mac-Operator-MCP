@@ -13,6 +13,7 @@ const MAX_RESPONSE_BYTES = 2 * 1024 * 1024;
 const MAX_TIMEOUT_MS = 60_000;
 const NETWORK_CHANNEL_SCHEMA_VERSION = "0.1" as const;
 const NETWORK_CHANNEL_MAX_FRAME_BYTES = 512 * 1024;
+const NETWORK_CHANNEL_MAX_QUEUED_BYTES = 512 * 1024;
 const NETWORK_CHANNEL_MAX_REQUESTS = 32;
 const NETWORK_CHANNEL_TOKEN_PATTERN = /^[a-f0-9]{64}$/u;
 const NETWORK_CHANNEL_REQUEST_ID_PATTERN = /^child-network:[A-Za-z0-9][A-Za-z0-9._:-]{7,127}$/u;
@@ -49,6 +50,7 @@ export interface BrokerNetworkProxyExchangeRequest {
 
 export interface BrokerNetworkProxyExchangeControl {
   shouldCancel?: () => boolean;
+  signal?: AbortSignal;
 }
 
 export interface BrokerNetworkProxyExchangeResult {
@@ -144,7 +146,7 @@ export class BrokerNetworkProxy {
     if (request.payload.byteLength > this.policy.maxRequestBytes) {
       throw new BrokerError("OUTPUT_LIMIT", "Network proxy request exceeds its byte budget");
     }
-    if (control.shouldCancel?.() === true) {
+    if (control.signal?.aborted === true || control.shouldCancel?.() === true) {
       throw new BrokerError("CANCELLED", "Network proxy exchange was cancelled");
     }
     assertContentDoesNotContainSecrets(request.payload);
@@ -176,7 +178,9 @@ export class BrokerNetworkProxyChannel {
   private readonly maxRequests: number;
   private pending = Buffer.alloc(0);
   private processing = Promise.resolve();
-  private requestCount = 0;
+  private admittedRequests = 0;
+  private queuedBytes = 0;
+  private readonly abort = new AbortController();
   private started = false;
   private closed = false;
 
@@ -201,14 +205,18 @@ export class BrokerNetworkProxyChannel {
     this.started = true;
     this.socket.setNoDelay(true);
     this.socket.on("data", (chunk: Buffer) => this.receive(chunk));
-    this.socket.once("error", () => this.close());
-    this.socket.once("close", () => { this.closed = true; });
+    this.socket.once("error", () => { void this.close(); });
+    this.socket.once("close", () => { void this.close(); });
   }
 
-  close(): void {
-    if (this.closed) return;
-    this.closed = true;
-    this.socket.destroy();
+  close(): Promise<void> {
+    if (!this.closed) {
+      this.closed = true;
+      this.pending = Buffer.alloc(0);
+      this.abort.abort();
+      this.socket.destroy();
+    }
+    return this.processing;
   }
 
   private receive(chunk: Buffer): void {
@@ -228,8 +236,19 @@ export class BrokerNetworkProxyChannel {
         this.close();
         return;
       }
+      // Reserve the lifetime request and retained byte budgets before copying a frame.
+      // Processing may be blocked by an upstream exchange and cannot enforce admission.
+      if (this.admittedRequests >= this.maxRequests || this.queuedBytes + frame.byteLength > NETWORK_CHANNEL_MAX_QUEUED_BYTES) {
+        void this.close();
+        return;
+      }
+      this.admittedRequests++;
+      this.queuedBytes += frame.byteLength;
       const current = Buffer.from(frame);
-      this.processing = this.processing.then(() => this.process(current)).catch(() => this.close());
+      this.processing = this.processing.then(async () => {
+        this.queuedBytes -= current.byteLength;
+        await this.process(current);
+      }).catch(() => { void this.close(); });
     }
   }
 
@@ -241,12 +260,6 @@ export class BrokerNetworkProxyChannel {
       this.close();
       return;
     }
-    if (this.requestCount >= this.maxRequests) {
-      await this.sendError(parsed.requestId, parsed.target, new BrokerError("OUTPUT_LIMIT", "Network proxy channel request budget is exhausted"));
-      this.close();
-      return;
-    }
-    this.requestCount += 1;
     if (this.shouldCancel()) {
       await this.sendError(parsed.requestId, parsed.target, new BrokerError("CANCELLED", "Network proxy channel was cancelled"));
       this.close();
@@ -257,7 +270,7 @@ export class BrokerNetworkProxyChannel {
         requestId: parsed.requestId,
         target: parsed.target,
         payload: parsed.payload
-      }, { shouldCancel: this.shouldCancel });
+      }, { shouldCancel: this.shouldCancel, signal: this.abort.signal });
       await this.send({
         schemaVersion: NETWORK_CHANNEL_SCHEMA_VERSION,
         kind: "network_response",
@@ -397,15 +410,19 @@ async function connectAndExchange(
     const cancellation = setInterval(() => {
       if (control.shouldCancel?.() === true) finish(new BrokerError("CANCELLED", "Network proxy exchange was cancelled"));
     }, 25);
+    const onAbort = (): void => finish(new BrokerError("CANCELLED", "Network proxy exchange was cancelled"));
     const finish = (error: BrokerError | undefined): void => {
       if (settled) return;
       settled = true;
       clearTimeout(timeout);
       clearInterval(cancellation);
+      control.signal?.removeEventListener("abort", onAbort);
       socket?.destroy();
       if (error === undefined) resolve(response);
       else reject(error);
     };
+    control.signal?.addEventListener("abort", onAbort, { once: true });
+    if (control.signal?.aborted === true) { onAbort(); return; }
     socket = createConnection({ host: "127.0.0.1", port: parsed.port });
     socket.setNoDelay(true);
     socket.setTimeout(policy.timeoutMs, () => finish(new BrokerError("TIMEOUT", "Network proxy exchange timed out", true)));

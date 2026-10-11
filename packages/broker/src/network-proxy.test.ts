@@ -1,11 +1,13 @@
 import assert from "node:assert/strict";
+import { EventEmitter } from "node:events";
 import { createConnection, createServer, type Socket } from "node:net";
 import test from "node:test";
 import { BrokerError, canonicalJson, parseJsonUtf8Strict } from "@mac-operator/contracts";
 import {
   BrokerNetworkProxy,
   BrokerNetworkProxyChannel,
-  createBrokerNetworkProxyPolicy
+  createBrokerNetworkProxyPolicy,
+  type BrokerNetworkProxyExchangeControl
 } from "./network-proxy.js";
 
 test("BrokerNetworkProxy remains disabled unless explicitly enabled", async () => {
@@ -18,6 +20,99 @@ test("BrokerNetworkProxy remains disabled unless explicitly enabled", async () =
     proxy.exchange({ requestId: "network-request:disabled-1", target: "tcp://localhost:43123", payload: Buffer.from("safe") }),
     (error: unknown) => error instanceof BrokerError && error.errorClass === "POLICY_DENIED"
   );
+});
+
+class ChannelSocketFixture extends EventEmitter {
+  destroyed = false;
+  setNoDelay(): void {}
+  destroy(): void { this.destroyed = true; this.emit("close"); }
+  write(_frame: Buffer, callback: (error?: Error) => void): void { callback(); }
+}
+
+function blockedChannel(maxRequests = 32): {
+  socket: ChannelSocketFixture; channel: BrokerNetworkProxyChannel; controls: BrokerNetworkProxyExchangeControl[];
+} {
+  const socket = new ChannelSocketFixture();
+  const controls: BrokerNetworkProxyExchangeControl[] = [];
+  const proxy = new BrokerNetworkProxy({ enabled: true,
+    policy: createBrokerNetworkProxyPolicy({ policyId: "tests.channel-admission", destinations: ["tcp://localhost:43123"] }) });
+  proxy.exchange = async (_request, control = {}) => {
+    controls.push(control);
+    return await new Promise((_resolve, reject) => {
+      control.signal!.addEventListener("abort", () => reject(new BrokerError("CANCELLED", "Cancelled fixture exchange")), { once: true });
+    });
+  };
+  const channel = new BrokerNetworkProxyChannel({ socket: socket as unknown as Socket, proxy,
+    capabilityToken: "a".repeat(64), maxRequests });
+  channel.start();
+  return { socket, channel, controls };
+}
+
+function channelFrame(index: number, bytes = 32 * 1024): Buffer {
+  return Buffer.from(`${canonicalJson({ schemaVersion: "0.1", kind: "network_request",
+    requestId: `child-network:queued-${index.toString().padStart(4, "0")}`, capabilityToken: "a".repeat(64),
+    target: "tcp://localhost:43123", payloadBase64: Buffer.alloc(bytes, "x").toString("base64") })}\n`);
+}
+
+test("Channel request admission closes a flood while the first exchange is blocked", async () => {
+  const { socket, channel, controls } = blockedChannel(1);
+  socket.emit("data", channelFrame(0));
+  await Promise.resolve();
+  assert.equal(controls.length, 1);
+  for (let index = 1; index <= 300; index++) socket.emit("data", channelFrame(index));
+  assert.equal(socket.destroyed, true);
+  assert.equal(controls[0]!.signal!.aborted, true);
+  await channel.close();
+  assert.equal(controls.length, 1, "queued flood never starts another upstream exchange");
+});
+
+test("Channel caps retained queued bytes independently of its request budget", async () => {
+  const { socket, channel, controls } = blockedChannel();
+  socket.emit("data", channelFrame(0));
+  await Promise.resolve();
+  for (let index = 1; index <= 8; index++) socket.emit("data", channelFrame(index, 64 * 1024));
+  assert.equal(socket.destroyed, true, "nine requests are below the count budget but exceed the queued byte cap");
+  await channel.close();
+  assert.equal(controls.length, 1);
+});
+
+for (const peerClosed of [false, true]) {
+  test(`Channel ${peerClosed ? "peer disconnect" : "close"} aborts and drains the active upstream exchange`, async () => {
+    const { socket, channel, controls } = blockedChannel();
+    socket.emit("data", channelFrame(0));
+    await Promise.resolve();
+    if (peerClosed) socket.emit("close");
+    await channel.close();
+    assert.equal(controls[0]!.signal!.aborted, true);
+    assert.equal(socket.destroyed, true);
+    assert.equal(controls.length, 1);
+  });
+}
+
+test("Network proxy abort signal promptly ends a stalled exchange before its long deadline", async () => {
+  const sockets = new Set<Socket>();
+  let connected!: () => void;
+  const connection = new Promise<void>(resolve => { connected = resolve; });
+  const server = createServer({ allowHalfOpen: true }, socket => {
+    sockets.add(socket); socket.once("close", () => sockets.delete(socket)); socket.resume(); connected();
+  });
+  await new Promise<void>((resolve, reject) => { server.once("error", reject); server.listen(0, "127.0.0.1", resolve); });
+  const address = server.address();
+  if (address === null || typeof address === "string") throw new Error("Network fixture did not expose a numeric port");
+  const target = `tcp://localhost:${address.port}`;
+  const proxy = new BrokerNetworkProxy({ enabled: true,
+    policy: createBrokerNetworkProxyPolicy({ policyId: "tests.channel-abort", destinations: [target], timeoutMs: 60_000 }) });
+  const abort = new AbortController();
+  try {
+    const exchange = proxy.exchange({ requestId: "network-request:signal-0001", target, payload: Buffer.from("safe") }, { signal: abort.signal });
+    const rejected = assert.rejects(exchange, error => error instanceof BrokerError && error.errorClass === "CANCELLED");
+    await connection;
+    abort.abort();
+    await rejected;
+  } finally {
+    for (const socket of sockets) socket.destroy();
+    await new Promise<void>(resolve => server.close(() => resolve()));
+  }
 });
 
 test("BrokerNetworkProxy exchanges only with the digest-bound loopback target", async () => {
