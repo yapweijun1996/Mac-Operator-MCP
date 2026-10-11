@@ -3,7 +3,8 @@ import assert from "node:assert/strict";
 import { BrokerError, sha256 } from "@mac-operator/contracts";
 import { ContainerTaskRunner, type ContainerTaskRunnerOptions } from "./container-task-runner.js";
 import {
-  type ContainerCreateOptions, type ContainerTaskHandle, type ContainerEngineControl,
+  ContainerNotFoundError, ContainerCreationError,
+  type ContainerCreateOptions, type ContainerCreateControl, type ContainerTaskHandle, type ContainerEngineControl,
   type ContainerExecOptions, type ContainerExecResult, type ContainerEngineInfo
 } from "./container-engine.js";
 import { type CodexControllerRun, type CodexControllerResult, type CodexDynamicTool } from "./codex-controller.js";
@@ -58,25 +59,28 @@ class FakeEngine {
   createsUnknown = false;
   uploaded?: Buffer;
   onExec?: (options: ContainerExecOptions, request: ContainerEngineControl) => Promise<ContainerExecResult>;
-  async info(): Promise<ContainerEngineInfo> {
+  async info(_request?: ContainerEngineControl): Promise<ContainerEngineInfo> {
     this.events.push("info");
     return { id: this.changedEngine ? "different-engine" : ENGINE, serverVersion: "29", osType: "linux", architecture: "aarch64", securityOptions: [], cgroupVersion: "2" };
   }
-  async inspectImage(): Promise<{ id: string; repoDigests: string[]; os: "linux"; architecture: string }> {
+  async inspectImage(_image?: string, _request?: ContainerEngineControl): Promise<{ id: string; repoDigests: string[]; os: "linux"; architecture: string }> {
     this.events.push("image"); return { id: IMAGE, repoDigests: [], os: "linux", architecture: "arm64" };
   }
-  async create(value: ContainerCreateOptions): Promise<ContainerTaskHandle> {
+  async create(value: ContainerCreateOptions, request?: ContainerCreateControl): Promise<ContainerTaskHandle> {
     this.events.push("create");
     if (this.createsUnknown) throw new BrokerError("UNKNOWN_OUTCOME", "Creation response was lost");
     const handle = Object.freeze({ id: this.created.length ? "c".repeat(64) : CID, imageId: IMAGE, engineId: ENGINE, taskId: value.taskId,
       owner: value.owner, nonce: value.nonce, readonlyWorkspace: value.readonlyWorkspace ?? false, maxRuntimeMs: value.maxRuntimeMs,
       memoryBytes: 512 * 1024 * 1024, nanoCpus: 1_000_000_000, pidsLimit: 128 });
-    this.created.push(handle); return handle;
+    this.created.push(handle);
+    request?.onCreated?.(handle);
+    return handle;
   }
   async start(handle: ContainerTaskHandle): Promise<{ id: string; running: boolean; status: string; exitCode: number; processId: number }> {
     this.events.push("start"); return { id: handle.id, running: true, status: "running", exitCode: 0, processId: 100 };
   }
   async inspect(handle: ContainerTaskHandle): Promise<{ id: string; running: boolean; status: string; exitCode: number; processId: number }> {
+    if (this.absent) throw new ContainerNotFoundError(handle);
     return { id: handle.id, running: true, status: "running", exitCode: 0, processId: 100 };
   }
   async uploadArchive(_handle: ContainerTaskHandle, archive: Buffer, _request?: ContainerEngineControl): Promise<void> { this.events.push("upload"); this.uploaded = archive; }
@@ -87,7 +91,7 @@ class FakeEngine {
   }
   async kill(handle: ContainerTaskHandle): Promise<{ id: string; running: boolean; status: string; exitCode: number; processId: number }> {
     this.events.push("kill");
-    if (this.absent) throw new BrokerError("TARGET_NOT_FOUND", "Exact container is absent");
+    if (this.absent) throw new ContainerNotFoundError(handle);
     if (this.failKill) throw new BrokerError("UNKNOWN_OUTCOME", "Stop is unverified");
     return { id: handle.id, running: false, status: "exited", exitCode: 137, processId: 0 };
   }
@@ -324,6 +328,109 @@ test("Unverified cleanup and unknown creation preserve UNKNOWN rather than repor
   const unknown = await runner(uncertain).run(profile(), control());
   assert.equal(unknown.state, "unknown"); assert.equal(unknown.containerCleanupVerified, false); assert.ok(!uncertain.events.includes("start"));
 });
+
+test("An Engine info 404 cannot prove cleanup of a still-present container", async () => {
+  const engine = new FakeEngine();
+  const info = engine.info.bind(engine);
+  let calls = 0;
+  engine.info = async () => {
+    if (++calls === 2) throw new BrokerError("TARGET_NOT_FOUND", "Engine info route is absent");
+    return await info();
+  };
+  const result = await runner(engine).run(profile(), control());
+  assert.equal(result.state, "unknown");
+  assert.equal(result.containerCleanupVerified, false);
+  assert.ok(!engine.events.includes("kill"));
+  assert.ok(!engine.events.includes("remove"));
+});
+
+for (const failCleanup of [false, true]) {
+  test(`Confirmed creation is persisted before a failed inspection and ${failCleanup ? "retained for recovery" : "cleaned safely"}`, async () => {
+    const engine = new FakeEngine();
+    engine.failKill = failCleanup;
+    const create = engine.create.bind(engine);
+    let persisted: Omit<ContainerTaskJobMetadata, "taskDescriptorDigest"> | undefined;
+    engine.create = async (value, request) => {
+      const handle = await create(value, request);
+      assert.equal(persisted?.containerId, handle.id, "ownership is durable before post-create inspection awaits");
+      throw new ContainerCreationError(handle, new BrokerError("TIMEOUT", "Post-create inspection expired"));
+    };
+    const result = await runner(engine).run(profile(), control([], value => { persisted = value; }));
+    assert.equal(persisted?.containerId, CID);
+    assert.equal(result.containerCleanupVerified, !failCleanup);
+    assert.equal(result.state, failCleanup ? "unknown" : "timed_out");
+    assert.ok(!engine.events.includes("start"));
+    assert.ok(!engine.events.includes("exec"));
+    assert.equal(engine.events.includes("remove"), !failCleanup);
+  });
+}
+
+test("A legacy create caller receives recovery identity from a confirmed creation error", async () => {
+  const engine = new FakeEngine();
+  const create = engine.create.bind(engine);
+  engine.create = async value => { throw new ContainerCreationError(await create(value), new BrokerError("TIMEOUT", "Readback failed")); };
+  let persisted = false;
+  const result = await runner(engine).run(profile(), control([], () => { persisted = true; }));
+  assert.equal(persisted, true);
+  assert.equal(result.containerCleanupVerified, true);
+  assert.ok(engine.events.includes("remove"));
+});
+
+for (const operation of ["info", "image", "create"] as const) {
+  for (const cancel of [false, true]) {
+    test(`Preparation ${operation} receives the original ${cancel ? "cancellation" : "deadline"} signal`, { timeout: 2000 }, async () => {
+      const engine = new FakeEngine();
+      let requestControl: ContainerEngineControl | undefined;
+      let cancelRequested = false;
+      let began!: () => void;
+      const started = new Promise<void>(resolve => { began = resolve; });
+      const blocked = async (request?: ContainerEngineControl): Promise<never> => {
+        requestControl = request;
+        assert.ok(request?.signal);
+        assert.ok(request.timeoutMs! > 0 && request.timeoutMs! <= (cancel ? 1000 : 30));
+        began();
+        return await new Promise((_resolve, reject) => {
+          request.signal!.addEventListener("abort", () => reject(new BrokerError("CANCELLED", "Preparation was aborted")), { once: true });
+        });
+      };
+      if (operation === "info") engine.info = request => blocked(request);
+      if (operation === "image") engine.inspectImage = (_image, request) => blocked(request);
+      if (operation === "create") engine.create = (_value, request) => blocked(request);
+      const request = { ...control(), timeoutMs: cancel ? 1000 : 30, shouldCancel: () => cancelRequested };
+      const pending = runner(engine).run(profile(), request);
+      await started;
+      if (cancel) cancelRequested = true;
+      const result = await pending;
+      assert.equal(requestControl?.signal?.aborted, true);
+      // An interrupted create without a confirmed ID remains unknown, rather than claiming absence.
+      assert.equal(result.state, operation === "create" ? "unknown" : cancel ? "cancelled" : "timed_out");
+      assert.equal(result.containerCleanupVerified, operation !== "create");
+      assert.ok(!engine.events.includes("start"));
+    });
+  }
+}
+
+test("Preparation readback after the deadline cannot start a subsequent image check", async () => {
+  const engine = new FakeEngine();
+  engine.info = async () => { await new Promise(resolve => setTimeout(resolve, 40)); return { id: ENGINE } as ContainerEngineInfo; };
+  const result = await runner(engine).run(profile(), { ...control(), timeoutMs: 15 });
+  assert.equal(result.state, "timed_out");
+  assert.ok(!engine.events.includes("image"));
+  assert.ok(!engine.events.includes("create"));
+});
+
+for (const wrongProof of ["generic404", "wrongContainer", "wrongEngine"]) {
+  test(`Recovery refuses ${wrongProof} absence evidence`, async () => {
+    const engine = new FakeEngine();
+    engine.absent = true;
+    engine.inspect = async handle => {
+      if (wrongProof === "generic404") throw new BrokerError("TARGET_NOT_FOUND", "An Engine route is absent");
+      throw new ContainerNotFoundError({ ...handle, ...(wrongProof === "wrongContainer" ? { id: "e".repeat(64) } : { engineId: "wrong-engine" }) });
+    };
+    assert.equal(await runner(engine).recoverContainerTask(metadata()), false);
+    assert.ok(!engine.events.includes("remove"));
+  });
+}
 
 function metadata(): ContainerTaskJobMetadata {
   return { schemaVersion: "0.1", containerId: CID, imageId: IMAGE, engineId: ENGINE, taskId: "task-recovered", owner: "owner",
