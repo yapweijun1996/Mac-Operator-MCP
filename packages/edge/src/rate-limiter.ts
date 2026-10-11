@@ -1,3 +1,5 @@
+import { isBrokerId } from "./identity.js";
+
 export interface RateLimitOptions {
   windowMs?: number;
   maxRequests?: number;
@@ -37,7 +39,7 @@ export class FixedWindowRateLimiter {
   }
 
   consume(key: string, nowMs = Date.now()): RateLimitDecision {
-    if (!/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u.test(key) || !Number.isSafeInteger(nowMs) || nowMs < 0) {
+    if (!isBrokerId(key) || !Number.isSafeInteger(nowMs) || nowMs < 0) {
       throw new Error("Rate-limit identity or clock value is invalid");
     }
     this.prune(nowMs);
