@@ -5,6 +5,8 @@
 # Stages the release, proves it opens a private copy of the live state, backs up state, restarts under PM2, checks health
 # and that the signed policy and runtime config stay byte-identical across a second restart. Any failure restores the old state and release.
 set -euo pipefail
+source "${0:A:h}/deployment-state.zsh"
+source "${0:A:h}/deployment-service.zsh"
 BUILT="${1:?built release dir}"; REV="${2:?full commit id}"
 [[ "$REV" =~ '^[0-9a-f]{40}$' ]] || { echo "revision must be a full commit id" >&2; exit 2; }
 MAC="$HOME/Library/Application Support/MacOperator"
@@ -16,7 +18,7 @@ STAMP="$(date +%Y%m%d-%H%M%S)"; BACKUP="$MAC/backups/release-before-$STAMP"
 SERVICE=mac-operator-personal
 PREVIOUS="$($NODE -e 'console.log(JSON.parse(require("fs").readFileSync(process.argv[1],"utf8")).packageRoot)' "$EDGE")"
 PRIOR_EDGE="$(mktemp)"; cp -p "$EDGE" "$PRIOR_EDGE"
-STOPPED=0
+STOPPED=0; BACKUP_COMPLETE=0
 start_service() { # $1 release
   "$PM2" delete $SERVICE >/dev/null 2>&1 || true
   "$PM2" start "$NODE" --name $SERVICE --interpreter none --kill-timeout 15000 --max-restarts 3 --restart-delay 5000 \
@@ -27,15 +29,17 @@ healthy() {
   $NODE -e '
     const { execFileSync } = require("child_process"); const fs = require("fs");
     const edge = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
-    const svc = JSON.parse((t => t.slice(t.indexOf("[")))(execFileSync(process.argv[2], ["jlist"]).toString())).find(p => p.name === process.argv[3]);
     (async () => {
       for (let i = 0; i < 6; i++) {
         let status = 0; try { status = (await fetch(edge.resourceServerUrl, { method: "POST", signal: AbortSignal.timeout(10000) })).status; } catch {}
-        if (svc && svc.pm2_env.status === "online" && svc.pm2_env.restart_time === 0 && status === 401) process.exit(0);
+        const svc = JSON.parse((t => t.slice(t.indexOf("[")))(execFileSync(process.argv[2], ["jlist"], {
+          cwd: "/", env: { PATH: process.env.PATH, HOME: process.env.HOME, ...(process.env.PM2_HOME ? { PM2_HOME: process.env.PM2_HOME } : {}) }, shell: false, timeout: 10000, maxBuffer: 1048576
+        }).toString())).find(p => p.name === process.argv[3]);
+        if (svc && svc.pm2_env.status === "online" && svc.pm2_env.restart_time === Number(process.argv[4]) && status === 401) process.exit(0);
         await new Promise(r => setTimeout(r, 10000));
       }
       process.exit(1);
-    })();' "$EDGE" "$PM2" $SERVICE
+    })();' "$EDGE" "$PM2" $SERVICE "${1:-0}"
 }
 config_ok() { # signed policy and runtime config must be byte-identical to the backup
   cmp -s "$STATE/personal/policy.json" "$BACKUP/state/personal/policy.json" && cmp -s "$STATE/personal/development-runtime.json" "$BACKUP/state/personal/development-runtime.json"
@@ -48,9 +52,16 @@ rollback() {
     exit $rc
   fi
   echo "restoring previous state and release" >&2
-  "$PM2" stop $SERVICE >/dev/null 2>&1 || true
-  if [[ "$STOPPED" == 1 && -d "$BACKUP/state" ]]; then
-    mv "$STATE" "$STATE.failed-$STAMP"; cp -a "$BACKUP/state" "$STATE"
+  if [[ "$BACKUP_COMPLETE" == 1 ]]; then
+    if ! stop_deployment_service "$PM2" "$NODE" "$SERVICE"; then
+      echo "failed release could not be stopped; state was not replaced" >&2
+      exit $rc
+    fi
+    sleep 4
+    if ! restore_protected_state "$STATE" "$BACKUP" "$STAMP"; then
+      echo "complete snapshot could not be restored; service remains stopped" >&2
+      exit $rc
+    fi
   fi
   cp -p "$PRIOR_EDGE" "$EDGE" 2>/dev/null || true
   start_service "$PREVIOUS" || true
@@ -82,7 +93,8 @@ JOBS="$($NODE --no-warnings -e 'const {DatabaseSync}=require("node:sqlite"); con
 echo "4/8 stop service and back up state to $BACKUP"
 mkdir -p -m 700 "$BACKUP"
 "$PM2" stop $SERVICE >/dev/null; STOPPED=1; sleep 4
-cp -Rp "$STATE" "$BACKUP/state"
+backup_protected_state "$STATE" "$BACKUP"
+BACKUP_COMPLETE=1
 [[ -f "$HOME/.pm2/dump.pm2" ]] && cp -p "$HOME/.pm2/dump.pm2" "$BACKUP/dump.pm2" || true
 
 echo "5/8 point Edge at the new release"
@@ -99,7 +111,7 @@ healthy
 
 echo "8/8 restart once more: authority must persist"
 "$PM2" restart $SERVICE >/dev/null
-sleep 5
+healthy 1
 config_ok
 "$PM2" save >/dev/null
 trap - ERR

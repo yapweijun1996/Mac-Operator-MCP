@@ -3,6 +3,7 @@ import test from "node:test";
 import { generateKeyPair, exportJWK, SignJWT, type JSONWebKeySet } from "jose";
 import { OAuthError, OAuthErrorCode } from "@modelcontextprotocol/server";
 import { createJwtAccessTokenVerifier, type JwtRevocationContext } from "./jwt-verifier.js";
+import { createOAuthGrantRevocationCheck } from "./oauth-grant-status.js";
 
 const issuer = new URL("https://issuer.example.test");
 const resourceServerUrl = new URL("https://edge.example.test/mcp");
@@ -100,6 +101,40 @@ test("JWT verifier bounds and caches a remote JWKS fetch", async () => {
     jwks
   }), /HTTPS URL/u);
   assert.throws(() => createJwtAccessTokenVerifier({ issuer, issuerId: "issuer-prod", resourceServerUrl, jwks, jwksUri: new URL("https://issuer.example.test/jwks") }), /exactly one JWKS/u);
+});
+
+test("OAuth status outages reject requests without durable revocation and recover on the same token", async () => {
+  const { publicKey, privateKey } = await generateKeyPair("RS256");
+  const propagated: JwtRevocationContext[] = [];
+  let status: "offline" | "unavailable" | "malformed" | "active" | "revoked" | "narrowed" = "offline";
+  const verifier = createJwtAccessTokenVerifier({
+    issuer, issuerId: "issuer-prod", resourceServerUrl, jwks: await createJwks(publicKey),
+    revocationCheck: createOAuthGrantRevocationCheck({
+      url: new URL("/oauth/status", issuer), key: Buffer.alloc(32, 7),
+      fetch: async () => {
+        if (status === "offline") throw new Error("temporary status outage");
+        if (status === "unavailable") return new Response("unavailable", { status: 503 });
+        if (status === "malformed") return Response.json({ active: true });
+        return Response.json({ active: status !== "revoked", scopes: status === "active" ? ["mac.control.read", "mac.app.control"] : ["mac.control.read"] });
+      }
+    }),
+    onRevoked: async context => { propagated.push(context); }
+  });
+  const token = await createToken(privateKey);
+  for (const failure of ["offline", "unavailable", "malformed"] as const) {
+    status = failure;
+    await assertInvalid(verifier, token);
+    assert.equal(propagated.length, 0);
+  }
+  status = "active";
+  assert.equal((await verifier.verifyAccessToken(token)).token, token);
+  assert.equal(propagated.length, 0);
+  for (const explicitRevocation of ["revoked", "narrowed"] as const) {
+    status = explicitRevocation;
+    await assertInvalid(verifier, token);
+  }
+  assert.equal(propagated.length, 2);
+  assert.equal(propagated.every(context => context.sessionId === "session-1"), true);
 });
 
 test("JWT verifier refreshes remote JWKS when a rotated key id appears", async () => {

@@ -3,6 +3,9 @@ import { closeSync, constants, lstatSync, openSync, realpathSync } from "node:fs
 import { isAbsolute, join } from "node:path";
 import { recordSchemas, type Kind, type RecordValue } from "./contracts.js";
 
+const MAX_AUTH_RECORDS = 8_000;
+const MAX_AUTH_RECORDS_PER_KIND = 1_000;
+
 export interface GrantRevocationNotice {
   grantId: string;
   principalId: string;
@@ -58,8 +61,8 @@ export class AuthStore {
       if (initialize) this.db.exec("CREATE TABLE records (kind TEXT NOT NULL, id TEXT NOT NULL, payload TEXT NOT NULL, PRIMARY KEY(kind,id)) STRICT; PRAGMA user_version=1;");
       if (this.db.prepare("PRAGMA user_version").get()?.user_version !== 1) throw new Error("Unsupported auth schema");
       if (this.db.prepare("PRAGMA quick_check").get()?.quick_check !== "ok") throw new Error("Invalid auth state");
-      const rows = this.db.prepare("SELECT kind, id, payload FROM records LIMIT 8001").all();
-      if (rows.length > 8000) throw new Error("Auth capacity exceeded");
+      const rows = this.db.prepare("SELECT kind, id, payload FROM records LIMIT ?").all(MAX_AUTH_RECORDS + 1);
+      if (rows.length > MAX_AUTH_RECORDS) throw new Error("Auth capacity exceeded");
       for (const row of rows) {
         if (typeof row.kind !== "string" || !Object.hasOwn(recordSchemas, row.kind) || typeof row.id !== "string" ||
             !/^[A-Za-z0-9._:-]{1,128}$/u.test(row.id) || typeof row.payload !== "string" || row.payload.length > 8192) throw new Error("Invalid auth state");
@@ -108,8 +111,10 @@ export class AuthStore {
     this.assertAvailable();
     const payload = JSON.stringify(recordSchemas[kind].parse(value));
     if (!/^[A-Za-z0-9._:-]{1,128}$/u.test(key) || payload.length > 8192) throw new Error("Invalid auth record");
-    if (!this.get(kind, key) && Number(this.db.prepare("SELECT count(*) AS n FROM records WHERE kind=?").get(kind)?.n) >= 1000) {
-      throw new Error("Auth capacity exceeded");
+    if (!this.get(kind, key)) {
+      const total = Number(this.db.prepare("SELECT count(*) AS n FROM records").get()?.n);
+      const kindTotal = Number(this.db.prepare("SELECT count(*) AS n FROM records WHERE kind=?").get(kind)?.n);
+      if (total >= MAX_AUTH_RECORDS || kindTotal >= MAX_AUTH_RECORDS_PER_KIND) throw new Error("Auth capacity exceeded");
     }
     this.write(() => this.db.prepare("INSERT INTO records VALUES(?,?,?) ON CONFLICT(kind,id) DO UPDATE SET payload=excluded.payload").run(kind, key, payload));
   }
@@ -141,15 +146,16 @@ export class AuthStore {
   }
 
   /**
-   * Free registration slots by deleting the oldest clients that no grant references.
+   * Free registration slots without invalidating grants or live authorization flows.
    * Anonymous registration cannot expire, so this keeps it from exhausting capacity.
    */
   evictUnusedClients(count: number): number {
     this.assertAvailable();
     return this.write(() => Number(this.db.prepare(
       "DELETE FROM records WHERE kind='client' AND id IN (SELECT c.id FROM records c WHERE c.kind='client' AND NOT EXISTS " +
-      "(SELECT 1 FROM records g WHERE g.kind='grant' AND json_extract(g.payload,'$.clientId') = c.id) ORDER BY c.rowid LIMIT ?)"
-    ).run(count).changes));
+      "(SELECT 1 FROM records g WHERE json_extract(g.payload,'$.clientId') = c.id AND " +
+      "(g.kind='grant' OR (g.kind IN ('transaction','code') AND json_extract(g.payload,'$.expiresAt') > ?))) ORDER BY c.rowid LIMIT ?)"
+    ).run(Date.now(), count).changes));
   }
 
   /**

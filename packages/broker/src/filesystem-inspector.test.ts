@@ -735,6 +735,29 @@ test("filesystem traversal stays within bounded pressure budgets", async () => {
   }
 });
 
+test("text search reports omitted per-file matches and continues searching other files", async () => {
+  const directory = await realpath(await mkdtemp(join(tmpdir(), "mac-operator-fs-text-per-file-")));
+  try {
+    await writeFile(join(directory, "a.txt"), "needle\n".repeat(100));
+    await writeFile(join(directory, "z.txt"), "needle\n");
+    const inspector = new FilesystemInspector([root(directory)]);
+    const plan = inspector.planPath(directory, "content_read");
+    const complete = inspector.searchTextPlanned([plan], "needle", undefined, 1000);
+    assert.equal(complete.matches.length, 101);
+    assert.equal(complete.truncated, false);
+
+    for (const content of ["needle\n".repeat(150), "needle ".repeat(150)]) {
+      await writeFile(join(directory, "a.txt"), content);
+      const partial = inspector.searchTextPlanned([plan], "needle", undefined, 1000);
+      assert.equal(partial.matches.filter((match) => match.path === join(directory, "a.txt")).length, 100);
+      assert.equal(partial.matches.some((match) => match.path === join(directory, "z.txt")), true);
+      assert.equal(partial.truncated, true);
+    }
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 test("content read requires independent root enablement", async () => {
   const directory = await mkdtemp(join(tmpdir(), "mac-operator-fs-read-scope-"));
   const file = join(directory, "file.txt");
@@ -1380,6 +1403,39 @@ test("recent files are ranked newest first, exclude directories and honor the li
     const limited = inspector.recentFilesPlanned([plan], 86_400, 2, now);
     assert.deepEqual(limited.files.map((file) => file.path.slice(directory.length + 1)), ["nested/newest.txt", "mid.txt"]);
     assert.equal(limited.truncated, true);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("storage depth limits preserve eligible siblings and additional roots", async () => {
+  const directory = await realpath(await mkdtemp(join(tmpdir(), "mac-operator-fs-storage-depth-")));
+  try {
+    const firstRoot = join(directory, "first");
+    const secondRoot = join(directory, "second");
+    await mkdir(join(firstRoot, "a", "nested"), { recursive: true });
+    await mkdir(join(firstRoot, "z"));
+    await mkdir(secondRoot);
+    await writeFile(join(firstRoot, "a", "nested", "excluded.bin"), Buffer.alloc(5000));
+    await writeFile(join(firstRoot, "z", "large.bin"), Buffer.alloc(3000));
+    await writeFile(join(secondRoot, "other.bin"), Buffer.alloc(2000));
+    const inspector = new FilesystemInspector([metadataRoot(directory)]);
+    const plans = [firstRoot, secondRoot].map((path) => inspector.planPath(path, "metadata"));
+
+    const depthOne = inspector.analyzeStoragePlanned(plans, 100, 1);
+    assert.equal(depthOne.truncated, true);
+    assert.equal(depthOne.consumers.some((consumer) => consumer.path === join(firstRoot, "z", "large.bin") && consumer.sizeBytes === 3000), true);
+    assert.equal(depthOne.consumers.some((consumer) => consumer.path === join(secondRoot, "other.bin") && consumer.sizeBytes === 2000), true);
+    assert.equal(depthOne.consumers.some((consumer) => consumer.path.endsWith("excluded.bin")), false);
+
+    const depthZero = inspector.analyzeStoragePlanned(plans, 100, 0);
+    assert.equal(depthZero.truncated, true);
+    assert.equal(depthZero.consumers.some((consumer) => consumer.path === join(secondRoot, "other.bin")), true);
+    assert.equal(depthZero.consumers.some((consumer) => consumer.path.endsWith("large.bin")), false);
+
+    const complete = inspector.analyzeStoragePlanned(plans, 100, 2);
+    assert.equal(complete.truncated, false);
+    assert.equal(complete.consumers.some((consumer) => consumer.path.endsWith("excluded.bin")), true);
   } finally {
     await rm(directory, { recursive: true, force: true });
   }

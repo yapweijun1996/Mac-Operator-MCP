@@ -22,6 +22,7 @@ jobs:
       - run: npm run lint
       - run: npm run verify:docs
       - run: npm run verify:matrix
+      - run: npm run verify:process-boundaries
       - run: npm run typecheck
       - run: npm test
       - run: npm run verify:contracts

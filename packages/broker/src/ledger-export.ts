@@ -202,6 +202,7 @@ function normalizeRequests(rows: readonly RequestRecord[]): RequestRecord[] {
     return {
       requestId: row.requestId,
       edgeId: row.edgeId,
+      ...(row.edgeKeyId === undefined ? {} : { edgeKeyId: row.edgeKeyId }),
       principalId: row.principalId,
       sessionId: row.sessionId,
       tool: row.tool,
@@ -342,8 +343,10 @@ function validateJobRecord(value: unknown): asserts value is BrokerJob {
     throw new BrokerError("AUDIT_UNAVAILABLE", "Ledger export Job record has an unexpected shape");
   }
   if (!/^job:[A-Za-z0-9._-]{1,240}$/u.test(row.jobId) ||
-      (row.ownerEdgeId !== null && !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u.test(row.ownerEdgeId)) ||
-      (row.ownerEdgeKeyId !== null && !/^[A-Za-z0-9._:-]{1,128}$/u.test(row.ownerEdgeKeyId)) ||
+      (row.ownerEdgeId !== null && !isValidEdgeId(row.ownerEdgeId)) ||
+      (row.ownerEdgeKeyId !== null &&
+        (typeof row.ownerEdgeKeyId !== "string" || !isValidEdgeId(row.ownerEdgeId) || !row.ownerEdgeKeyId.startsWith(`${row.ownerEdgeId}:`) ||
+          !isValidEdgeKeyId(row.ownerEdgeKeyId.slice(row.ownerEdgeId.length + 1)))) ||
       !/^[A-Za-z0-9._:@/-]{1,128}$/u.test(row.ownerPrincipalId) || !/^[A-Za-z0-9._:@/-]{1,128}$/u.test(row.ownerSessionId) ||
       !/^mac_[a-z0-9_]{1,123}$/u.test(row.tool) || !bounded(row.targetRef, 4096) ||
       !/^policy-[A-Za-z0-9._:-]{1,120}$/u.test(row.policyVersion) || !/^[a-f0-9]{64}$/u.test(row.payloadDigest) ||

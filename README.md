@@ -45,6 +45,7 @@ to consent to the separate coding grant before using newly enabled tools.
 ## Delivery and operations
 
 - [Testing](TESTING.md)
+- [Codebase bug review](CODEBASE_BUG_REVIEW.md)
 - [Configuration](CONFIGURATION.md)
 - [Deployment](DEPLOYMENT.md)
 - [Owner OAuth login and local setup](docs/oauth-login-operations.md)

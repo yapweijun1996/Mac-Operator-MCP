@@ -4,10 +4,11 @@ import { execFileSync } from "node:child_process";
 import { join, resolve } from "node:path";
 
 let directory, executable;
-const options = { timeout: 30000, maxBuffer: 16384 };
+const options = { cwd: resolve("."), shell: false, env: { PATH: "/usr/bin:/bin:/usr/sbin:/sbin" }, timeout: 30000, maxBuffer: 16384 };
 before(async () => {
   if (process.platform !== "darwin") return;
   directory = await mkdtemp("/tmp/mop-focus-tests-");
+  options.env.TMPDIR = directory;
   executable = join(directory, "focus-fixture");
   const source = join(directory, "fixture.m");
   await writeFile(source, `

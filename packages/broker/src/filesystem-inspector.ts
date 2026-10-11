@@ -645,6 +645,7 @@ export class FilesystemInspector {
     const globPattern = compileSearchGlob(glob);
     let scannedBytes = 0;
     let scanBudgetExceeded = false;
+    let perFileMatchesTruncated = false;
     const result = this.traverseMetadata(
       plans,
       maxResults,
@@ -672,10 +673,14 @@ export class FilesystemInspector {
         if (text.includes("\0")) return undefined;
         const matches: SafeTextMatch[] = [];
         const lines = text.split(/\r?\n/u);
-        for (let lineIndex = 0; lineIndex < lines.length && matches.length < MAX_TEXT_MATCHES_PER_FILE; lineIndex += 1) {
+        scanLines: for (let lineIndex = 0; lineIndex < lines.length; lineIndex += 1) {
           const lineText = lines[lineIndex]!;
           let offset = lineText.indexOf(query);
-          while (offset >= 0 && matches.length < MAX_TEXT_MATCHES_PER_FILE) {
+          while (offset >= 0) {
+            if (matches.length >= MAX_TEXT_MATCHES_PER_FILE) {
+              perFileMatchesTruncated = true;
+              break scanLines;
+            }
             const snippetStart = Math.max(0, offset - 200);
             const snippetEnd = Math.min(lineText.length, offset + query.length + 200);
             matches.push({
@@ -694,7 +699,7 @@ export class FilesystemInspector {
       (match) => `${match.path}:${match.line}:${match.startColumn}`,
       () => scanBudgetExceeded
     );
-    return { query, matches: result.matches, truncated: result.truncated };
+    return { query, matches: result.matches, truncated: result.truncated || perFileMatchesTruncated };
   }
 
   discoverProjectsPlanned(
@@ -924,16 +929,18 @@ export class FilesystemInspector {
     const addWarning = (warning: string): void => {
       if (!warnings.includes(warning) && warnings.length < 32) warnings.push(warning);
     };
+    let traversalStopped = false;
     const budgetExpired = (): boolean => {
       if (Date.now() <= deadlineMs) return false;
       truncated = true;
+      traversalStopped = true;
       addWarning("Storage traversal stopped at its time budget; results are partial. Pass narrower roots or a lower max_depth");
       return true;
     };
-    while (pending.length > 0 && !truncated) {
+    while (pending.length > 0 && !traversalStopped) {
       const current = pending.shift()!;
       let cursor: string | undefined;
-      while (!truncated) {
+      while (!traversalStopped) {
         if (budgetExpired()) break;
         const listing = this.listPlanned(current.plan, cursor, 500, true);
         if (visitedDirectories.has(listing.path) && cursor === undefined) break;
@@ -942,6 +949,7 @@ export class FilesystemInspector {
           visitedDirectoriesCount += 1;
           if (visitedDirectoriesCount > MAX_STORAGE_DIRECTORIES) {
             truncated = true;
+            traversalStopped = true;
             addWarning("Storage traversal exceeded the fixed directory budget");
             break;
           }
@@ -951,12 +959,14 @@ export class FilesystemInspector {
           if (visitedEntries % 64 === 0 && budgetExpired()) break;
           if (visitedEntries > MAX_STORAGE_ENTRIES) {
             truncated = true;
+            traversalStopped = true;
             addWarning("Storage traversal exceeded the fixed entry budget");
             break;
           }
           const childPath = join(listing.path, entry.name);
           if (!isAbsolute(childPath) || childPath.length > 4096) {
             truncated = true;
+            traversalStopped = true;
             addWarning("Storage traversal encountered a path outside the contract limit");
             break;
           }
@@ -994,7 +1004,7 @@ export class FilesystemInspector {
             sizeByPath.set(child.path, child.sizeBytes);
           }
         }
-        if (truncated || listing.nextCursor === null) break;
+        if (traversalStopped || listing.nextCursor === null) break;
         cursor = listing.nextCursor;
       }
     }
