@@ -130,10 +130,14 @@ function requestLoopback(
         chunks.push(value);
       });
       response.once("error", error => finish(error));
-      response.once("end", () => finish(undefined, new Response(Buffer.concat(chunks), {
-        status: response.statusCode ?? 599,
-        headers: responseHeaders(response.headers)
-      })));
+      // Response construction can throw; inside this event callback that would be an uncaught exception, not a rejection.
+      response.once("end", () => {
+        try {
+          finish(undefined, buildResponse(response.statusCode, chunks, response.headers));
+        } catch (error) {
+          finish(error instanceof Error ? error : new Error("OAuth status loopback response is invalid"));
+        }
+      });
     });
     request.once("timeout", () => request.destroy(new Error("OAuth status loopback request timed out")));
     request.once("error", error => finish(error));
@@ -144,6 +148,15 @@ function requestLoopback(
     signal?.addEventListener("abort", onAbort, { once: true });
     request.end(body);
   });
+}
+
+/** The Response constructor prohibits any body, even an empty one, for these statuses. */
+const NULL_BODY_STATUSES: ReadonlySet<number> = new Set([204, 205, 304]);
+
+function buildResponse(statusCode: number | undefined, chunks: readonly Buffer[], headers: IncomingHttpHeaders): Response {
+  const status = statusCode ?? 599;
+  if (!Number.isInteger(status) || status < 200 || status > 599) throw new Error("OAuth status loopback response status is invalid");
+  return new Response(NULL_BODY_STATUSES.has(status) ? null : Buffer.concat(chunks), { status, headers: responseHeaders(headers) });
 }
 
 function responseHeaders(headers: IncomingHttpHeaders): Headers {
