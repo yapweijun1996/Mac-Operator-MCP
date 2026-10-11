@@ -248,8 +248,13 @@ export class ManagedWorktrees {
     assertAuthority: () => void, hasActiveJob: () => boolean, idempotencyKey = "legacy-remove", describeActiveJobs?: () => string): Promise<WorktreeRemoval> {
     return this.serialize(async () => {
       const done = this.completedRemoval(projectRoot, worktree, owner, taskId, idempotencyKey);
-      // A retry after a completed removal only re-attempts the branch cleanup that may not have finished.
-      if (done) return this.deleteTaskBranch(done, control);
+      if (done) {
+        // A retry only re-attempts branch cleanup, and only against the project this removal was recorded for; an
+        // old idempotency key must not reach a repository that has since replaced it, nor outlive revoked authority.
+        assertAuthority();
+        this.verifyProjectIdentity(done);
+        return this.deleteTaskBranch(done, control);
+      }
       const record = this.require(worktree, projectRoot, owner, taskId);
       if (worktree === projectRoot) throw new BrokerError("CONFLICT", "Worktree is the primary checkout and cannot be removed");
       if (hasActiveJob()) throw new BrokerError("CONFLICT", describeActiveJobs?.() ?? "Worktree has an active or unresolved job");
@@ -373,12 +378,16 @@ export class ManagedWorktrees {
     return done;
   }
 
-  private verify(record: ManagedWorktreeRecord): void {
+  private verifyProjectIdentity(record: ManagedWorktreeRecord): void {
     this.checkStorage();
-    const expectedHead = `ref: refs/heads/${record.branchName}`;
     if (!sameProjectIdentity(canonicalProjectRoot(record.projectRoot).identity, record.projectIdentity)) {
       throw new BrokerError("POLICY_DENIED", "Primary project identity changed");
     }
+  }
+
+  private verify(record: ManagedWorktreeRecord): void {
+    this.verifyProjectIdentity(record);
+    const expectedHead = `ref: refs/heads/${record.branchName}`;
     const primaryMetadata = join(record.projectRoot, ".git");
     if (readBounded(join(primaryMetadata, "HEAD"), 4096).trim() === expectedHead) {
       throw new BrokerError("POLICY_DENIED", "Task branch is checked out in the primary repository");

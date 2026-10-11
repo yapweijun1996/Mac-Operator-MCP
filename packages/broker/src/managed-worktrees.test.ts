@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
-import { mkdir, mkdtemp, realpath, rm, symlink, writeFile, readFile, stat } from "node:fs/promises";
+import { mkdir, mkdtemp, realpath, rename, rm, symlink, writeFile, readFile, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import test from "node:test";
@@ -311,6 +311,42 @@ test("a task re-created after removal is removable again and stale removal keys 
     assert.equal(f.registry.removalRetry(f.project, second.record.worktree, "owner", "task-1", "rm-1"), true);
     assert.equal(f.registry.removalRetry(f.project, second.record.worktree, "owner", "task-1", "rm-2"), true);
     await assert.rejects(remove(second.record.worktree, "rm-3"), /another retry key/u);
+  } finally { await f.cleanup(); }
+});
+
+test("a completed removal retry never mutates a replacement project", async () => {
+  const f = await worktreeFixture();
+  try {
+    const remove = (worktree: string) => f.registry.remove(f.project, worktree, "owner", "task-1", control, authority, () => false, "rm-1");
+    const created = await f.create("task-1");
+    assert.deepEqual(await remove(created.record.worktree), { branchName: "codex/task-1", branchDeleted: true });
+    // Replace the primary repository with a different one that has the same safely deletable branch.
+    const replacement = join(f.root, "replacement");
+    await mkdir(replacement, { mode: 0o700 });
+    git(replacement, ["init", "-b", "main"]);
+    git(replacement, ["config", "user.name", "Replacement"]);
+    git(replacement, ["config", "user.email", "replacement@example.invalid"]);
+    await writeFile(join(replacement, "other.txt"), "other\n");
+    git(replacement, ["add", "--", "other.txt"]);
+    git(replacement, ["commit", "-m", "Replacement baseline"]);
+    git(replacement, ["branch", "codex/task-1"]);
+    await rename(join(f.project, ".git"), join(f.root, "original-git"));
+    await rename(join(replacement, ".git"), join(f.project, ".git"));
+    await assert.rejects(remove(created.record.worktree), brokerFailure("POLICY_DENIED", /project identity changed/u));
+    assert.equal(git(f.project, ["branch", "--list", "codex/task-1"]).trim(), "codex/task-1", "the replacement's branch must survive the stale retry");
+  } finally { await f.cleanup(); }
+});
+
+test("a completed removal retry needs live authority before any branch cleanup", async () => {
+  const f = await worktreeFixture();
+  try {
+    const created = await f.create("task-1");
+    const remove = (assertAuthority: () => void) => f.registry.remove(f.project, created.record.worktree, "owner", "task-1", control, assertAuthority, () => false, "rm-1");
+    assert.deepEqual(await remove(authority), { branchName: "codex/task-1", branchDeleted: true });
+    git(f.project, ["branch", "codex/task-1"]);
+    const revoked = () => { throw new BrokerError("POLICY_DENIED", "Authority was revoked"); };
+    await assert.rejects(remove(revoked), brokerFailure("POLICY_DENIED", /revoked/u));
+    assert.equal(git(f.project, ["branch", "--list", "codex/task-1"]).trim(), "codex/task-1", "a revoked caller must not delete the branch");
   } finally { await f.cleanup(); }
 });
 
