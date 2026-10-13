@@ -18,6 +18,13 @@ The previously missing BUG-15 through BUG-28 history is also restored below.
 FIXED refers to verified local source behavior. No production configuration,
 migration, deployment or push is included in this remediation.
 
+Repairs are committed as `a7f2450`. Subsequent actual pre-deployment acceptance
+found two existing production configuration/provenance blockers and a missing
+approved task image. The original service is stopped after its backup; a tested
+replacement-image recovery awaits explicit approval. These operational findings
+and the verified backup are recorded in the
+[pre-deployment evidence](evidence/2026-10-13-predeployment-acceptance.md).
+
 P1 denotes a security boundary failure, serious availability failure, or unsafe
 state recovery. P2 denotes a narrower functional, integrity, or verification
 defect. This is a broad review with focused deep checks, not an exhaustive proof

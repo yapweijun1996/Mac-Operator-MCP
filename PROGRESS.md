@@ -1,5 +1,29 @@
 # Mac-Operator-MCP Progress
 
+## Current pre-deployment acceptance: PARTIAL; recovery approval pending — 2026-10-13
+
+The BUG-29 through BUG-37 repairs and documentation are committed locally as
+`a7f24509eeb668c63334e1b154fc6b1b1300474b`; no push or repair rollout occurred.
+The installed `09dd85b` service was healthy before its consistent state backup.
+The complete stopped snapshot contains 554 files / 101,882,778 bytes, with
+matching file content and ownership/modes. Its directory is owner-only.
+
+The original service could not restart because its approved Docker image was
+absent from the configured OrbStack Engine at restart. Startup failed closed;
+the retry loop is stopped while the original release is recovered. A replacement
+image is prepared from the retained pinned build inputs. Its public helper-file
+permissions were corrected after actual build acceptance found an `EACCES`.
+The corrected final image passed 17 physical checks, actual Codex read/write,
+site build, approved Git commit and 16 fresh mapped runtime checks. Its private
+archive retains the exact manifest. No production binding changed: automatic
+approval review rejected switching the image/evidence and restarting without
+explicit owner authorization. The original service remains stopped, awaiting
+that approval. The new rollout is NO-GO: the installed test profile's input is
+secret-filtered, and one historical active worktree has a stale primary Git
+configuration identity. Preserve both guards and reconcile the causes.
+Full evidence, backup location and the reviewed recovery action:
+[pre-deployment record](evidence/2026-10-13-predeployment-acceptance.md).
+
 ## Current BUG-29 through BUG-37 remediation: DONE locally — 2026-10-13
 
 All nine authorized P2 repairs are implemented and regression-verified. The
@@ -54,7 +78,7 @@ real browser/service acceptance and the 19 skips remain outside this claim.
 External npm advisory and KB transfer operations were not performed after
 automatic approval review rejected the outbound disclosures.
 
-## Current Mac mini deployment: DONE — 2026-10-05
+## Historical Mac mini deployment: DONE — 2026-10-05
 
 Latest GitHub main `5fbc317` is installed as `personal-20261005-5fbc317`.
 The preexisting restart loop was caused by a deleted pinned Docker task image;

@@ -50,6 +50,16 @@ signed tool (for example `V2 tool set mismatch` at startup) is rolled back and
 needs the documented manual `personal-service.js <mode> ... --enable` upgrade.
 It also never touches the installed GUI app, OAuth grants or keys.
 
+Before manual quiescence or a backup, independently verify the installed release's
+restart prerequisites: exact approved Engine/image availability, Codex readiness,
+signed-policy/runtime bindings and managed worktree provenance. The current
+automatic startup preflight opens a private Broker database copy; it does not
+prove that every external runtime dependency is still available. A service can
+remain online after its pinned image disappears and then fail closed on restart.
+Keep an exact-image private archive with the consistent state backup. Missing
+images require validated, explicitly authorized recovery; a state restore alone
+cannot recreate them. See the [October 13 acceptance record](../evidence/2026-10-13-predeployment-acceptance.md).
+
 ## Commands
 
 ```sh

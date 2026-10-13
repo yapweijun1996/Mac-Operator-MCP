@@ -1,8 +1,13 @@
 # Personal always-on deployment
 
-Status: V2 coding and independent owner terminal OAuth connections are running
-as of October 2, 2026. This is an owner-managed, unsigned personal deployment,
-not a Developer ID/notarized package or the formal production installer.
+Current verification (October 13, 2026): installed source is `09dd85b`, with V2
+Auth and independent owner-terminal OAuth disabled. The original service is
+stopped after a consistent backup exposed its missing approved task image.
+Validated replacement-image recovery awaits explicit owner approval; the new
+source rollout remains NO-GO for two configuration/provenance findings.
+See the [current acceptance and backup record](../evidence/2026-10-13-predeployment-acceptance.md).
+This is an owner-managed, unsigned personal deployment, not a Developer
+ID/notarized package or the formal production installer.
 
 ## GUI deployment prerequisite
 
@@ -82,7 +87,7 @@ granted. Prior GUI regression passed; the owner requested no additional tests an
 live GUI acceptance. See the
 [repair evidence](../evidence/2026-10-02-chrome-gui-reusable-grant.md).
 
-## Current V2 and owner terminal connections
+## Historical October 2 V2 and owner terminal connections
 
 The default `https://mac.yapweijun1996.com/mcp` retains the V2 coding profile:
 27 OAuth scopes and 48 tools, including approved worktree/container development.
