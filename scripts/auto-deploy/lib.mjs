@@ -59,6 +59,29 @@ export function parseFailedTestFiles(log) {
   return [...files].sort();
 }
 
+/**
+ * Restart policy of the supervised service. `min_uptime` is what makes `max_restarts` effective: PM2 only counts a
+ * restart against the limit when the process died before `min_uptime`, and the fail-closed startup path lives
+ * longer than PM2's 1 s default, so with the default the service restarted without bound. `pm2 start` has no
+ * `--min-uptime` flag, so the policy is only expressible in an ecosystem file. 60 attempts at a 5 s delay is a
+ * window of roughly 8 minutes, enough for the Container Engine to come up after a reboot, after which PM2 stops
+ * retrying instead of looping forever.
+ */
+export const PM2_RESTART_POLICY = Object.freeze({ kill_timeout: 15000, max_restarts: 60, restart_delay: 5000, min_uptime: 30000 });
+
+/** Builds the PM2 ecosystem document for the personal service; every path must be absolute. */
+export function pm2Ecosystem({ name, execPath, release, stateRoot }) {
+  for (const [label, value] of Object.entries({ execPath, release, stateRoot })) {
+    if (typeof value !== "string" || !value.startsWith("/")) throw new Error(`${label} must be an absolute path`);
+  }
+  return {
+    apps: [{
+      name, script: execPath, args: [`${release}/packages/auth/dist/personal-service.js`, "start", stateRoot],
+      cwd: release, interpreter: "none", ...PM2_RESTART_POLICY
+    }]
+  };
+}
+
 /** Reads the supervised service out of `pm2 jlist` output; undefined when it is not registered. */
 export function parsePm2Service(jlist, name) {
   const entry = JSON.parse(jlist).find((item) => item.name === name);

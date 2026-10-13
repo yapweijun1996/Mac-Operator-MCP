@@ -89,3 +89,34 @@ scripts. An incomplete `state.partial` directory is never a rollback source.
 Release scripts check health after both starts: zero restarts after the initial
 start and exactly one after the explicit final restart. An additional automatic
 restart fails the deployment before it is saved or reported as successful.
+
+## PM2 restart policy
+
+The auto-deploy path starts the service from a private ecosystem file
+(`auto-deploy/pm2-ecosystem.json`, mode 0600) built by `pm2Ecosystem()` in
+`scripts/auto-deploy/lib.mjs`, not from command-line flags. The policy is
+`max_restarts: 60`, `restart_delay: 5000` and `min_uptime: 30000`.
+
+`min_uptime` is required for the limit to mean anything. PM2 counts a restart
+against `max_restarts` only when the process died before `min_uptime`; the
+fail-closed startup path lives longer than PM2's 1 s default, so with the
+default the service restarted without bound (337 restarts during the
+2026-10-13 outage). `pm2 start` has no `--min-uptime` flag in PM2 6.0.14, so it
+cannot be set from the command line. The window is about eight minutes, long
+enough for the Container Engine to come up after a reboot and finite after
+that. When the limit is reached PM2 stops retrying and leaves the service in
+`waiting restart` (not `errored`) with no process; `isHealthy` treats that as
+unhealthy. Nothing revives it automatically, because the host `pm2-health`
+monitor does not list this service: recover it with `pm2 restart
+mac-operator-personal` after fixing the cause.
+
+To change a running service without redeploying, restart it from a clean
+environment so the calling shell's variables are not copied into the service:
+`env -i PATH=/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin
+HOME="$HOME" pm2 restart <ecosystem-file>`, then check `pm2 jlist` for the new
+values. Do not add `--update-env`. `pm2 save` rewrites the whole dump and also
+adds every other running app to it, so compare the dump before and after.
+
+The manual `deploy-*.zsh` scripts still start the service with
+`--max-restarts 3 --restart-delay 5000`, which has no `min_uptime`. Running one
+recreates the service without the bound until it is moved to the same file.

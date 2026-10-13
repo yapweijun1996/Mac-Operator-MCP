@@ -1,6 +1,33 @@
 # Mac-Operator-MCP Progress
 
-## Current pre-deployment acceptance: PARTIAL; recovery approval pending — 2026-10-13
+## Current service recovery: SERVICE RESTORED; authenticated MCP calls not yet verified — 2026-10-13
+
+The installed `09dd85b` service is running again with no production configuration
+change. A bounded startup diagnostic captured the hidden error: the Container
+Engine returned HTTP 404 for the pinned task image
+`sha256:90e9d231f56d358dd792b928da7a1da4ce1349306e91dacaa83d9a73defa5b25`,
+called from `personal-development-runtime.ts`. The Engine ID, Codex 0.160.1
+hash and runtime evidence hash all still matched. The 2026-10-05 backup archive
+held that exact image; loading it restored the identical image ID, and the
+service then started by itself. The prepared replacement image and
+`recovery-runtime.json` were not applied and are no longer needed.
+
+Verified: PM2 `online` with a stable restart count across a controlled restart;
+Edge `3443` and Auth `3444` listening; public unauthenticated `/mcp` returns 401
+with the expected challenge and OAuth metadata returns 200; an authenticated
+internal `/mcp` call succeeds; the other PM2 services are unchanged.
+**Not verified:** an authenticated `mac_health` and `mac_terminal_exec` call; no
+MCP client session was available. The two rollout blockers below are unchanged.
+
+The PM2 restart policy is now bounded: `max_restarts: 60`, `restart_delay: 5000`,
+`min_uptime: 30000`, applied in place and saved. The earlier `--max-restarts 3`
+never applied because the failing start outlived PM2's 1 s default `min_uptime`,
+which is how the service reached hundreds of restarts. See
+[PM2 restart policy](docs/auto-deploy.md#pm2-restart-policy) and the
+[recovery update](evidence/2026-10-13-predeployment-acceptance.md#recovery-update).
+The manual `deploy-*.zsh` scripts still start the service without `min_uptime`.
+
+## Earlier pre-deployment acceptance: PARTIAL; recovery approval pending — 2026-10-13 (service state superseded above)
 
 The BUG-29 through BUG-37 repairs and documentation are committed locally as
 `a7f24509eeb668c63334e1b154fc6b1b1300474b`; no push or repair rollout occurred.

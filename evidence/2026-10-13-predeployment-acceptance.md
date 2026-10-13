@@ -125,3 +125,86 @@ For rollback, restoring the original snapshot alone still references the missing
 image. Retain the accepted replacement image, matching recovery configuration and
 evidence together with the state backup. Always verify the loaded image identity
 and reconcile subsequent Jobs/worktrees before restoring older state.
+
+## Recovery update
+
+Later on 2026-10-13 the original service was recovered without applying the
+prepared replacement image or any production configuration change. The earlier
+sections of this record describe the state at backup time and are kept as written.
+
+### Root cause
+
+PM2 showed `mac-operator-personal` in a restart loop (307 restarts when
+investigation began). `main()` in `personal-service.ts` discards the startup
+error on purpose, so the log held only the generic fail-closed line. A bounded
+diagnostic (a preload that records errors reaching `Promise.prototype.catch`,
+45 s limit, long tokens masked, run outside PM2) captured
+`BrokerError: Container Engine operation failed with status 404`, raised by
+`inspectImage` in `container-engine.ts` and called from
+`personal-development-runtime.ts`. The first attempts reported
+`ALREADY_ACTIVE` because PM2's own attempt held the service lock; retrying until
+the lock was free produced the real error.
+
+The configured image `sha256:90e9d231f56d358dd792b928da7a1da4ce1349306e91dacaa83d9a73defa5b25`
+was absent from the OrbStack Engine. Everything else the startup checks matched:
+Engine ID, Codex executable hash and version, runtime evidence hash and file
+modes. The signed policy does not reference the image or evidence, so no
+re-signing was involved. Why the image left the Engine is not established.
+
+### Repair
+
+`backups/before-personal-20261005-5fbc317/recovery-image.tar` (SHA-256
+`76982c163bc342aef15f99341223b88412e7c2ef23b8c5c4def2a65f18fc3115`) holds the
+pinned image: its OCI index names manifest digest `sha256:90e9d231...` and tag
+`recovery-20261005`. `docker load -i` restored that tag and `docker image inspect`
+returned the identical ID. A throwaway container from it ran as uid 65533 with no
+network, a read-only root, no capabilities, no host mounts and no Docker socket.
+PM2 restarted the service on its own within its normal retry cycle. The
+`predeploy-recovery` images and `recovery-runtime.json` prepared earlier stay
+unused.
+
+### Verification
+
+| Check | Result |
+| --- | --- |
+| PM2 `online`, restart count stable across a 60 s window and a controlled restart | PASS |
+| Edge `127.0.0.1:3443` and Auth `127.0.0.1:3444` listening | PASS |
+| Public unauthenticated `/mcp` | PASS, 401 with challenge |
+| Public OAuth protected-resource and authorization-server metadata | PASS, 200 |
+| Authenticated internal `/mcp` `server/discover` | PASS, 200 |
+| Other PM2 services (35) | PASS, unchanged |
+| Authenticated `mac_health` | NOT VERIFIED |
+| Authenticated `mac_terminal_exec` | NOT VERIFIED |
+
+No MCP client session was available, so the two authenticated tool calls were not
+made. A loopback request without the public `Host` header returns 403 by design.
+The two rollout blockers above, PREDEPLOY-01 and PREDEPLOY-02, were not touched.
+
+### PM2 restart policy
+
+The loop reached hundreds of restarts because PM2 counts a restart against
+`max_restarts` only when the process died before `min_uptime` (default 1 s), and
+the fail-closed start lives longer. `pm2 start` has no `--min-uptime` flag in PM2
+6.0.14, so the policy needs an ecosystem file. It was checked in an isolated PM2
+home first: the old flags restarted without bound, while `min_uptime` plus
+`max_restarts` stopped the process and left it at `waiting restart`.
+
+The running service now has `max_restarts: 60`, `restart_delay: 5000`,
+`min_uptime: 30000` (about eight minutes of retries), applied in place with the
+service id and environment unchanged, and saved. Only that service's dump entry
+differs from the previous dump. The limit is not 3 because the host `pm2-health`
+monitor does not cover this service and a reboot can need minutes for the Engine.
+After the limit PM2 leaves the service stopped; recover it with
+`pm2 restart mac-operator-personal` once the cause is fixed.
+
+Rollback: `backups/pm2-restart-policy-before-20261013T174853` holds the previous
+dump and a `rollback.ecosystem.json` with the old values (owner-only).
+
+### Related findings
+
+`Mac-AI-Terminal-Hub` release gates, checked read-only: no `_terminalhub` account
+exists, the Cloudflare Access application and policy could not be checked without
+an Access API credential, the installed ttyd (Homebrew 1.7.7_14, ad-hoc signed)
+is not hash-pinned in that repository, and there is no production release
+verifier. No `terminal.yapweijun1996.com` DNS record or tunnel route exists, so
+nothing is exposed. The Hub is not ready for a separate deployment.

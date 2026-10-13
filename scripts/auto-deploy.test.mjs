@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
-  classifyRelation, decideAction, isHealthy, isRuntimeRelevant, parseFailedTestFiles, parsePm2Service, patchEdgeConfig, releaseName, selectPrunable
+  PM2_RESTART_POLICY, classifyRelation, decideAction, isHealthy, isRuntimeRelevant, parseFailedTestFiles, parsePm2Service, patchEdgeConfig, pm2Ecosystem,
+  releaseName, selectPrunable
 } from "./auto-deploy/lib.mjs";
 
 const REV = "a".repeat(40);
@@ -68,4 +69,23 @@ test("parsePm2Service and isHealthy require an online, never-restarted service w
   assert.equal(isHealthy({ service: { ...service, restarts: 1 }, statuses: [401] }), false);
   assert.equal(isHealthy({ service: { ...service, status: "errored" }, statuses: [401] }), false);
   assert.equal(isHealthy({ service: undefined, statuses: [401] }), false);
+});
+
+test("pm2Ecosystem binds the service to absolute paths and a restart policy that actually bounds a fail-closed loop", () => {
+  const document = pm2Ecosystem({ name: "svc", execPath: "/opt/homebrew/bin/node", release: "/r/release", stateRoot: "/r/state" });
+  assert.deepEqual(document, { apps: [{
+    name: "svc", script: "/opt/homebrew/bin/node", args: ["/r/release/packages/auth/dist/personal-service.js", "start", "/r/state"],
+    cwd: "/r/release", interpreter: "none", kill_timeout: 15000, max_restarts: 60, restart_delay: 5000, min_uptime: 30000
+  }] });
+  // PM2 counts a restart against max_restarts only when the process died before min_uptime. The fail-closed startup
+  // lives a few seconds, so min_uptime must stay well above PM2's 1000 ms default or the bound never applies.
+  assert.ok(PM2_RESTART_POLICY.min_uptime >= 10_000);
+  assert.ok(Number.isInteger(PM2_RESTART_POLICY.max_restarts) && PM2_RESTART_POLICY.max_restarts > 3);
+  // Retry window must outlast a reboot where the Container Engine is slow to come up (about 8 minutes) yet stay finite.
+  const windowMs = PM2_RESTART_POLICY.max_restarts * PM2_RESTART_POLICY.restart_delay;
+  assert.ok(windowMs >= 5 * 60_000 && windowMs <= 30 * 60_000);
+  assert.throws(() => pm2Ecosystem({ name: "svc", execPath: "node", release: "/r", stateRoot: "/s" }), /absolute/u);
+  assert.throws(() => pm2Ecosystem({ name: "svc", execPath: "/n", release: "r", stateRoot: "/s" }), /absolute/u);
+  assert.throws(() => pm2Ecosystem({ name: "svc", execPath: "/n", release: "/r", stateRoot: undefined }), /absolute/u);
+  assert.throws(() => { PM2_RESTART_POLICY.max_restarts = 1; });
 });

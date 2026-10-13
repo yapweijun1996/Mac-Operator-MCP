@@ -12,7 +12,7 @@ import { preflightState } from "./preflight.mjs";
 import { cutoverRelease } from "./cutover.mjs";
 import { setTimeout as delay } from "node:timers/promises";
 import {
-  classifyRelation, decideAction, isHealthy, parseFailedTestFiles, parsePm2Service, releaseName, selectPrunable
+  classifyRelation, decideAction, isHealthy, parseFailedTestFiles, parsePm2Service, pm2Ecosystem, releaseName, selectPrunable
 } from "./lib.mjs";
 
 const HOME = homedir();
@@ -29,7 +29,7 @@ const SERVICE = "mac-operator-personal";
 const REPO_URL = process.env.MOP_AUTODEPLOY_REPO ?? "https://github.com/yapweijun1996/Mac-Operator-MCP.git";
 const KEEP_RELEASES = 5;
 const POLL_SECONDS = 300;
-const PM2_FLAGS = ["--interpreter", "none", "--kill-timeout", "15000", "--max-restarts", "3", "--restart-delay", "5000"];
+const PM2_ECOSYSTEM_FILE = join(ROOT, "pm2-ecosystem.json");
 const PATH_ENV = "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin";
 const env = { ...process.env, PATH: PATH_ENV, HOME };
 
@@ -147,8 +147,12 @@ function startService(release, stateRoot, execPath) {
     const listed = run("pm2", ["jlist"], { timeout: 30_000 });
     if (!listed.ok || parsePm2Service(listed.stdout.slice(listed.stdout.indexOf("[")), SERVICE) !== undefined) return false;
   }
-  return run("pm2", ["start", execPath, "--name", SERVICE, ...PM2_FLAGS, "--cwd", release, "--", `${release}/packages/auth/dist/personal-service.js`, "start", stateRoot],
-    { cwd: release, timeout: 60_000 }).ok;
+  // The restart policy includes min_uptime, which `pm2 start` cannot take as a flag, so it goes through a private ecosystem file.
+  const document = pm2Ecosystem({ name: SERVICE, execPath, release, stateRoot });
+  const staged = `${PM2_ECOSYSTEM_FILE}.tmp`;
+  writeFileSync(staged, `${JSON.stringify(document, null, 2)}\n`, { mode: 0o600 });
+  renameSync(staged, PM2_ECOSYSTEM_FILE);
+  return run("pm2", ["start", PM2_ECOSYSTEM_FILE], { cwd: release, timeout: 60_000 }).ok;
 }
 
 let forcedUnhealthyUsed = false;
