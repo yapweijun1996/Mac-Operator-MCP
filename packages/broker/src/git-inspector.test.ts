@@ -1,12 +1,15 @@
 import assert from "node:assert/strict";
 import { execFileSync, spawn } from "node:child_process";
-import { mkdir, mkdtemp, realpath, rm, symlink, writeFile } from "node:fs/promises";
+import { copyFileSync, existsSync, readFileSync, renameSync } from "node:fs";
+import { mkdir, mkdtemp, readdir, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import test from "node:test";
 import { BrokerError } from "@mac-operator/contracts";
 import { GitBranchListInspector, GitDiffInspectorImpl, GitLogInspectorImpl, GitStatusInspector, GitWriteInspectorImpl, parseGitBranchResult, parseGitDiffResult, parseGitLogResult, parseGitStatusOutput, validateGitCommitRequest, validateGitDiffRequest, validateGitLogRequest, validateGitStageRequest, validateGitStatusRequest } from "./git-inspector.js";
 import type { ProcessExecutionResult } from "./process-supervisor.js";
+import { ProcessSupervisor } from "./process-supervisor.js";
+import { SAFE_GIT_ENVIRONMENT } from "./git-inspector.js";
 
 function success(stdout: string): ProcessExecutionResult {
   return {
@@ -223,6 +226,47 @@ test("Git diff parser redacts content, extracts bounded paths, and hashes saniti
   assert.match(result.sha256, /^[a-f0-9]{64}$/u);
 });
 
+test("Git diff decodes real quoted headers, mode changes, additions and deletions", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "mac-operator-git-quoted-"));
+  const project = await realpath(directory);
+  const names = ["plain.txt", "space name.txt", "caf\u00e9.txt", 'double"quote.txt', "nested b/name.txt"];
+  try {
+    await runFixtureGit(project, ["init", "--quiet"]);
+    await runFixtureGit(project, ["config", "user.name", "Fixture"]);
+    await runFixtureGit(project, ["config", "user.email", "fixture@example.invalid"]);
+    await mkdir(join(project, "nested b"));
+    for (const name of names) await writeFile(join(project, name), "before\n");
+    await runFixtureGit(project, ["add", "--", ...names]);
+    await runFixtureGit(project, ["commit", "--quiet", "-m", "Fixture"]);
+    for (const name of names) await writeFile(join(project, name), "after\n");
+    await rm(join(project, "plain.txt"));
+    await writeFile(join(project, 'new"file.txt'), "new\n");
+    await runFixtureGit(project, ["add", "--", ...names, 'new"file.txt']);
+    const diff = await new GitDiffInspectorImpl().diff(project, [], true, undefined, 65_536, { timeoutMs: 10_000, shouldCancel: () => false });
+    assert.deepEqual([...diff.changedPaths].sort(), [...names, 'new"file.txt'].sort());
+    assert.equal(diff.truncated, false);
+    const modeOnly = parseGitDiffResult(project, [], false, undefined, 65_536,
+      success('diff --git "a/caf\\303\\251.txt" "b/caf\\303\\251.txt"\nold mode 100644\nnew mode 100755\n'));
+    assert.deepEqual(modeOnly.changedPaths, ["caf\u00e9.txt"]);
+    const headerContent = parseGitDiffResult(project, [], false, undefined, 65_536,
+      success("diff --git a/real.txt b/real.txt\n--- a/real.txt\n+++ b/real.txt\n@@ -1 +1 @@\n--- a/fake.txt\n+++ b/fake.txt\n"));
+    assert.deepEqual(headerContent.changedPaths, ["real.txt"]);
+    const unsupported = parseGitDiffResult(project, [], false, undefined, 65_536,
+      success('diff --git "a/line\\nname.txt" "b/line\\nname.txt"\n'));
+    assert.deepEqual(unsupported.changedPaths, []);
+    assert.equal(unsupported.truncated, true);
+  } finally { await rm(project, { recursive: true, force: true }); }
+});
+
+for (const count of [5_000, 5_001]) {
+  test(`Git diff reports path completeness at ${count} distinct paths`, () => {
+    const headers = Array.from({ length: count }, (_, index) => `diff --git a/file-${index}.txt b/file-${index}.txt\n`).join("");
+    const parsed = parseGitDiffResult("/tmp/project", [], false, undefined, 1_048_576, success(headers + "diff --git a/file-0.txt b/file-0.txt\n"));
+    assert.equal(parsed.changedPaths.length, Math.min(count, 5_000));
+    assert.equal(parsed.truncated, count > 5_000);
+  });
+}
+
 test("Git diff validates literal paths, revisions, and byte budgets", () => {
   for (const path of ["/absolute/path", "../outside", "nested/../outside", ":(glob)secret", "bad\\path"]) {
     assert.throws(() => validateGitDiffRequest("/tmp/project", [path]), BrokerError);
@@ -317,6 +361,7 @@ test("Git commit binds staged digest and reads back HEAD parents and a clean ind
   await writeFile(join(target, "src", "main.ts"), "export {}\n", { mode: 0o600 });
   const firstHead = "a".repeat(40);
   const secondHead = "b".repeat(40);
+  await writeFile(join(target, ".git", "index"), "synthetic index");
   let commitRan = false;
   const commands: readonly string[][] = [];
   const inspector = new GitWriteInspectorImpl({
@@ -324,9 +369,9 @@ test("Git commit binds staged digest and reads back HEAD parents and a clean ind
       (commands as string[][]).push([...request.args]);
       if (request.args.includes("rev-parse")) return success(`${commitRan ? secondHead : firstHead}\n`);
       if (request.args.includes("rev-list")) return success(`${commitRan ? secondHead : firstHead} ${firstHead}\n`);
-      if (request.args.includes("--raw")) return success(commitRan ? "" : "raw-staged");
+      if (request.args.includes("--raw")) return success(commitRan && request.args.includes("--cached") ? "" : "raw-staged");
       if (request.args.includes("--text")) return success("safe staged content");
-      if (request.args.includes("--name-only")) return success(commitRan ? "" : "src/main.ts\0");
+      if (request.args.includes("--name-only")) return success(commitRan && request.args.includes("--cached") ? "" : "src/main.ts\0");
       if (request.args.includes("commit")) {
         commitRan = true;
         return success("[main bbbbbbb] safe commit\n");
@@ -388,6 +433,57 @@ test("Git write inspector performs a real bounded temporary-repository stage and
   }
 });
 
+for (const duringSnapshot of [false, true]) {
+  test(`Git commit excludes concurrent staged replacements (during snapshot=${duringSnapshot})`, async () => {
+    const directory = await mkdtemp(join(tmpdir(), "mac-git-index-race-"));
+    const project = await realpath(directory);
+    const supervisor = new ProcessSupervisor({ allowedEnvironmentKeys: [...Object.keys(SAFE_GIT_ENVIRONMENT), "GIT_INDEX_FILE"] });
+    try {
+      const git = (args: string[], extraEnvironment = {}) => execFileSync("/usr/bin/git", args,
+        { cwd: project, encoding: "utf8", stdio: "pipe", env: { ...SAFE_GIT_ENVIRONMENT, ...extraEnvironment } });
+      git(["init", "-q", "-b", "main"]);
+      git(["config", "user.name", "Fixture"]); git(["config", "user.email", "fixture@example.invalid"]);
+      await writeFile(join(project, "file.txt"), "initial\n");
+      git(["add", "--", "file.txt"]); git(["commit", "-qm", "Initial"]);
+      await writeFile(join(project, "file.txt"), "approved\n");
+      const staged = await new GitWriteInspectorImpl().stage(project, ["file.txt"], { timeoutMs: 10_000, shouldCancel: () => false });
+      let raced = false;
+      const writer = new GitWriteInspectorImpl({ run: async request => {
+        if (!raced && request.environment?.GIT_INDEX_FILE && request.args.includes(duringSnapshot ? "--raw" : "commit")) {
+          raced = true;
+          assert.equal(existsSync(join(project, ".git", "index.lock")), true);
+          await writeFile(join(project, "file.txt"), "replacement\n");
+          // Ordinary writers respect the held lock.
+          assert.throws(() => git(["add", "--", "file.txt"]), /index.lock/u);
+          // Simulate a noncooperating writer publishing a different index anyway.
+          const replacement = join(project, ".git", "replacement-index");
+          copyFileSync(join(project, ".git", "index"), replacement);
+          git(["add", "--", "file.txt"], { GIT_INDEX_FILE: replacement });
+          renameSync(replacement, join(project, ".git", "index"));
+        }
+        return supervisor.run(request);
+      } });
+      await assert.rejects(writer.commit(project, "Approved only", staged.stagedDiffSha256, { timeoutMs: 10_000, shouldCancel: () => false }),
+        (error: unknown) => error instanceof BrokerError && error.errorClass === "VERIFICATION_FAILED" && /left staged content/u.test(error.message));
+      assert.equal(raced, true);
+      assert.equal(git(["show", "HEAD:file.txt"]), "approved\n");
+      assert.equal(git(["show", ":file.txt"]), "replacement\n");
+      assert.equal(readFileSync(join(project, "file.txt"), "utf8"), "replacement\n");
+      assert.equal(existsSync(join(project, ".git", "index.lock")), false);
+      assert.equal((await readdir(join(project, ".git"))).some(name => name.startsWith(".mac-operator-index-")), false);
+    } finally { await supervisor.close(); await rm(project, { recursive: true, force: true }); }
+  });
+}
+
+test("Git snapshot environment cannot be supplied as an arbitrary process override", async () => {
+  const supervisor = new ProcessSupervisor({ allowedEnvironmentKeys: ["GIT_INDEX_FILE"] });
+  try {
+    await assert.rejects(supervisor.run({ executable: "/usr/bin/git", cwd: "/private/tmp", args: ["--version"],
+      environment: { GIT_INDEX_FILE: "/private/tmp/arbitrary-index" }, timeoutMs: 1_000, outputCapBytes: 1_024 }),
+    (error: unknown) => error instanceof BrokerError && error.errorClass === "POLICY_DENIED" && /Broker-owned snapshot/u.test(error.message));
+  } finally { await supervisor.close(); }
+});
+
 test("Git write inspector reaches the mutation boundary only after every precondition passed", async () => {
   const directory = await mkdtemp(join(tmpdir(), "mac-operator-git-boundary-"));
   try {
@@ -436,6 +532,21 @@ test("Git write inspector reaches the mutation boundary only after every precond
     await assert.rejects(inspector.commit(projectRoot, "stale", "0".repeat(64), control), (error: unknown) =>
       error instanceof BrokerError && error.errorClass === "PRECONDITION_FAILED" && /does not match the expected digest/u.test(error.message));
     assert.equal(crossings.length, 1);
+    assert.equal(gitNow("rev-parse", "HEAD"), initialHead);
+
+    const lockPath = join(projectRoot, ".git", "index.lock");
+    await writeFile(lockPath, "other process owns this lock");
+    await assert.rejects(inspector.commit(projectRoot, "locked", staged.stagedDiffSha256, control),
+      (error: unknown) => error instanceof BrokerError && error.errorClass === "CONFLICT");
+    assert.equal(readFileSync(lockPath, "utf8"), "other process owns this lock");
+    await rm(lockPath);
+    await assert.rejects(inspector.commit(projectRoot, "cancelled", staged.stagedDiffSha256, { ...control, shouldCancel: () => true }),
+      (error: unknown) => error instanceof BrokerError && error.errorClass === "CANCELLED");
+    await assert.rejects(inspector.commit(projectRoot, "revoked", staged.stagedDiffSha256,
+      { ...control, beforeMutation: () => { throw new BrokerError("POLICY_DENIED", "Authority revoked before commit"); } }), /Authority revoked/u);
+    assert.equal(crossings.length, 1);
+    assert.equal(existsSync(lockPath), false);
+    assert.equal((await readdir(join(projectRoot, ".git"))).some(name => name.startsWith(".mac-operator-index-")), false);
     assert.equal(gitNow("rev-parse", "HEAD"), initialHead);
 
     // The matching digest crosses the boundary exactly once, while HEAD has not advanced yet.

@@ -1,8 +1,8 @@
 import { randomUUID } from "node:crypto";
-import { constants, closeSync, existsSync, fstatSync, fsyncSync, lstatSync, openSync, readFileSync, realpathSync, readdirSync, renameSync, writeFileSync } from "node:fs";
+import { constants, closeSync, existsSync, fstatSync, fsyncSync, lstatSync, mkdirSync, openSync, readFileSync, realpathSync, readdirSync, renameSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve, relative, isAbsolute, sep } from "node:path";
 import { BrokerError, canonicalJson, parseJsonStrict, sha256 } from "@mac-operator/contracts";
-import { canonicalProjectRoot, assertProjectIdentity, GitStatusInspector, SAFE_GIT_ENVIRONMENT, type GitExecutionControl, type GitMetadataResolver, type SafeGitStatus } from "./git-inspector.js";
+import { canonicalProjectRoot, assertProjectIdentity, validateGitStatusRequest, GitStatusInspector, SAFE_GIT_ENVIRONMENT, type GitExecutionControl, type GitMetadataResolver, type SafeGitStatus } from "./git-inspector.js";
 import { loadNativePeerAdapter, parsePeerProcessIdentity } from "./peer-credentials.js";
 import { ProcessSupervisor } from "./process-supervisor.js";
 import { assertContentPathAllowed } from "./secret-policy.js";
@@ -43,6 +43,9 @@ export interface WorktreeRemoval {
   branchNote?: string;
 }
 
+const MAX_INVENTORY_RECORDS = 256;
+const MAX_ARCHIVE_RECORD_BYTES = 32_768;
+
 const TASK_BRANCH_PATTERN = /^codex\/[A-Za-z0-9][A-Za-z0-9._/-]{0,120}$/u;
 
 export class ManagedWorktrees {
@@ -51,6 +54,9 @@ export class ManagedWorktrees {
   private readonly lockPath: string;
   private readonly statePath: string;
   private readonly records: ManagedWorktreeRecord[];
+  private readonly archiveRoot: string;
+  private archiveIdentity: string | undefined;
+  private archivedFormat = false;
   private operation: Promise<unknown> = Promise.resolve();
   private closed = false;
   private lockReleased = false;
@@ -74,6 +80,7 @@ export class ManagedWorktrees {
       allowedEnvironmentKeys: Object.keys(SAFE_GIT_ENVIRONMENT) });
     this.lockPath = join(stateRoot, "worktrees.lock");
     this.statePath = join(stateRoot, "worktrees.json");
+    this.archiveRoot = join(stateRoot, "worktrees-removed");
     let lock: number | undefined;
     try {
       if (existsSync(this.lockPath)) {
@@ -96,8 +103,11 @@ export class ManagedWorktrees {
       this.lockIdentity = `${stat.dev}:${stat.ino}`;
       if (existsSync(this.statePath)) {
         const data = parseJsonStrict(readBounded(this.statePath, 2 * 1024 * 1024, true));
-        if (!Array.isArray(data) || data.length > 256) throw new Error("Malformed worktree inventory");
-        this.records = data as ManagedWorktreeRecord[];
+        this.archivedFormat = isPlainDataRecord(data) && data.schemaVersion === "0.2" && Object.keys(data).sort().join() === "records,schemaVersion";
+        const records = this.archivedFormat ? (data as { records: unknown }).records : data;
+        if (!Array.isArray(records) || records.length > MAX_INVENTORY_RECORDS) throw new Error("Malformed worktree inventory");
+        if (this.archivedFormat) this.archiveIdentity = protectedDirectory(this.archiveRoot);
+        this.records = records as ManagedWorktreeRecord[];
         for (const record of this.records) validateRecord(record, worktreeRoot);
       } else this.records = [];
     } catch (error) {
@@ -180,7 +190,8 @@ export class ManagedWorktrees {
         throw new BrokerError("POLICY_DENIED", "Managed storage must be outside the primary project");
       }
       const fingerprint = sha256(canonicalJson(input));
-      const duplicate = this.records.find((entry) => entry.owner === input.owner && entry.idempotencyKey === input.idempotencyKey);
+      const duplicate = this.records.find((entry) => entry.owner === input.owner && entry.idempotencyKey === input.idempotencyKey) ??
+        this.archivedCreate(input.owner, input.idempotencyKey);
       if (duplicate) {
         const holder = `task ${duplicate.taskId} (branch ${duplicate.branchName}, state ${duplicate.state})`;
         if (duplicate.fingerprint !== fingerprint) {
@@ -196,7 +207,8 @@ export class ManagedWorktrees {
         this.verify(duplicate);
         return { record: { ...duplicate }, reused: true };
       }
-      if (this.records.length >= 256) throw new BrokerError("CONFLICT", "Managed worktree inventory is full");
+      if (this.records.length >= MAX_INVENTORY_RECORDS) this.archiveRemovedRecords();
+      if (this.records.length >= MAX_INVENTORY_RECORDS) throw new BrokerError("CONFLICT", "Managed worktree inventory is full of active or unresolved records");
       const taskDuplicate = this.records.find((entry) => entry.owner === input.owner && entry.projectRoot === input.projectRoot &&
         entry.taskId === input.taskId && entry.state !== "removed");
       if (taskDuplicate) {
@@ -364,7 +376,8 @@ export class ManagedWorktrees {
     const records = this.recordsAt(projectRoot, worktree, owner, taskId);
     if (records.some((entry) => entry.state === "removing")) throw new BrokerError("UNKNOWN_OUTCOME", "Worktree removal requires operator reconciliation");
     const removed = records.filter((entry) => entry.state === "removed");
-    const done = removed.find((entry) => entry.removalKey === idempotencyKey);
+    const done = removed.find((entry) => entry.removalKey === idempotencyKey) ??
+      this.archivedRemoval(projectRoot, worktree, owner, taskId, idempotencyKey);
     if (records.some((entry) => entry.state === "active" || entry.state === "pending")) {
       if (done) {
         throw new BrokerError("CONFLICT", `IDEMPOTENCY_KEY_IN_USE: this idempotency_key already removed an earlier worktree for task ${taskId}; ` +
@@ -372,7 +385,7 @@ export class ManagedWorktrees {
       }
       return undefined;
     }
-    if (removed.length === 0) return undefined;
+    if (removed.length === 0 && !done && !this.archivedPath(projectRoot, worktree, owner, taskId)) return undefined;
     if (!done) throw new BrokerError("CONFLICT", "Removed worktree belongs to another retry key");
     if (existsSync(worktree) || existsSync(done.gitDirectory)) throw new BrokerError("CONFLICT", "Removed worktree path was reused");
     return done;
@@ -445,12 +458,108 @@ export class ManagedWorktrees {
     }
   }
 
+  /** Archive completed provenance before removing it from the bounded hot inventory. */
+  private archiveRemovedRecords(): void {
+    const removed = this.records.filter(record => record.state === "removed");
+    if (removed.length === 0) return;
+    this.checkStorage();
+    if (!existsSync(this.archiveRoot)) mkdirSync(this.archiveRoot, { mode: 0o700 });
+    const identity = protectedDirectory(this.archiveRoot);
+    if (this.archiveIdentity !== undefined && this.archiveIdentity !== identity) throw new BrokerError("POLICY_DENIED", "Worktree archive identity changed");
+    this.archiveIdentity = identity;
+    for (const record of removed) {
+      const recordId = sha256(canonicalJson([record.owner, record.idempotencyKey]));
+      this.writeArchive(`create-${recordId}`, canonicalJson(record));
+      this.writeArchive(this.removalArchiveKey(record.projectRoot, record.worktree, record.owner, record.taskId, record.removalKey), canonicalJson(recordId));
+      this.writeArchive(this.pathArchiveKey(record.projectRoot, record.worktree, record.owner, record.taskId), "true");
+    }
+    // Publishing this versioned manifest last makes a crash before publication
+    // retryable. Older binaries reject the new format instead of forgetting keys.
+    const previous = [...this.records];
+    this.records.splice(0, this.records.length, ...this.records.filter(record => record.state !== "removed"));
+    this.archivedFormat = true;
+    try { this.persist(); }
+    catch (error) { this.records.splice(0, this.records.length, ...previous); throw error; }
+  }
+
+  private checkArchive(): boolean {
+    if (this.archiveIdentity === undefined) return false;
+    this.checkStorage();
+    if (protectedDirectory(this.archiveRoot) !== this.archiveIdentity) throw new BrokerError("POLICY_DENIED", "Worktree archive identity changed");
+    return true;
+  }
+
+  private readArchive(key: string): string | undefined {
+    if (!this.checkArchive()) return undefined;
+    const path = join(this.archiveRoot, `${key}.json`);
+    try { return readBounded(path, MAX_ARCHIVE_RECORD_BYTES, true); }
+    catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined; throw error; }
+  }
+
+  private writeArchive(key: string, content: string): void {
+    const previous = this.readArchive(key);
+    if (previous !== undefined) {
+      if (previous !== content) throw new BrokerError("CONFLICT", "Worktree archive provenance conflicts with the completed operation");
+      return;
+    }
+    if (Buffer.byteLength(content) > MAX_ARCHIVE_RECORD_BYTES) throw new BrokerError("OUTPUT_LIMIT", "Worktree archive record exceeds its budget");
+    const temporary = join(this.archiveRoot, `.archive-${randomUUID()}.tmp`);
+    const fd = openSync(temporary, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o600);
+    try { writeFileSync(fd, content); fsyncSync(fd); } finally { closeSync(fd); }
+    renameSync(temporary, join(this.archiveRoot, `${key}.json`));
+    const directory = openSync(this.archiveRoot, constants.O_RDONLY | constants.O_NOFOLLOW);
+    try { fsyncSync(directory); } finally { closeSync(directory); }
+  }
+
+  private archivedCreate(owner: string, key: string): ManagedWorktreeRecord | undefined {
+    const record = this.archivedRecord(sha256(canonicalJson([owner, key])));
+    if (record && (record.owner !== owner || record.idempotencyKey !== key)) throw new BrokerError("POLICY_DENIED", "Archived worktree creation identity differs");
+    return record;
+  }
+
+  private archivedRecord(id: string): ManagedWorktreeRecord | undefined {
+    const raw = this.readArchive(`create-${id}`);
+    if (raw === undefined) return undefined;
+    const record = parseJsonStrict(raw) as ManagedWorktreeRecord;
+    validateRecord(record, this.worktreeRoot);
+    if (record.state !== "removed" || sha256(canonicalJson([record.owner, record.idempotencyKey])) !== id) {
+      throw new BrokerError("POLICY_DENIED", "Archived worktree provenance is malformed");
+    }
+    return record;
+  }
+
+  private pathArchiveKey(project: string, worktree: string, owner: string, task: string): string {
+    return `path-${sha256(canonicalJson([project, worktree, owner, task]))}`;
+  }
+
+  private removalArchiveKey(project: string, worktree: string, owner: string, task: string, key: string): string {
+    return `remove-${sha256(canonicalJson([project, worktree, owner, task, key]))}`;
+  }
+
+  private archivedPath(project: string, worktree: string, owner: string, task: string): boolean {
+    const raw = this.readArchive(this.pathArchiveKey(project, worktree, owner, task));
+    if (raw !== undefined && raw !== "true") throw new BrokerError("POLICY_DENIED", "Archived worktree path marker is malformed");
+    return raw !== undefined;
+  }
+
+  private archivedRemoval(project: string, worktree: string, owner: string, task: string, key: string): ManagedWorktreeRecord | undefined {
+    const raw = this.readArchive(this.removalArchiveKey(project, worktree, owner, task, key));
+    if (raw === undefined) return undefined;
+    const id = parseJsonStrict(raw);
+    if (typeof id !== "string" || !/^[a-f0-9]{64}$/u.test(id)) throw new BrokerError("POLICY_DENIED", "Archived worktree removal pointer is malformed");
+    const record = this.archivedRecord(id);
+    if (!record || record.projectRoot !== project || record.worktree !== worktree || record.owner !== owner || record.taskId !== task || record.removalKey !== key) {
+      throw new BrokerError("POLICY_DENIED", "Archived worktree removal identity differs");
+    }
+    return record;
+  }
+
   private persist(): void {
     this.checkStorage();
     if (existsSync(this.statePath)) readBounded(this.statePath, 2 * 1024 * 1024, true);
     const temporary = join(this.stateRoot, `.worktrees-${randomUUID()}.tmp`);
     const fd = openSync(temporary, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o600);
-    try { writeFileSync(fd, canonicalJson(this.records)); fsyncSync(fd); }
+    try { writeFileSync(fd, canonicalJson(this.archivedFormat ? { schemaVersion: "0.2", records: this.records } : this.records)); fsyncSync(fd); }
     finally { closeSync(fd); }
     renameSync(temporary, this.statePath);
     const directory = openSync(this.stateRoot, constants.O_RDONLY | constants.O_NOFOLLOW);
@@ -465,7 +574,12 @@ export class ManagedWorktrees {
 }
 
 export function validateCreate(input: WorktreeCreateRequest): void {
+  validateCreateFields(input);
   canonicalProjectRoot(input.projectRoot);
+}
+
+function validateCreateFields(input: WorktreeCreateRequest): void {
+  validateGitStatusRequest(input.projectRoot);
   assertContentPathAllowed(input.projectRoot);
   for (const value of [input.taskId, input.idempotencyKey, input.owner]) {
     if (typeof value !== "string" || !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u.test(value)) {
@@ -492,7 +606,8 @@ function validateRecord(value: ManagedWorktreeRecord, root: string): void {
       !/^[a-f0-9]{64}$/u.test(value.fingerprint) || !/^[a-f0-9]{40,64}$/u.test(value.baseCommit)) {
     throw new Error("Malformed managed worktree provenance");
   }
-  validateCreate(value);
+  if (value.state === "removed") validateCreateFields(value);
+  else validateCreate(value);
 }
 
 /**

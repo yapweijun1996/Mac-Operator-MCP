@@ -5,8 +5,8 @@ import { mkdir, mkdtemp, realpath, rename, rm, symlink, writeFile, readFile, sta
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import test from "node:test";
-import { BrokerError } from "@mac-operator/contracts";
-import { ManagedWorktrees } from "./managed-worktrees.js";
+import { BrokerError, canonicalJson, sha256 } from "@mac-operator/contracts";
+import { ManagedWorktrees, type ManagedWorktreeRecord } from "./managed-worktrees.js";
 import { ProcessSupervisor } from "./process-supervisor.js";
 import { SAFE_GIT_ENVIRONMENT } from "./git-inspector.js";
 import { GitStatusInspector, GitWriteInspectorImpl } from "./git-inspector.js";
@@ -270,7 +270,94 @@ test("repeated close cannot release a restarted inventory lock", async () => {
 });
 
 function inventory(f: Awaited<ReturnType<typeof worktreeFixture>>): Array<{ idempotencyKey: string; state: string; removalKey: string }> {
-  return JSON.parse(readFileSync(join(f.state, "worktrees.json"), "utf8"));
+  const stored = JSON.parse(readFileSync(join(f.state, "worktrees.json"), "utf8"));
+  return Array.isArray(stored) ? stored : stored.records;
+}
+
+async function fullRemovedInventory(f: Awaited<ReturnType<typeof worktreeFixture>>): Promise<ManagedWorktreeRecord> {
+  const first = await f.create();
+  await f.registry.remove(f.project, first.record.worktree, "owner", "task-1", control, authority, () => false, "rm-1");
+  await f.registry.close();
+  const [removed] = JSON.parse(readFileSync(join(f.state, "worktrees.json"), "utf8")) as ManagedWorktreeRecord[];
+  assert.ok(removed);
+  const records = [removed];
+  for (let index = 1; index < 256; index++) {
+    const input = { projectRoot: f.project, branchName: `codex/history-${index}`, baseRef: "HEAD", taskId: `history-${index}`, owner: "owner", idempotencyKey: `history-key-${index}` };
+    records.push({ ...removed, ...input, fingerprint: sha256(canonicalJson(input)), removalKey: `history-remove-${index}`,
+      worktree: join(f.trees, `task-${sha256(canonicalJson({ project: f.project, owner: "owner", task: input.taskId })).slice(0, 32)}`) });
+  }
+  await writeFile(join(f.state, "worktrees.json"), canonicalJson(records), { mode: 0o600 });
+  return removed;
+}
+
+test("completed worktrees release inventory capacity while archived retries survive restart", async () => {
+  const f = await worktreeFixture();
+  let registry: ManagedWorktrees | undefined;
+  try {
+    const removed = await fullRemovedInventory(f);
+    registry = new ManagedWorktrees(f.state, f.trees);
+    const input = { projectRoot: f.project, branchName: "codex/task-1", baseRef: "HEAD", taskId: "task-1", owner: "owner", idempotencyKey: "second-key" };
+    const second = await registry.create(input, control, authority);
+    assert.equal(second.record.worktree, removed.worktree);
+    assert.equal(inventory(f).length, 1);
+    assert.equal(JSON.parse(readFileSync(join(f.state, "worktrees.json"), "utf8")).schemaVersion, "0.2");
+    await registry.close();
+    registry = new ManagedWorktrees(f.state, f.trees);
+    await assert.rejects(registry.create({ ...input, idempotencyKey: removed.idempotencyKey }, control, authority), /IDEMPOTENCY_KEY_IN_USE/u);
+    await assert.rejects(registry.remove(f.project, removed.worktree, "owner", "task-1", control, authority, () => false, "rm-1"), /earlier worktree/u);
+    assert.equal(existsSync(second.record.worktree), true);
+    await registry.remove(f.project, second.record.worktree, "owner", "task-1", control, authority, () => false, "rm-2");
+    assert.equal(registry.removalRetry(f.project, removed.worktree, "owner", "task-1", "rm-1"), true);
+    const revoked = () => { throw new BrokerError("POLICY_DENIED", "Authority was revoked"); };
+    await assert.rejects(registry.remove(f.project, removed.worktree, "owner", "task-1", control, revoked, () => false, "rm-1"), /revoked/u);
+    assert.equal((await registry.remove(f.project, removed.worktree, "owner", "task-1", control, authority, () => false, "rm-1")).branchDeleted, true);
+    await registry.close();
+    await rename(f.project, join(f.root, "retired-project"));
+    registry = new ManagedWorktrees(f.state, f.trees);
+    assert.deepEqual(registry.list(f.project, "owner"), []);
+    await assert.rejects(registry.remove(f.project, removed.worktree, "owner", "task-1", control, authority, () => false, "rm-1"), /Git project root was not found/u);
+  } finally { await registry?.close(); await f.cleanup(); }
+});
+
+test("worktree archive publication is retryable before the new manifest is published", async () => {
+  const f = await worktreeFixture();
+  let registry: ManagedWorktrees | undefined;
+  try {
+    await fullRemovedInventory(f);
+    const legacy = await readFile(join(f.state, "worktrees.json"));
+    const input = { projectRoot: f.project, branchName: "codex/fresh", baseRef: "HEAD", taskId: "fresh", owner: "owner", idempotencyKey: "fresh-key" };
+    registry = new ManagedWorktrees(f.state, f.trees);
+    await assert.rejects(registry.create(input, { ...control, shouldCancel: () => true }, authority), BrokerError);
+    assert.equal(inventory(f).length, 0);
+    await registry.close();
+    // Simulate a crash after durable archive writes but before manifest rename.
+    await writeFile(join(f.state, "worktrees.json"), legacy);
+    registry = new ManagedWorktrees(f.state, f.trees);
+    const created = await registry.create(input, control, authority);
+    assert.equal(created.reused, false);
+    assert.equal(inventory(f).length, 1);
+    await registry.remove(f.project, created.record.worktree, "owner", "fresh", control, authority, () => false, "rm-fresh");
+    const archived = join(f.state, "worktrees-removed", `create-${sha256(canonicalJson(["owner", "key-task-1"]))}.json`);
+    await writeFile(archived, "{}");
+    await assert.rejects(registry.create({ ...input, idempotencyKey: "key-task-1" }, control, authority), /Malformed managed worktree provenance/u);
+  } finally { await registry?.close(); await f.cleanup(); }
+});
+
+for (const removed of [false, true]) {
+  test(`missing historical projects only block live worktree provenance (removed=${removed})`, async () => {
+    const f = await worktreeFixture();
+    let reopened: ManagedWorktrees | undefined;
+    try {
+      const created = await f.create();
+      if (removed) await f.registry.remove(f.project, created.record.worktree, "owner", "task-1", control, authority, () => false, "rm-1");
+      await f.registry.close();
+      await rename(f.project, join(f.root, "retired-project"));
+      if (removed) {
+        reopened = new ManagedWorktrees(f.state, f.trees);
+        assert.deepEqual(reopened.list(f.project, "owner"), []);
+      } else assert.throws(() => new ManagedWorktrees(f.state, f.trees), /Git project root was not found/u);
+    } finally { await reopened?.close(); await f.cleanup(); }
+  });
 }
 function brokerFailure(errorClass: string, pattern: RegExp) {
   return (error: unknown): boolean => {

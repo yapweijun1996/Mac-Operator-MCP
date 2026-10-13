@@ -7,6 +7,7 @@ import {
   type ProcessExecutionResult
 } from "./process-supervisor.js";
 import { assertContentPathAllowed, redactBoundedText, redactLogText } from "./secret-policy.js";
+import { captureGitIndex } from "./git-index-snapshot.js";
 
 const GIT_EXECUTABLE = "/usr/bin/git";
 const MAX_PROJECT_ROOT_LENGTH = 4_096;
@@ -350,7 +351,7 @@ export class GitWriteInspectorImpl implements GitWriteInspector {
 
   constructor(supervisor: Pick<ProcessSupervisor, "run"> = new ProcessSupervisor({
     maxConcurrent: 1,
-    allowedEnvironmentKeys: Object.keys(SAFE_GIT_ENVIRONMENT)
+    allowedEnvironmentKeys: [...Object.keys(SAFE_GIT_ENVIRONMENT), "GIT_INDEX_FILE"]
   }), private readonly managedMetadata?: GitMetadataResolver) {
     this.supervisor = supervisor;
   }
@@ -400,75 +401,82 @@ export class GitWriteInspectorImpl implements GitWriteInspector {
   ): Promise<SafeGitCommitResult> {
     validateGitCommitRequest(projectRoot, message, expectedStagedDiffSha256);
     const identity = canonicalProjectRoot(projectRoot, this.managedMetadata);
-    const beforeHead = await this.readHead(identity.path, control);
-    const before = await this.readStagedSnapshot(identity.path, identity.identity, control);
-    if (before.paths.length === 0) {
-      throw new BrokerError("PRECONDITION_FAILED", "Nothing is staged to commit; stage the intended paths with mac_git_stage first");
-    }
-    const expected = expectedStagedDiffSha256 ?? null;
-    if (expected !== null && expected.toLowerCase() !== before.sha256) {
-      throw new BrokerError("PRECONDITION_FAILED", "Staged Git content does not match the expected digest");
-    }
-    const commitArguments = [
-      "--no-pager",
-      "--no-optional-locks",
-      `--git-dir=${canonicalProjectRoot(projectRoot, this.managedMetadata).gitArgument}`,
-      "--work-tree=.",
-      "-c", "core.fsmonitor=false",
-      "-c", "core.hooksPath=/dev/null",
-      "-c", "commit.gpgsign=false",
-      "commit",
-      "--no-verify",
-      "--no-gpg-sign",
-      "-m", message
-    ];
-    control.beforeMutation?.();
-    const result = await this.runGit(identity.path, commitArguments, control, MAX_WRITE_PROCESS_OUTPUT_BYTES);
-    assertGitMutationResult(result, "Git commit");
-    assertProjectIdentity(identity.path, identity.identity, this.managedMetadata);
-    const afterHead = await this.readHead(identity.path, control);
-    if (afterHead.commitId === beforeHead.commitId) {
-      throw new BrokerError("VERIFICATION_FAILED", "Git commit did not advance HEAD");
-    }
-    const after = await this.readStagedSnapshot(identity.path, identity.identity, control);
-    if (after.paths.length > 0) {
-      throw new BrokerError("VERIFICATION_FAILED", "Git commit left staged content after readback");
-    }
-    const status = await this.readStatus(identity.path, identity.identity, control);
-    return {
-      projectRoot: identity.path,
-      commitId: afterHead.commitId,
-      parentIds: afterHead.parentIds,
-      stagedDiffSha256: before.sha256,
-      precondition: {
-        expectedSha256: expected,
-        actualSha256: before.sha256,
-        matched: true
-      },
-      workingTreeState: status.dirty ? "dirty" : "clean",
-      warnings: [...before.warnings, ...after.warnings, ...status.warnings].filter((warning, index, all) => all.indexOf(warning) === index).slice(0, 32),
-      truncated: before.truncated || after.truncated || status.truncated
-    };
+    const index = captureGitIndex(resolve(identity.path, identity.gitArgument), identity.path,
+      () => assertProjectIdentity(identity.path, identity.identity, this.managedMetadata));
+    let retainIndex = false;
+    try {
+      const beforeHead = await this.readHead(identity.path, control);
+      const before = await this.readStagedSnapshot(identity.path, identity.identity, control, { indexFile: index.path, base: beforeHead.commitId });
+      if (before.paths.length === 0) {
+        throw new BrokerError("PRECONDITION_FAILED", "Nothing is staged to commit; stage the intended paths with mac_git_stage first");
+      }
+      const expected = expectedStagedDiffSha256 ?? null;
+      if (expected !== null && expected.toLowerCase() !== before.sha256) {
+        throw new BrokerError("PRECONDITION_FAILED", "Staged Git content does not match the expected digest");
+      }
+      const commitArguments = [
+        "--no-pager", "--no-optional-locks", `--git-dir=${identity.gitArgument}`, "--work-tree=.",
+        "-c", "core.fsmonitor=false", "-c", "core.hooksPath=/dev/null", "-c", "commit.gpgsign=false",
+        "commit", "--no-verify", "--no-gpg-sign", "-m", message
+      ];
+      control.beforeMutation?.();
+      let result: ProcessExecutionResult;
+      try { result = await this.runGit(identity.path, commitArguments, control, MAX_WRITE_PROCESS_OUTPUT_BYTES, index.path); }
+      catch (error) {
+        retainIndex = !(error instanceof BrokerError) || error.errorClass === "UNKNOWN_OUTCOME";
+        throw error;
+      }
+      // An unobserved process may still use the private index. Keep both locks
+      // for operator reconciliation instead of reopening the shared index.
+      retainIndex = !result.terminationObserved;
+      assertGitMutationResult(result, "Git commit");
+      assertProjectIdentity(identity.path, identity.identity, this.managedMetadata);
+      const afterHead = await this.readHead(identity.path, control);
+      if (afterHead.commitId === beforeHead.commitId || afterHead.parentIds[0] !== beforeHead.commitId) {
+        throw new BrokerError("VERIFICATION_FAILED", "Git commit did not advance the expected HEAD");
+      }
+      const committed = await this.readStagedSnapshot(identity.path, identity.identity, control,
+        { base: beforeHead.commitId, commit: afterHead.commitId });
+      if (committed.sha256 !== before.sha256) {
+        throw new BrokerError("VERIFICATION_FAILED", "Git committed content does not match the validated staged snapshot");
+      }
+      const after = await this.readStagedSnapshot(identity.path, identity.identity, control);
+      if (after.paths.length > 0) {
+        throw new BrokerError("VERIFICATION_FAILED", "Git commit left staged content after readback");
+      }
+      const status = await this.readStatus(identity.path, identity.identity, control);
+      return {
+        projectRoot: identity.path, commitId: afterHead.commitId, parentIds: afterHead.parentIds,
+        stagedDiffSha256: before.sha256,
+        precondition: { expectedSha256: expected, actualSha256: before.sha256, matched: true },
+        workingTreeState: status.dirty ? "dirty" : "clean",
+        warnings: [...before.warnings, ...after.warnings, ...status.warnings].filter((warning, index, all) => all.indexOf(warning) === index).slice(0, 32),
+        truncated: before.truncated || after.truncated || status.truncated
+      };
+    } finally { if (retainIndex) index.abandon(); else index.release(); }
   }
 
-  private async readStagedSnapshot(projectRoot: string, expectedIdentity: string, control: GitExecutionControl): Promise<GitStagedSnapshot> {
+  private async readStagedSnapshot(projectRoot: string, expectedIdentity: string, control: GitExecutionControl,
+    source: { indexFile?: string; base?: string; commit?: string } = {}): Promise<GitStagedSnapshot> {
     assertProjectIdentity(projectRoot, expectedIdentity, this.managedMetadata);
+    const mode = source.commit === undefined ? ["--cached"] : [];
+    const revisions = [...(source.base === undefined ? [] : [source.base]), ...(source.commit === undefined ? [] : [source.commit])];
     const raw = await this.runGit(projectRoot, [
       "--no-pager", "--no-optional-locks", `--git-dir=${canonicalProjectRoot(projectRoot, this.managedMetadata).gitArgument}`, "--work-tree=.",
       "-c", "core.fsmonitor=false", "-c", "core.hooksPath=/dev/null",
-      "diff", "--cached", "--raw", "-z", "--no-abbrev", "--no-renames", "--no-color", "--no-ext-diff", "--no-textconv", "--"
-    ], control, MAX_WRITE_PROCESS_OUTPUT_BYTES);
+      "diff", ...mode, "--raw", "-z", "--no-abbrev", "--no-renames", "--no-color", "--no-ext-diff", "--no-textconv", ...revisions, "--"
+    ], control, MAX_WRITE_PROCESS_OUTPUT_BYTES, source.indexFile);
     assertGitMutationResult(raw, "Git staged snapshot");
     const text = await this.runGit(projectRoot, [
       "--no-pager", "--no-optional-locks", `--git-dir=${canonicalProjectRoot(projectRoot, this.managedMetadata).gitArgument}`, "--work-tree=.",
       "-c", "core.fsmonitor=false", "-c", "core.hooksPath=/dev/null", "-c", "diff.external=false",
-      "diff", "--cached", "--text", "--no-ext-diff", "--no-textconv", "--no-renames", "--no-color", "--full-index", "--"
-    ], control, MAX_WRITE_PROCESS_OUTPUT_BYTES);
+      "diff", ...mode, "--text", "--no-ext-diff", "--no-textconv", "--no-renames", "--no-color", "--full-index", ...revisions, "--"
+    ], control, MAX_WRITE_PROCESS_OUTPUT_BYTES, source.indexFile);
     assertGitMutationResult(text, "Git staged content snapshot");
     const names = await this.runGit(projectRoot, [
       "--no-pager", "--no-optional-locks", `--git-dir=${canonicalProjectRoot(projectRoot, this.managedMetadata).gitArgument}`, "--work-tree=.",
-      "diff", "--cached", "--name-only", "-z", "--no-renames", "--no-ext-diff", "--no-textconv", "--"
-    ], control, MAX_WRITE_PROCESS_OUTPUT_BYTES);
+      "diff", ...mode, "--name-only", "-z", "--no-renames", "--no-ext-diff", "--no-textconv", ...revisions, "--"
+    ], control, MAX_WRITE_PROCESS_OUTPUT_BYTES, source.indexFile);
     assertGitMutationResult(names, "Git staged path snapshot");
     const warnings: string[] = [];
     const redacted = redactBoundedText(text.stdout, MAX_WRITE_PROCESS_OUTPUT_BYTES);
@@ -519,12 +527,12 @@ export class GitWriteInspectorImpl implements GitWriteInspector {
     return parseGitStatusOutput(projectRoot, result);
   }
 
-  private runGit(projectRoot: string, args: readonly string[], control: GitExecutionControl, outputCapBytes: number): Promise<ProcessExecutionResult> {
+  private runGit(projectRoot: string, args: readonly string[], control: GitExecutionControl, outputCapBytes: number, indexFile?: string): Promise<ProcessExecutionResult> {
     return this.supervisor.run({
       executable: GIT_EXECUTABLE,
       args: ["-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false", ...args],
       cwd: projectRoot,
-      environment: SAFE_GIT_ENVIRONMENT,
+      environment: { ...SAFE_GIT_ENVIRONMENT, ...(indexFile === undefined ? {} : { GIT_INDEX_FILE: indexFile }) },
       timeoutMs: Math.min(control.timeoutMs, MAX_WRITE_TIMEOUT_MS),
       outputCapBytes,
       shouldCancel: control.shouldCancel
@@ -824,8 +832,9 @@ export function parseGitDiffResult(
   const addWarning = (warning: string): void => {
     if (!warnings.includes(warning) && warnings.length < 32) warnings.push(warning);
   };
-  const changedPaths = extractGitDiffPaths(diff, addWarning);
-  const truncated = result.truncated || result.resultClass === "OUTPUT_LIMIT" || bounded.truncated || safeText.truncated;
+  const extracted = extractGitDiffPaths(diff, addWarning);
+  const changedPaths = extracted.paths;
+  const truncated = result.truncated || result.resultClass === "OUTPUT_LIMIT" || bounded.truncated || safeText.truncated || extracted.truncated;
   if (bounded.redacted || safeText.redacted) addWarning("Sensitive Git diff text was redacted");
   if (truncated) addWarning("Git diff output was limited by fixed adapter budgets");
   const digest = createHash("sha256").update(diff, "utf8").digest("hex");
@@ -841,11 +850,16 @@ export function parseGitDiffResult(
   };
 }
 
-function extractGitDiffPaths(diff: string, addWarning: (warning: string) => void): string[] {
+function extractGitDiffPaths(diff: string, addWarning: (warning: string) => void): { paths: string[]; truncated: boolean } {
   const paths: string[] = [];
   const seen = new Set<string>();
   let truncated = false;
   const add = (value: string): void => {
+    if (!isSafeGitPath(value)) {
+      truncated = true;
+      addWarning("Some Git diff paths were outside the supported path shape and were omitted");
+      return;
+    }
     const safe = sanitizeGitValue(value, MAX_PATH_LENGTH);
     if (safe.value === null || !isSafeGitPath(safe.value)) return;
     if (seen.has(safe.value)) return;
@@ -858,21 +872,50 @@ function extractGitDiffPaths(diff: string, addWarning: (warning: string) => void
   };
   for (const line of diff.split("\n")) {
     if (line.startsWith("diff --git ")) {
-      const separator = line.lastIndexOf(" b/");
-      if (separator > "diff --git a/".length) {
-        const left = line.slice("diff --git a/".length, separator);
-        const right = line.slice(separator + " b/".length);
-        add(left);
-        add(right);
+      const header = line.slice("diff --git ".length);
+      // With --no-renames both sides name the same path. Match the decoded
+      // pair so spaces (including a literal " b/") cannot split a filename.
+      const separator = (header.length - 1) / 2;
+      let decoded = false;
+      if (Number.isInteger(separator) && header[separator] === " ") {
+        const left = decodeGitDiffPath(header.slice(0, separator));
+        const right = decodeGitDiffPath(header.slice(separator + 1));
+        if (left?.startsWith("a/") && right?.startsWith("b/") && left.slice(2) === right.slice(2)) {
+          decoded = true;
+          add(left.slice(2));
+        }
       }
-    } else if (line.startsWith("--- a/")) {
-      add(line.slice("--- a/".length));
-    } else if (line.startsWith("+++ b/")) {
-      add(line.slice("+++ b/".length));
+      if (!decoded) {
+        truncated = true;
+        addWarning("Some Git diff headers could not be represented safely");
+      }
     }
   }
   if (truncated) addWarning("Changed Git diff paths were limited by fixed adapter budgets");
-  return paths;
+  return { paths, truncated };
+}
+
+/** Git quotes UTF-8 bytes with C escapes, including three-digit octal bytes. */
+function decodeGitDiffPath(value: string): string | undefined {
+  if (!value.startsWith('"')) return value;
+  if (!value.endsWith('"')) return undefined;
+  const input = Buffer.from(value.slice(1, -1), "utf8");
+  const bytes: number[] = [];
+  const escapes: Record<number, number> = { 97: 7, 98: 8, 116: 9, 110: 10, 118: 11, 102: 12, 114: 13, 34: 34, 92: 92 };
+  for (let index = 0; index < input.length; index++) {
+    const byte = input[index]!;
+    if (byte === 34) return undefined;
+    if (byte !== 92) { bytes.push(byte); continue; }
+    const escaped = input[++index];
+    if (escaped === undefined) return undefined;
+    if (escapes[escaped] !== undefined) { bytes.push(escapes[escaped]!); continue; }
+    const octal = input.subarray(index, index + 3).toString("ascii");
+    if (!/^[0-3][0-7]{2}$/u.test(octal)) return undefined;
+    bytes.push(Number.parseInt(octal, 8));
+    index += 2;
+  }
+  try { return new TextDecoder("utf-8", { fatal: true }).decode(Uint8Array.from(bytes)); }
+  catch { return undefined; }
 }
 
 export function parseGitBranchResult(projectRoot: string, result: ProcessExecutionResult): SafeGitBranches {

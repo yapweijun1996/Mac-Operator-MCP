@@ -294,7 +294,7 @@ function applyUpdate(file: ParsedPatchFile, source: Buffer): Buffer {
     cursor = at + hunk.newLines.length;
   }
   const result = sourceLines.join("\n");
-  return Buffer.from(finalNewline ? `${result}\n` : result, "utf8");
+  return Buffer.from(finalNewline && sourceLines.length > 0 ? `${result}\n` : result, "utf8");
 }
 
 function fileResult(path: string, content: Buffer): FilesystemPatchFileResult {

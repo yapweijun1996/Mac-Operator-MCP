@@ -166,8 +166,17 @@ export class OAuthGrantRevocationMonitor {
         this.inFlight.add(key);
         try {
           const status = await this.options.readStatus(context);
-          if (status.active && context.scopes.every(scope => status.scopes.includes(scope))) continue;
-          await this.options.onRevoked(context);
+          this.pruneExpired();
+          const current = this.sessions.get(key);
+          if (!this.running || !current) continue;
+          const nowSeconds = Math.floor(this.now() / 1_000);
+          // Compare only authority that survived this lookup unchanged. A new
+          // token is checked on the next poll; refreshing an unrelated scope
+          // must not hide the loss of an older, still-live terminal scope.
+          const expectedScopes = [...tracked.scopeExpirations].filter(([scope, expiration]) =>
+            expiration > nowSeconds && current.scopeExpirations.get(scope) === expiration).map(([scope]) => scope);
+          if (status.active && expectedScopes.every(scope => status.scopes.includes(scope))) continue;
+          await this.options.onRevoked(current.context);
           this.sessions.delete(key);
         } catch {
           // Keep the session for a bounded retry. Only an explicit status result

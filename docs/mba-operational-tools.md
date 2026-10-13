@@ -130,7 +130,10 @@ Behaviour observed in MBA probes that the tool schemas alone do not show.
   worktree gets `CONFLICT` ("IDEMPOTENCY_KEY_IN_USE: ... Use a new idempotency_key") and never touches the newer
   checkout. Repeating a create whose worktree was later removed is now `CONFLICT` (it was `UNKNOWN_OUTCOME`).
   Pending or removing records stay `UNKNOWN_OUTCOME` and need operator reconciliation; `mac_git_worktree_list`
-  adds a warning for each. The 256-record inventory cap counts removed records for ever.
+  adds a warning for each. At the 256-record inventory limit, completed records move to protected on-disk
+  history, freeing capacity while preserving old create/removal keys. Active and unresolved records still
+  count toward the limit. The archive grows with completed work and must stay with the inventory backup;
+  see [inventory migration and rollback](MAC_OPERATOR_V2_RUNBOOK.md#inventory-reconciliation-and-removal).
 - **The task branch is deleted with `git branch -d`** after the worktree is gone. A branch with commits not merged
   into the primary checkout's HEAD is kept: the result has `branch_deleted: false` and a warning. Merge it, or
   delete it from the owner terminal with `git branch -d <branch>` once merged. Do not use `git branch -D` for
@@ -200,3 +203,8 @@ pin the worktree. A failure after the spawn stays `unknown` and pins the worktre
 staging a missing untracked file in an existing directory, a staged-secret denial after `git add`, a non-zero
 `git commit` exit (for example no `user.name`) and "Git commit did not advance HEAD". An empty index now reports
 "Nothing is staged to commit; stage the intended paths with mac_git_stage first" (the single-use approval is still consumed).
+
+Commit uses a private snapshot while holding the shared index lock, then compares the actual commit to the
+approved content. Concurrent changes to the shared index are preserved and make an inconsistent readback UNKNOWN;
+the Broker never resets a created commit automatically. Another process's index lock returns CONFLICT before
+mutation. An unobserved Git process or changed cleanup identity leaves the snapshot/lock for operator reconciliation.

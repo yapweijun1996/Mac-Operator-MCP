@@ -28,7 +28,7 @@ test("configured executable hooks never run through actual Git read, worktree an
   const marker = join(root, "hook-observation.txt");
   let worktrees: ManagedWorktrees | undefined;
   const supervisor = new ProcessSupervisor({ maxConcurrent: 2, requireRootOwnedExecutable: true,
-    allowedEnvironmentKeys: Object.keys(SAFE_GIT_ENVIRONMENT) });
+    allowedEnvironmentKeys: [...Object.keys(SAFE_GIT_ENVIRONMENT), "GIT_INDEX_FILE"] });
   const observed: string[][] = [];
   const tracedSupervisor = { run: (request: ProcessExecutionRequest) => {
     observed.push([...request.args]);
@@ -126,7 +126,7 @@ test("partial-clone missing objects cannot execute a remote helper during govern
     assert.equal(await readFile(join(project, "source.txt"), "utf8"), "changed public source\n");
     assert.equal(SAFE_GIT_ENVIRONMENT.GIT_NO_LAZY_FETCH, "1");
     assert.equal(SAFE_GIT_ENVIRONMENT.GIT_ALLOW_PROTOCOL, "");
-    for (const key of ["GIT_NO_LAZY_FETCH", "GIT_ALLOW_PROTOCOL"]) {
+    for (const key of ["GIT_NO_LAZY_FETCH", "GIT_ALLOW_PROTOCOL", "GIT_INDEX_FILE"]) {
       assert.equal(isSafeProcessEnvironmentKey(key, false), false);
       assert.equal(isSafeProcessEnvironmentKey(key, true), true);
     }

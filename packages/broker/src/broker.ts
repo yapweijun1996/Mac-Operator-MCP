@@ -324,7 +324,7 @@ export class Broker {
       maxConcurrent: 16,
       requireRootOwnedExecutable: true,
       allowedEnvironmentKeys: [
-        "DOCKER_CONFIG", "DOCKER_HOST", "HOME", ...Object.keys(SAFE_GIT_ENVIRONMENT)
+        "DOCKER_CONFIG", "DOCKER_HOST", "HOME", "GIT_INDEX_FILE", ...Object.keys(SAFE_GIT_ENVIRONMENT)
       ],
       trustedUserOwnedExecutablePaths: [...DOCKER_EXECUTABLE_CANDIDATES, guiLauncherExecutable]
     });
@@ -2826,6 +2826,9 @@ export class Broker {
           } else if (tool.targetType === "project") {
             if (target.kind !== "project") throw new BrokerError("PRECONDITION_FAILED", "Project policy query requires a project target");
             validateGitStatusRequest(target.reference, true);
+            if (candidate === "mac_apply_patch") {
+              this.planFilesystemPath(new FilesystemInspector(policy.filesystemRoots), target.reference, "write", request.principal.principalId);
+            }
           }
           authorizeTarget(policy, request.principal.principalId, tool.requiredScopes, authorizationTarget);
           if (DEVELOPMENT_TOOL_NAMES.includes(candidate) && this.runtimeCapabilityDisabledReason(candidate) !== undefined) {

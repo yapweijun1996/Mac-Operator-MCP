@@ -1,8 +1,47 @@
 # Mac-Operator-MCP Progress
 
-## Codebase bug remediation: DONE locally — 2026-10-11
+## Current BUG-29 through BUG-37 remediation: DONE locally — 2026-10-13
 
-All 14 findings in `CODEBASE_BUG_REVIEW.md` are fixed and regression-verified.
+All nine authorized P2 repairs are implemented and regression-verified. The
+working tree now contains fixes for all 37 recorded findings (28 historical,
+nine new). OAuth polling preserves valid scope expiry and detects genuine live
+scope loss; Git commits use approved private index snapshots and actual commit
+readback; worktree history releases capacity while keeping old retry keys.
+Patch bytes, policy diagnostics and Git/Docker completeness are corrected.
+
+Final current-source suite: **2,226 PASS, 0 FAIL, 19 SKIP** across 242 test files
+(2,245 total; 32 new regression cases). Build/native fault build, typecheck,
+style, docs/matrix/process-boundary checks and 58 contracts pass. All process
+regressions that failed under the restricted sandbox pass in the final approved
+host test run. Evidence and per-finding results: [bug report](CODEBASE_BUG_REVIEW.md).
+
+Worktree compaction lazily publishes archive records before a versioned manifest;
+older binaries reject the new format. Preserve the whole state directory for
+backup and reconcile later work before a rollback. Git snapshot overrides are
+limited to live Broker-created snapshots; general task profiles still deny them.
+Operational details: [V2 runbook](docs/MAC_OPERATOR_V2_RUNBOOK.md).
+The repairs are verified locally; production migration, deployment and push
+remain pending. Node 24 and live/opt-in skipped paths remain unverified.
+
+## Codebase review before remediation: DONE; 9 P2 repairs identified — 2026-10-13
+
+Reviewed main `09dd85b99b7ffc0246a14f85959a7b49473d7abc`. Confirmed nine
+currently open P2 defects (BUG-29 through BUG-37) using ten disposable/synthetic
+trigger checks, and restored the missing BUG-15 through BUG-28 records.
+All 28 historical findings are fixed in this source revision. Recommended repair
+order starts with false OAuth session revocation and Git staged-content integrity,
+then worktree lifecycle and the remaining functional/completeness defects.
+Current-source suite: **2,194 PASS, 0 FAIL, 19 SKIP** across 242 test files.
+Build/native fault build, typecheck, lint, docs/matrix/process-boundary checks and
+58 contracts pass. Full evidence, reproduction conditions, coverage limitations
+and documented risks: [codebase bug report](CODEBASE_BUG_REVIEW.md).
+Only review documentation changed; no runtime fixes, production verification,
+deployment, commit or push were performed. Existing tests do not close the new
+findings; live/opt-in skipped paths remain unverified.
+
+## Historical original 14-bug remediation — 2026-10-11
+
+The original 14 findings in `CODEBASE_BUG_REVIEW.md` are fixed and regression-verified.
 Current-source full suite: **2,140 PASS, 0 FAIL, 19 SKIP** across 240 test files.
 Build/native fault build, typecheck, lint, documentation/matrix/process-boundary
 checks, 58 contracts and five native canonical vectors pass. Independent

@@ -7,6 +7,7 @@ import { BrokerError } from "@mac-operator/contracts";
 import { requireProcessDescriptorExecution } from "./process-launch-capability.js";
 import { loadNativePeerAdapter } from "./peer-credentials.js";
 import { isSafeProcessEnvironmentKey } from "./process-environment.js";
+import { assertGitIndexSnapshot } from "./git-index-snapshot.js";
 import { isPlainDataRecord } from "./plain-record.js";
 import { assertArgumentsDoNotContainSecrets, assertContentDoesNotContainSecrets, assertEnvironmentValuesDoNotContainSecrets, redactBoundedText } from "./secret-policy.js";
 import { assertSystemPublishedExecutablePath } from "./system-published-executable.js";
@@ -416,6 +417,7 @@ export class ProcessSupervisor {
       try {
         if (this.descriptorSpawnAdapter === undefined) {
           safeRequest.beforeSpawn?.();
+          if (environment.GIT_INDEX_FILE !== undefined) assertGitIndexSnapshot(environment.GIT_INDEX_FILE, safeRequest.cwd, safeRequest.executable);
           child = spawn(safeRequest.executable, [...safeRequest.args], {
               cwd: safeRequest.cwd,
               env: environment,
@@ -442,6 +444,7 @@ export class ProcessSupervisor {
             throw new BrokerError("POLICY_DENIED", "Process cwd changed while opening descriptor");
           }
           safeRequest.beforeSpawn?.();
+          if (environment.GIT_INDEX_FILE !== undefined) assertGitIndexSnapshot(environment.GIT_INDEX_FILE, safeRequest.cwd, safeRequest.executable);
           child = this.descriptorSpawnAdapter.spawn({
             executableFd: executableDescriptor.fd,
             cwdFd: cwdDescriptor.fd,
@@ -1331,6 +1334,7 @@ async function validateRequest(
     if (!allowedEnvironmentKeys.has(key)) throw new BrokerError("POLICY_DENIED", "Process environment key is not profile-allowlisted");
     if (typeof value !== "string") throw new BrokerError("PRECONDITION_FAILED", "Process environment value is invalid");
     if (value.includes("\0") || value.length > 4_096) throw new BrokerError("PRECONDITION_FAILED", "Process environment value is invalid");
+    if (key === "GIT_INDEX_FILE") assertGitIndexSnapshot(value, request.cwd, request.executable);
     environmentBytes += Buffer.byteLength(key, "utf8") + Buffer.byteLength(value, "utf8") + 2;
     if (environmentBytes > MAX_ENVIRONMENT_BYTES) {
       throw new BrokerError("PRECONDITION_FAILED", "Process environment exceeds the supported size");

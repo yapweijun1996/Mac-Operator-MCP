@@ -232,6 +232,18 @@ worktree deletion, including relevant jobs owned by another principal.
 worktree until the owner reconciles it; there is no MCP reconciliation tool and records
 must not be hand-edited.
 
+Commit holds the normal Git index lock and reads/commits a private, owner-only
+index snapshot (at most 4 MiB). Its digest and secret/path checks all use that
+snapshot against a pinned parent commit. After commit, the Broker verifies the
+actual committed diff and checks the shared index before reporting success.
+A concurrent staged change is preserved; a mismatched readback stays UNKNOWN
+and does not reset or rewrite the resulting commit. A preexisting index lock
+returns CONFLICT before mutation. Snapshot environment overrides are accepted
+only for a live Broker-created snapshot in the matching project, never from a
+general task profile. Temporary snapshots and locks are removed after observed
+process termination. If termination is unknown, or cleanup identity changes,
+the files stay for operator reconciliation; do not delete their locks blindly.
+
 ## Inventory reconciliation and removal
 
 The protected `worktrees.json` inventory records `pending`, `active`, `removing`
@@ -239,6 +251,32 @@ and `removed` provenance. MCP list returns only verified active records. A
 failed creation can leave a pending record and artifacts; an interrupted removal
 can leave removing state. These are operator reconciliation conditions, not
 permission to repeat creation under a new key or delete directories manually.
+
+The in-memory inventory is bounded to 256 records. When a new creation reaches
+that limit, completed `removed` records move to the protected
+`worktrees-removed/` archive before capacity is released. Active, pending and
+removing records are never compacted. Archive reads use hashed exact-key
+lookups and a 32 KiB per-record limit; startup does not scan the history.
+Creation records are authoritative, with removal-key pointers and path markers
+for stale-retry detection. Old creation keys remain reserved, and old removal
+keys cannot remove a replacement worktree. History is retained indefinitely
+on disk; it no longer consumes the active inventory quota and is not an
+automatic deletion/retention facility.
+
+Legacy array inventories remain readable. First compaction durably publishes
+the archive before atomically writing a `{schemaVersion: "0.2", records: [...]}`
+manifest. An interruption before manifest publication can repeat compaction
+without dropping retry evidence. Removed records require syntactically valid
+historical paths, not a still-existing original repository; operations that
+retry branch cleanup still require current authority and the recorded project
+identity. Active/unresolved records retain live project validation.
+
+Back up the whole protected inventory directory, including its archive, before
+upgrading a deployed service. Older binaries reject the versioned manifest.
+To roll back after compaction, quiesce the Broker and restore a consistent
+pre-upgrade inventory backup only after reconciling any later worktrees/jobs;
+do not strip the version field or discard archive files. No live migration is
+performed merely by building this source.
 
 1. Disable the affected V2 mutations and execution, inspect jobs/audit, and
    quiesce the Broker before examining protected inventory. Preserve the

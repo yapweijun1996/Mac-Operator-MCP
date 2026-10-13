@@ -116,6 +116,60 @@ const colonFirst: JwtRevocationContext = { ...context, subject: "owner:a", sessi
 const colonSecond: JwtRevocationContext = { ...context, subject: "owner", sessionId: "a:b" };
 const describeSession = (value: JwtRevocationContext): string => `${value.subject}|${value.sessionId}`;
 
+for (const inactive of [false, true]) {
+  test(`scope expiry during status lookup uses live token authority (inactive=${inactive})`, async () => {
+    let now = 100_000;
+    let reads = 0;
+    const revoked: JwtRevocationContext[] = [];
+    const monitor = new OAuthGrantRevocationMonitor({ intervalMs: 250, now: () => now,
+      readStatus: async () => { reads++; now = 102_000; return { active: !inactive, scopes: ["mac.control.read"] }; },
+      onRevoked: async value => { revoked.push(value); } });
+    try {
+      monitor.track({ ...context, scopes: ["mac.control.read", "mac.terminal.exec"], expiresAt: 101 });
+      monitor.track({ ...context, scopes: ["mac.control.read"], expiresAt: 200 });
+      monitor.start(); await delay(350);
+      assert.equal(reads, 1);
+      assert.equal(revoked.length, inactive ? 1 : 0);
+      if (inactive) assert.deepEqual(revoked[0]?.scopes, ["mac.control.read"]);
+    } finally { monitor.stop(); }
+  });
+}
+
+test("status lookup predating an accepted broader token cannot revoke its new scope", async () => {
+  let reads = 0;
+  let revocations = 0;
+  const monitor = new OAuthGrantRevocationMonitor({ intervalMs: 250, now: () => 100_000,
+    readStatus: async () => {
+      reads++;
+      if (reads === 1) {
+        monitor.track({ ...context, scopes: ["mac.control.read", "mac.terminal.exec"], expiresAt: 200 });
+        return { active: true, scopes: ["mac.control.read"] };
+      }
+      return { active: true, scopes: ["mac.control.read", "mac.terminal.exec"] };
+    }, onRevoked: async () => { revocations++; } });
+  try {
+    monitor.track({ ...context, scopes: ["mac.control.read"], expiresAt: 150 });
+    monitor.start(); await delay(600);
+    assert.ok(reads >= 2);
+    assert.equal(revocations, 0);
+  } finally { monitor.stop(); }
+});
+
+test("refreshing read authority during lookup cannot hide removal of a live terminal scope", async () => {
+  const revoked: JwtRevocationContext[] = [];
+  const monitor = new OAuthGrantRevocationMonitor({ intervalMs: 250, now: () => 100_000,
+    readStatus: async () => {
+      monitor.track({ ...context, scopes: ["mac.control.read"], expiresAt: 400 });
+      return { active: true, scopes: ["mac.control.read"] };
+    }, onRevoked: async value => { revoked.push(value); } });
+  try {
+    monitor.track({ ...context, scopes: ["mac.control.read", "mac.terminal.exec"], expiresAt: 200 });
+    monitor.start(); await delay(350);
+    assert.equal(revoked.length, 1);
+    assert.ok(revoked[0]?.scopes.includes("mac.terminal.exec"));
+  } finally { monitor.stop(); }
+});
+
 function colonMonitor(inspected: string[], revoked: string[]): OAuthGrantRevocationMonitor {
   return new OAuthGrantRevocationMonitor({
     intervalMs: 250,

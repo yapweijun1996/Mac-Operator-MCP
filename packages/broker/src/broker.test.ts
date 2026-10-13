@@ -4034,6 +4034,36 @@ test("mac_stat_path does not execute when the signed root target is not authoriz
   }
 });
 
+for (const writable of [false, true]) {
+  for (const withArguments of [false, true]) {
+    test(`patch policy explanation checks filesystem write authority (write=${writable}, arguments=${withArguments})`, async () => {
+      const directory = await mkdtemp(join(tmpdir(), "mac-policy-patch-"));
+      const project = await realpath(directory);
+      const store = new BrokerStore(join(project, "broker.sqlite"));
+      const key = randomBytes(32);
+      const scopes: Scope[] = ["mac.policy.explain", "mac.files.write", "mac.project.write"];
+      const basePolicy = createDefaultPolicy("edge-1", true, scopes, ["edge-key-1"], [{ rootId: "project", path: project,
+        metadata: true, contentRead: true, write: writable, denyRelativePaths: [] }], [], [], [project]);
+      const policy = { ...basePolicy, tools: new Map(basePolicy.tools).set("mac_apply_patch", { ...basePolicy.tools.get("mac_apply_patch")!, enabled: true }) };
+      const broker = new Broker({ store, policy, edgeAuthenticationKeys: testKeyring(key), now: () => NOW });
+      try {
+        const proposed = { project_root: project, patch: "*** Begin Patch\n*** Add File: new.txt\n+new\n*** End Patch\n" };
+        const response = await broker.handle(signRequest(unsigned({ tool: "mac_policy_explain", arguments: {
+          proposed_tool: "mac_apply_patch", target: { kind: "project", reference: project },
+          ...(withArguments ? { proposed_arguments: proposed } : {})
+        } }, scopes), key));
+        assert.equal(response.ok, true);
+        if (response.ok) assert.equal((response.data as { decision: string }).decision, writable ? "allow" : "deny");
+        assert.equal(await readFile(join(project, "new.txt")).then(() => true, () => false), false);
+        if (!writable) {
+          const actual = await broker.handle(signRequest(unsigned({ requestId: "actual-patch", nonce: "actual-patch-nonce", tool: "mac_apply_patch", arguments: proposed }, scopes), key));
+          assert.equal(actual.result_class, "POLICY_DENIED");
+        }
+      } finally { await broker.close(); store.close(); await rm(project, { recursive: true, force: true }); }
+    });
+  }
+}
+
 test("mac_policy_explain maps a proposed path to the Broker-owned filesystem root", async () => {
   const directory = await mkdtemp(join(tmpdir(), "mac-operator-policy-explain-path-"));
   const path = join(directory, "sample.txt");

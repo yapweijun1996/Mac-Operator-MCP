@@ -44,6 +44,39 @@ class FakeSupervisor {
   }
 }
 
+for (const count of [500, 501]) {
+  for (const images of [false, true]) {
+    test(`Docker CLI reports semantic ${images ? "image" : "container"} caps at ${count} records`, async () => {
+      const rows = Array.from({ length: count }, (_, index) => JSON.stringify({ ID: index.toString(16).padStart(12, "0") })).join("\n");
+      const supervisor = new FakeSupervisor([result("27\n"), result(images ? "" : rows), ...(images ? [result(rows)] : [])]);
+      const inspector = new DockerInspectorImpl({ supervisor, executable: "/usr/bin/docker" });
+      const status = await inspector.status(images, false, { timeoutMs: 1_000, shouldCancel: () => false });
+      assert.equal((images ? status.images : status.containers).length, Math.min(count, 500));
+      assert.equal(status.truncated, count > 500);
+    });
+  }
+}
+
+for (const extra of [0, 1]) {
+  for (const field of ["mounts", "ports", "unbound ports"] as const) {
+    const limit = field === "mounts" ? 1_000 : 128;
+    const count = limit + extra;
+    test(`Docker Engine reports semantic ${field} caps at ${count} records`, async () => {
+      const id = "a".repeat(64);
+      const inspector = new DockerEngineInspector({
+        async inventory() { return { version: "29", containers: [], images: [] }; },
+        async logs() { return ""; },
+        async inspect() { return { Id: id, Mounts: field === "mounts" ? Array.from({ length: count }, (_, index) => ({ Destination: `/data-${index}` })) : [],
+          NetworkSettings: { Ports: field === "mounts" ? {} : Object.fromEntries(Array.from({ length: count }, (_, index) =>
+            [`${index + 1}/tcp`, field === "unbound ports" ? null : [{ HostPort: String(index + 1) }]])) } }; }
+      });
+      const result = await inspector.inspect("container", id, { timeoutMs: 1_000, shouldCancel: () => false });
+      assert.equal((field === "mounts" ? result.mounts : result.ports).length, limit);
+      assert.equal(result.truncated, extra > 0);
+    });
+  }
+}
+
 test("Docker status uses fixed local-only commands and omits raw daemon metadata", async () => {
   const supervisor = new FakeSupervisor([
     result("27.5.1\n"),

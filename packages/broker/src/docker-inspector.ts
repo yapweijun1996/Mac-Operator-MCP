@@ -142,7 +142,7 @@ export class DockerEngineInspector implements DockerInspector {
       const truncated = inventory.containers.length > MAX_ITEMS || inventory.images.length > MAX_ITEMS;
       if (truncated) warnings.push("Docker inventory was capped by the fixed adapter budget");
       if (includeStorage) warnings.push("Docker storage facts are unavailable until a fixed local volume readback is configured");
-      return { daemon: { available: true, version: boundedValue(inventory.version, 128), context: "local" }, containers, images, warnings, truncated };
+      return { daemon: { available: true, version: boundedValue(inventory.version, 128), context: "local" }, containers: containers.items, images: images.items, warnings, truncated: truncated || containers.truncated || images.truncated };
     });
   }
 
@@ -289,15 +289,16 @@ export class DockerInspectorImpl implements DockerInspector {
     throwForDockerProcess(containersResult, "Docker container listing", true);
     const containers = parseContainerLines(containersResult.stdout, warnings);
     let images: SafeDockerImage[] = [];
-    let truncated = version.truncated || containersResult.truncated;
+    let truncated = version.truncated || containersResult.truncated || containersResult.resultClass === "OUTPUT_LIMIT" || containers.truncated;
     if (containersResult.resultClass !== "SUCCEEDED" && containersResult.resultClass !== "OUTPUT_LIMIT") {
       warnings.push("Docker container listing failed and was omitted");
     }
     if (includeImages) {
       const imagesResult = await this.run(["images", "--no-trunc", "--format", "{{json .}}"], control, MAX_STATUS_OUTPUT_BYTES, expectedExecutableContentSha256);
       throwForDockerProcess(imagesResult, "Docker image listing", true);
-      images = parseImageLines(imagesResult.stdout, warnings);
-      truncated ||= imagesResult.truncated;
+      const parsedImages = parseImageLines(imagesResult.stdout, warnings);
+      images = parsedImages.items;
+      truncated ||= imagesResult.truncated || imagesResult.resultClass === "OUTPUT_LIMIT" || parsedImages.truncated;
       if (imagesResult.resultClass !== "SUCCEEDED" && imagesResult.resultClass !== "OUTPUT_LIMIT") {
         warnings.push("Docker image listing failed and was omitted");
       }
@@ -311,7 +312,7 @@ export class DockerInspectorImpl implements DockerInspector {
         ...(daemonVersion ? { version: daemonVersion } : {}),
         context: "local"
       },
-      containers,
+      containers: containers.items,
       images,
       warnings: uniqueWarnings(warnings),
       truncated
@@ -514,7 +515,9 @@ function resolveDockerExecutable(): string {
   return DOCKER_EXECUTABLE_CANDIDATES[0];
 }
 
-function parseContainerLines(output: string, warnings: string[]): SafeDockerContainer[] {
+interface ParsedDockerItems<T> { items: T[]; truncated: boolean }
+
+function parseContainerLines(output: string, warnings: string[]): ParsedDockerItems<SafeDockerContainer> {
   const containers: SafeDockerContainer[] = [];
   for (const line of boundedLines(output, MAX_ITEMS)) {
     if (!line.trim()) continue;
@@ -526,11 +529,12 @@ function parseContainerLines(output: string, warnings: string[]): SafeDockerCont
     }
     containers.push(parsed);
   }
-  if (boundedLines(output, MAX_ITEMS + 1).length > MAX_ITEMS) warnings.push("Docker container results were capped");
-  return containers;
+  const truncated = boundedLines(output, MAX_ITEMS + 1).length > MAX_ITEMS;
+  if (truncated) warnings.push("Docker container results were capped");
+  return { items: containers, truncated };
 }
 
-function parseImageLines(output: string, warnings: string[]): SafeDockerImage[] {
+function parseImageLines(output: string, warnings: string[]): ParsedDockerItems<SafeDockerImage> {
   const images: SafeDockerImage[] = [];
   for (const line of boundedLines(output, MAX_ITEMS)) {
     if (!line.trim()) continue;
@@ -542,8 +546,9 @@ function parseImageLines(output: string, warnings: string[]): SafeDockerImage[] 
     }
     images.push(parsed);
   }
-  if (boundedLines(output, MAX_ITEMS + 1).length > MAX_ITEMS) warnings.push("Docker image results were capped");
-  return images;
+  const truncated = boundedLines(output, MAX_ITEMS + 1).length > MAX_ITEMS;
+  if (truncated) warnings.push("Docker image results were capped");
+  return { items: images, truncated };
 }
 
 function parseInspection(objectType: DockerObjectType, requestedId: string, output: string, truncated: boolean): SafeDockerInspection {
@@ -568,8 +573,9 @@ function parseInspection(objectType: DockerObjectType, requestedId: string, outp
   const id = reportedId;
   const stateValue = isPlainDataRecord(value.State) ? boundedValue(value.State.Status, 128) : "";
   const imageValue = isPlainDataRecord(value.Config) ? boundedValue(value.Config.Image, 256) : "";
-  const ports = objectType === "container" ? parsePorts(isPlainDataRecord(value.NetworkSettings) ? value.NetworkSettings.Ports : undefined, warnings) : [];
-  const mounts = objectType === "container" ? parseMounts(value.Mounts, warnings) : [];
+  const ports = objectType === "container" ? parsePorts(isPlainDataRecord(value.NetworkSettings) ? value.NetworkSettings.Ports : undefined, warnings) : { items: [], truncated: false };
+  const mounts = objectType === "container" ? parseMounts(value.Mounts, warnings) : { items: [], truncated: false };
+  truncated ||= ports.truncated || mounts.truncated;
   if (truncated) warnings.push("Docker inspection output was truncated by a fixed adapter budget");
   return {
     objectType,
@@ -577,8 +583,8 @@ function parseInspection(objectType: DockerObjectType, requestedId: string, outp
     name,
     state: stateValue,
     image: imageValue,
-    ports,
-    mounts,
+    ports: ports.items,
+    mounts: mounts.items,
     warnings: uniqueWarnings(warnings),
     truncated
   };
@@ -665,41 +671,38 @@ function throwForDockerProcess(result: ProcessExecutionResult, operation: string
   if (result.resultClass === "OUTPUT_LIMIT" && !allowOutputLimit) throw new BrokerError("OUTPUT_LIMIT", `${operation} exceeded its output limit`);
 }
 
-function parsePorts(value: unknown, warnings: string[]): SafeDockerPort[] {
-  if (!isPlainDataRecord(value)) return [];
+function parsePorts(value: unknown, warnings: string[]): ParsedDockerItems<SafeDockerPort> {
   const ports: SafeDockerPort[] = [];
+  let truncated = false;
+  if (!isPlainDataRecord(value)) return { items: ports, truncated };
+  const seen = new Set<string>();
   for (const [key, bindings] of Object.entries(value)) {
     const match = /^(\d+)\/(tcp|udp)$/u.exec(key);
     if (!match) continue;
     const containerPort = Number(match[1]);
     if (!Number.isSafeInteger(containerPort) || containerPort < 1 || containerPort > 65_535) continue;
     const items = isDenseArray(bindings, MAX_PORTS) ? bindings : [];
-    if (items.length === 0) {
-      ports.push({ protocol: match[2] as "tcp" | "udp", containerPort, hostPort: null });
-      continue;
-    }
-    for (const item of items.slice(0, MAX_PORTS - ports.length)) {
+    truncated ||= items.length > MAX_PORTS;
+    for (const item of items.length === 0 ? [null] : items.slice(0, MAX_PORTS)) {
       const hostPort = isPlainDataRecord(item) && typeof item.HostPort === "string" ? Number(item.HostPort) : null;
       const port: SafeDockerPort = {
-        protocol: match[2] as "tcp" | "udp",
-        containerPort,
+        protocol: match[2] as "tcp" | "udp", containerPort,
         hostPort: hostPort !== null && Number.isSafeInteger(hostPort) && hostPort >= 1 && hostPort <= 65_535 ? hostPort : null
       };
-      // Host IP is not reported, so the IPv4 and IPv6 bindings of one port are the same fact.
-      if (!ports.some((seen) => seen.protocol === port.protocol && seen.containerPort === port.containerPort && seen.hostPort === port.hostPort)) {
-        ports.push(port);
-      }
-    }
-    if (ports.length >= MAX_PORTS) {
-      warnings.push("Docker port bindings were capped");
-      break;
+      // IPv4/IPv6 bindings with the same reported ports describe the same fact.
+      const identity = `${port.protocol}:${port.containerPort}:${port.hostPort}`;
+      if (seen.has(identity)) continue;
+      if (ports.length >= MAX_PORTS) { truncated = true; break; }
+      seen.add(identity);
+      ports.push(port);
     }
   }
-  return ports;
+  if (truncated) warnings.push("Docker port bindings were capped");
+  return { items: ports, truncated };
 }
 
-function parseMounts(value: unknown, warnings: string[]): SafeDockerMount[] {
-  if (!isDenseArray(value, MAX_MOUNTS)) return [];
+function parseMounts(value: unknown, warnings: string[]): ParsedDockerItems<SafeDockerMount> {
+  if (!isDenseArray(value, MAX_MOUNTS)) return { items: [], truncated: false };
   const mounts: SafeDockerMount[] = [];
   for (const item of value.slice(0, MAX_MOUNTS)) {
     if (!isPlainDataRecord(item) || typeof item.Destination !== "string") continue;
@@ -708,8 +711,9 @@ function parseMounts(value: unknown, warnings: string[]): SafeDockerMount[] {
     const readOnly = item.RW === false || item.Mode === "ro";
     mounts.push({ target, ...(source ? { source } : {}), readOnly });
   }
-  if (value.length > MAX_MOUNTS) warnings.push("Docker mounts were capped");
-  return mounts;
+  const truncated = value.length > MAX_MOUNTS;
+  if (truncated) warnings.push("Docker mounts were capped");
+  return { items: mounts, truncated };
 }
 
 function parseJsonObject(line: string, warnings: string[]): Record<string, unknown> | undefined {

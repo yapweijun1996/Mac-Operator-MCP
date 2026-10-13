@@ -8,6 +8,26 @@ import { FilesystemInspector, type FilesystemNativeAdapter } from "./filesystem-
 import { applyFilesystemPatch } from "./filesystem-patch.js";
 import { loadNativePeerAdapter } from "./peer-credentials.js";
 
+for (const [source, hunks, expected] of [
+  ["one\n", "@@\n-one", ""],
+  ["one", "@@\n-one", ""],
+  ["one\n\n", "@@\n-one\n ", "\n"],
+  ["one\ntwo\n", "@@\n-one\n@@\n-two", ""]
+] as const) {
+  test(`patch deletion preserves exact remaining bytes for ${JSON.stringify(source)}`, async () => {
+    const project = await mkdtemp(join(tmpdir(), "mac-operator-patch-empty-"));
+    try {
+      await writeFile(join(project, "src.txt"), source, { mode: 0o600 });
+      const inspector = new FilesystemInspector([writeRoot(project)]);
+      const patch = `*** Begin Patch\n*** Update File: src.txt\n${hunks}\n*** End Patch\n`;
+      const result = applyFilesystemPatch(inspector, inspector.planPath(project, "write"), patch, undefined);
+      assert.equal(result.result, "applied");
+      assert.equal(await readFile(join(project, "src.txt"), "utf8"), expected);
+      assert.equal(result.files[0]?.sizeBytes, Buffer.byteLength(expected));
+    } finally { await rm(project, { recursive: true, force: true }); }
+  });
+}
+
 test("bounded patch updates and adds files under one authorized project root", async () => {
   const project = await mkdtemp(join(tmpdir(), "mac-operator-patch-"));
   const existing = join(project, "src.txt");
