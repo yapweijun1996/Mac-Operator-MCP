@@ -1,33 +1,35 @@
 # Mac-Operator-MCP Progress
 
-## Current service recovery: SERVICE RESTORED; authenticated MCP calls not yet verified — 2026-10-13
+## Current service: AVAILABLE; authenticated MCP verified; deployment acceptance PARTIAL — 2026-10-13
 
-The installed `09dd85b` service is running again with no production configuration
-change. A bounded startup diagnostic captured the hidden error: the Container
-Engine returned HTTP 404 for the pinned task image
-`sha256:90e9d231f56d358dd792b928da7a1da4ce1349306e91dacaa83d9a73defa5b25`,
-called from `personal-development-runtime.ts`. The Engine ID, Codex 0.160.1
-hash and runtime evidence hash all still matched. The 2026-10-05 backup archive
-held that exact image; loading it restored the identical image ID, and the
-service then started by itself. The prepared replacement image and
-`recovery-runtime.json` were not applied and are no longer needed.
+Follow-up at 15:41 UTC found another deployment workflow had installed
+`17bbdfd699d6a66c7dfafea4263470b98fec57ef`. Preserve that running release:
+this follow-up did not deploy, roll back, switch an image/evidence binding or
+restart the service. The exact original pinned image was restored earlier from
+the 2026-10-05 archive; the prepared replacement image remains unused.
 
-Verified: PM2 `online` with a stable restart count across a controlled restart;
-Edge `3443` and Auth `3444` listening; public unauthenticated `/mcp` returns 401
-with the expected challenge and OAuth metadata returns 200; an authenticated
-internal `/mcp` call succeeds; the other PM2 services are unchanged.
-**Not verified:** an authenticated `mac_health` and `mac_terminal_exec` call; no
-MCP client session was available. The two rollout blockers below are unchanged.
+Verified now: PM2 `online`, PID 54278, zero restarts and no PID/restart-count
+change during a 20-second window; original Engine/image identity and evidence
+hash match. Signed policy, Auth configuration, runtime configuration and worktree
+inventory are byte-identical to the stopped-state backup. Only Edge's release
+directory, contracts directory and source revision differ from that backup.
+Public unauthenticated `/mcp` returns 401; independent `/terminal/mcp` returns
+the expected 404. Actual authenticated `mac_health`, `mac_capabilities` and a
+read-only `mac_terminal_exec` smoke call pass. Installed GUI identity,
+LaunchServices, Accessibility and Screen Recording checks pass through
+`mac_capabilities`. These checks establish availability, not full deployment
+acceptance.
 
-The PM2 restart policy is now bounded: `max_restarts: 60`, `restart_delay: 5000`,
-`min_uptime: 30000`, applied in place and saved. The earlier `--max-restarts 3`
-never applied because the failing start outlived PM2's 1 s default `min_uptime`,
-which is how the service reached hundreds of restarts. See
-[PM2 restart policy](docs/auto-deploy.md#pm2-restart-policy) and the
-[recovery update](evidence/2026-10-13-predeployment-acceptance.md#recovery-update).
-The manual `deploy-*.zsh` scripts still start the service without `min_uptime`.
+PREDEPLOY-01 and PREDEPLOY-02 remain unresolved. A further supervisor drift,
+PREDEPLOY-03, is verified: the installed service has `max_restarts: 3`,
+`restart_delay: 5000` and no explicit `min_uptime`. The bounded 60/5000/30000
+policy previously applied to the old service was not retained in this deployment.
+No live policy correction was performed during this read-only follow-up.
+The focused auto-deploy/cutover/recovery suite passes **71/71**.
+See [current follow-up evidence](evidence/2026-10-13-predeployment-acceptance.md#authenticated-follow-up-and-installed-release-readback)
+and [PM2 restart policy](docs/auto-deploy.md#pm2-restart-policy).
 
-## Earlier pre-deployment acceptance: PARTIAL; recovery approval pending — 2026-10-13 (service state superseded above)
+## Earlier pre-deployment acceptance: PARTIAL; recovery approval was pending — 2026-10-13 (historical)
 
 The BUG-29 through BUG-37 repairs and documentation are committed locally as
 `a7f24509eeb668c63334e1b154fc6b1b1300474b`; no push or repair rollout occurred.
@@ -60,7 +62,7 @@ scope loss; Git commits use approved private index snapshots and actual commit
 readback; worktree history releases capacity while keeping old retry keys.
 Patch bytes, policy diagnostics and Git/Docker completeness are corrected.
 
-Final current-source suite: **2,226 PASS, 0 FAIL, 19 SKIP** across 242 test files
+Final repair-revision suite: **2,226 PASS, 0 FAIL, 19 SKIP** across 242 test files
 (2,245 total; 32 new regression cases). Build/native fault build, typecheck,
 style, docs/matrix/process-boundary checks and 58 contracts pass. All process
 regressions that failed under the restricted sandbox pass in the final approved
@@ -71,8 +73,10 @@ older binaries reject the new format. Preserve the whole state directory for
 backup and reconcile later work before a rollback. Git snapshot overrides are
 limited to live Broker-created snapshots; general task profiles still deny them.
 Operational details: [V2 runbook](docs/MAC_OPERATOR_V2_RUNBOOK.md).
-The repairs are verified locally; production migration, deployment and push
-remain pending. Node 24 and live/opt-in skipped paths remain unverified.
+The repairs were verified and committed locally as `a7f2450`. A separate workflow
+has since installed descendant `17bbdfd`; current availability and incomplete
+deployment acceptance are recorded above. The full host suite under Node 24 and
+the live/opt-in skipped paths remain unverified.
 
 ## Codebase review before remediation: DONE; 9 P2 repairs identified — 2026-10-13
 

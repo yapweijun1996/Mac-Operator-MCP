@@ -1,10 +1,13 @@
 # Personal always-on deployment
 
-Current verification (October 13, 2026): installed source is `09dd85b`, with V2
-Auth and independent owner-terminal OAuth disabled. The original service is
-stopped after a consistent backup exposed its missing approved task image.
-Validated replacement-image recovery awaits explicit owner approval; the new
-source rollout remains NO-GO for two configuration/provenance findings.
+Current verification (October 13, 2026, 15:41 UTC): another deployment workflow
+installed `17bbdfd`. The service is online, and actual authenticated MCP health,
+capabilities and a read-only terminal call pass. The original approved image was
+restored; the prepared replacement image was not applied. V2 Auth and independent
+owner-terminal OAuth remain unchanged; the separate terminal endpoint is disabled.
+Full deployment acceptance remains PARTIAL: the two configuration/provenance
+findings persist, and the installed supervisor lacks the explicit `min_uptime`
+needed by the documented bounded restart policy.
 See the [current acceptance and backup record](../evidence/2026-10-13-predeployment-acceptance.md).
 This is an owner-managed, unsigned personal deployment, not a Developer
 ID/notarized package or the formal production installer.

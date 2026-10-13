@@ -12,7 +12,7 @@ The historical findings comprise 8 P1 and 20 P2 defects. This pass adds no
 confirmed P0/P1 finding. Each new defect was reproduced against the baseline
 before repair; the retained trigger descriptions below document that behavior.
 
-Current-source regression: **2,226 passed, 0 failed, 0 cancelled, 19 skipped;
+Repair-revision regression (`a7f2450`): **2,226 passed, 0 failed, 0 cancelled, 19 skipped;
 2,245 total**, across 242 test files. The change adds 32 regression cases.
 The previously missing BUG-15 through BUG-28 history is also restored below.
 FIXED refers to verified local source behavior. No production configuration,
@@ -20,9 +20,13 @@ migration, deployment or push is included in this remediation.
 
 Repairs are committed as `a7f2450`. Subsequent actual pre-deployment acceptance
 found two existing production configuration/provenance blockers and a missing
-approved task image. The original service is stopped after its backup; a tested
-replacement-image recovery awaits explicit approval. These operational findings
-and the verified backup are recorded in the
+approved task image. The exact original image was later restored from an older
+archive. Follow-up at 15:41 UTC found another workflow had installed `17bbdfd`:
+the service and authenticated MCP health/capabilities/terminal smoke pass. The
+original authorization/runtime/inventory bindings are preserved, but the two
+earlier findings remain unresolved and the installed supervisor has lost its
+explicit bounded-restart configuration. These operational findings and the
+verified backup are recorded in the
 [pre-deployment evidence](evidence/2026-10-13-predeployment-acceptance.md).
 
 P1 denotes a security boundary failure, serious availability failure, or unsafe

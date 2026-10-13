@@ -1,12 +1,19 @@
 # Pre-deployment acceptance and backup — 2026-10-13
 
-Status: **PARTIAL.** Local repairs are committed and the complete stopped-state
-backup is verified. The candidate rollout is **NO-GO** because two existing
-production configuration/provenance issues remain. The original service is
-stopped; its prepared recovery requires explicit owner approval after automatic
-approval review rejected the production image/evidence switch.
+Current status: **SERVICE AVAILABLE; deployment acceptance PARTIAL.** The exact
+original image was restored from an older backup. Follow-up at 15:41 UTC found
+another workflow had installed `17bbdfd`; actual authenticated health,
+capabilities and terminal smoke pass. The two original acceptance failures remain,
+and the installed supervisor does not retain the explicit bounded restart policy.
+The stopped-state backup is verified. No replacement-image switch or service
+restart was performed in this follow-up. The sections before Recovery update
+retain the earlier backup-stage evidence and proposed action; current observations
+are in [Authenticated follow-up](#authenticated-follow-up-and-installed-release-readback).
 
 ## Source and installed state
+
+The following installed-state observations describe the original backup stage;
+the installed revision has since changed as recorded in the follow-up below.
 
 - Repair commit: `a7f24509eeb668c63334e1b154fc6b1b1300474b` on local `main`.
   BUG-29 through BUG-37, 32 regression cases and their documentation are included.
@@ -177,7 +184,8 @@ unused.
 | Authenticated `mac_terminal_exec` | NOT VERIFIED |
 
 No MCP client session was available, so the two authenticated tool calls were not
-made. A loopback request without the public `Host` header returns 403 by design.
+made at that recovery stage. Both calls pass in the follow-up below. A loopback
+request without the public `Host` header returns 403 by design.
 The two rollout blockers above, PREDEPLOY-01 and PREDEPLOY-02, were not touched.
 
 ### PM2 restart policy
@@ -208,3 +216,49 @@ an Access API credential, the installed ttyd (Homebrew 1.7.7_14, ad-hoc signed)
 is not hash-pinned in that repository, and there is no production release
 verifier. No `terminal.yapweijun1996.com` DNS record or tunnel route exists, so
 nothing is exposed. The Hub is not ready for a separate deployment.
+
+## Authenticated follow-up and installed release readback
+
+Observed on 2026-10-13 at 15:41:27 UTC after the owner selected recovery option A.
+The workspace already contained commit `17bbdfd`, and another deployment workflow
+had installed that revision. This follow-up preserved its work and did not deploy,
+roll back, change a production binding or restart PM2. The prepared replacement
+image/configuration remains unused. The earlier production-switch approval
+rejection no longer represents a pending recovery action.
+
+| Current check | Result |
+| --- | --- |
+| Installed source and PM2 release directory | `17bbdfd699d6a66c7dfafea4263470b98fec57ef`, `personal-20261013-17bbdfd` |
+| PM2 availability | Online, PID 54278, zero restarts; PID and restart count unchanged over five samples across 20 seconds |
+| Original Engine/image identity and runtime evidence hash | PASS; original `sha256:90e9d231...` is present, matching the unchanged runtime binding |
+| Signed policy, Auth configuration, development runtime and worktree inventory | PASS; byte-identical to the stopped-state backup |
+| Edge configuration changes from the backup | Exactly `packageRoot`, `contractsDirectory`, `sourceRevision`; bound to the installed release |
+| Original stopped-state backup manifest hash | PASS; matches the previously recorded digest |
+| Public unauthenticated `/mcp` | PASS, 401 |
+| Independent owner-terminal `/terminal/mcp` | PASS, expected 404; its OAuth connection remains disabled |
+| Actual authenticated `mac_health` | PASS; Broker healthy and Edge-to-Broker connection works |
+| Actual authenticated `mac_capabilities` | PASS; installed GUI identity, LaunchServices, Accessibility and Screen Recording all verified |
+| Actual authenticated `mac_terminal_exec` | PASS; read-only printf marker, exit 0, expected output and verified completion |
+| Focused auto-deploy/cutover/deployment-recovery suite on `17bbdfd` | 71 PASS, 0 FAIL, 0 SKIP |
+
+The terminal smoke uses the existing MCP connection and signed terminal authority;
+it does not enable the separate owner-terminal OAuth connection. Health proves
+the responding Broker path, not every external dependency. No full-suite rerun
+or full installed-profile/provenance acceptance is claimed by these checks.
+
+### Remaining acceptance findings
+
+PREDEPLOY-01 and PREDEPLOY-02 above remain unresolved. The current readback also
+confirms **PREDEPLOY-03**: the new service has `max_restarts: 3`,
+`restart_delay: 5000` and no explicit `min_uptime`. The 60/5000/30000 policy from
+the earlier recovery was not retained. The manual deployment scripts' known
+configuration gap is documented in [PM2 restart policy](../docs/auto-deploy.md#pm2-restart-policy).
+The isolated PM2 reproduction from the recovery established why the old settings
+do not bound this fail-closed startup path. This follow-up did not intentionally
+crash the live service or modify its supervisor configuration.
+
+Next action: restore the documented bounded supervisor policy through a reviewed
+service restart, then resolve the installed test-input and worktree-provenance
+failures before claiming complete deployment acceptance. Preserve the current
+healthy release and protected state while doing so. A later state mutation or
+rollout needs a new consistent backup and reconciliation of subsequent Jobs.
