@@ -193,3 +193,14 @@ test("app focus rejects unverified, sensitive, and permission-denied outcomes", 
 function successWithOutput(stdout: string): ProcessExecutionResult {
   return { ...success, stdout };
 }
+
+test("app open does not claim a missing target or launch when inventory is incomplete", async () => {
+  let launchCalls = 0;
+  const inspector = new AppControlInspectorImpl(
+    { async list() { return { apps: [], warnings: ["Inventory is incomplete"], truncated: true }; } },
+    { async run() { launchCalls++; return success; } });
+  await assert.rejects(inspector.open("bundle:com.example.Editor", undefined, undefined,
+    { timeoutMs: 5000, shouldCancel: () => false }), (error: unknown) =>
+    error instanceof Error && "errorClass" in error && error.errorClass === "OUTPUT_LIMIT");
+  assert.equal(launchCalls, 0);
+});

@@ -3,6 +3,7 @@ import { mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
+import { createHash } from "node:crypto";
 import { BrokerError } from "@mac-operator/contracts";
 import { FilesystemInspector } from "./filesystem-inspector.js";
 import { validateFilesystemWorkerResult, WorkerFilesystemExecutor } from "./filesystem-executor.js";
@@ -157,4 +158,49 @@ function root(rootId: string, path: string) {
 function hasErrorClass(error: unknown, expected: string): boolean {
   return error !== null && typeof error === "object" && "errorClass" in error &&
     (error as { errorClass: unknown }).errorClass === expected;
+}
+
+for (const character of ["é", "你", "😀"]) {
+  test(`filesystem worker returns UTF-8 pages and hashes only returned bytes (${character})`, async () => {
+    const directory = await realpath(await mkdtemp(join(tmpdir(), "fs-page-")));
+    const executor = new WorkerFilesystemExecutor(1);
+    try {
+      const file = join(directory, "page.txt");
+      const content = "a".repeat(65535) + character + "tail";
+      await writeFile(file, content);
+      const inspector = new FilesystemInspector([root("page-root", directory)]);
+      const plan = inspector.planPath(file, "content_read");
+      const control = { timeoutMs: 5000, shouldCancel: () => false };
+      const read: typeof executor.read = async (...args) => {
+        const deadline = Date.now() + 5000;
+        while (executor.activeCount() !== 0) {
+          if (Date.now() > deadline) throw new Error("Worker did not release capacity");
+          await new Promise(resolve => setTimeout(resolve, 5));
+        }
+        return executor.read(...args);
+      };
+      const first = await read(plan, 0, 65536, "utf8", control);
+      assert.equal(first.operation, "read");
+      if (first.operation !== "read") return;
+      assert.equal(first.content, "a".repeat(65535));
+      assert.equal(first.bytesReturned, 65535);
+      assert.equal(first.sha256, createHash("sha256").update(Buffer.from(first.content!)).digest("hex"));
+      assert.equal(first.truncated, true);
+      const second = await read(plan, first.bytesReturned, 65536, "utf8", control);
+      if (second.operation !== "read") throw new Error("Unexpected result");
+      assert.equal(first.content! + second.content!, content);
+      assert.equal(second.bytesReturned, Buffer.byteLength(character + "tail"));
+      assert.equal(second.truncated, false);
+      await assert.rejects(read(plan, 65535, 1, "utf8", control), /cannot fit/u);
+      await assert.rejects(read(plan, 65536, 64, "utf8", control), /valid UTF-8/u);
+      const binary = await read(plan, 65535, 1, "base64", control);
+      if (binary.operation !== "read") throw new Error("Unexpected result");
+      assert.equal(binary.bytesReturned, 1);
+      assert.equal(binary.content, Buffer.from(character).subarray(0, 1).toString("base64"));
+      await writeFile(file, Buffer.from([0x61, 0xe0, 0x80, 0x62]));
+      await assert.rejects(read(plan, 0, 3, "utf8", control), /valid UTF-8/u);
+      await writeFile(file, Buffer.from([0x61, 0xe2, 0x82]));
+      await assert.rejects(read(plan, 0, 64, "utf8", control), /valid UTF-8/u);
+    } finally { await executor.close(); await rm(directory, { recursive: true, force: true }); }
+  });
 }

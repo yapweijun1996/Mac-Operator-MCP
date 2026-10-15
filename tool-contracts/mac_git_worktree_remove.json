@@ -120,7 +120,7 @@
           },
           "branch_deleted": {
             "type": "boolean",
-            "description": "True when the task branch no longer exists; false when git branch -d kept it because it has unmerged commits (see warnings)."
+            "description": "True when the task branch no longer exists; false when it currently exists (see warnings). A completed removal retry only reads branch existence and never deletes a kept or subsequently recreated branch."
           }
         },
         "required": [

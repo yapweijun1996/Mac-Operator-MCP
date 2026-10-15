@@ -14,7 +14,7 @@ const MAX_ARCHIVE_BYTES = 64 * 1024 * 1024;
 const EXCLUDED_DIRECTORIES = new Set([".git", "node_modules", ".cache", "coverage", "dist", ".next", ".venv", "venv", "__pycache__"]);
 const decoder = new TextDecoder("utf-8", { fatal: true });
 
-export interface SnapshotFile { path: string; content: Buffer; sha256: string; }
+export interface SnapshotFile { path: string; content: Buffer; sha256: string; executable?: boolean; }
 export interface ContainerSnapshot {
   root: string;
   files: readonly SnapshotFile[];
@@ -87,7 +87,9 @@ function* snapshotSteps(root: string, readonlyWorkspace: boolean, excludedPaths:
           catch { excluded.push(path); continue; }
           bytes += content.length;
           if (files.length + directories.length >= MAX_FILES || bytes > MAX_ARCHIVE_BYTES / 2) limit("Snapshot exceeds its entry or byte budget");
-          files.push({ path, content, sha256: hash.digest });
+          const metadata = inspector.statPlanned(plan, false);
+          if (metadata.device !== first.device || metadata.inode !== first.inode) deny("Snapshot file identity changed");
+          files.push({ path, content, sha256: hash.digest, executable: (Number.parseInt(metadata.mode, 8) & 0o100) !== 0 });
         }
       }
       cursor = listing.nextCursor ?? undefined;
@@ -100,14 +102,15 @@ function* snapshotSteps(root: string, readonlyWorkspace: boolean, excludedPaths:
 }
 
 /** Construct the small USTAR subset accepted by the task input boundary. */
-export function createWorkspaceArchive(files: readonly Pick<SnapshotFile, "path" | "content">[], directories: readonly string[] = [], readonlyWorkspace = false): Buffer {
+export function createWorkspaceArchive(files: readonly Pick<SnapshotFile, "path" | "content" | "executable">[], directories: readonly string[] = [], readonlyWorkspace = false): Buffer {
   if (files.length + directories.length > MAX_FILES) limit("Archive has too many entries");
   const chunks: Buffer[] = [];
   const seen = new Set<string>();
   let total = 2 * BLOCK;
-  for (const entry of [...directories.map(path => ({ path, directory: true, content: Buffer.alloc(0) })),
+  for (const entry of [...directories.map(path => ({ path, directory: true, executable: false, content: Buffer.alloc(0) })),
     ...files.map(file => ({ ...file, directory: false }))]) {
     if (!safeSnapshotPath(entry.path) || seen.has(entry.path)) deny("Archive input path is forbidden or duplicated");
+    if (entry.executable !== undefined && typeof entry.executable !== "boolean") deny("Archive executable marker is invalid");
     seen.add(entry.path);
     const bytes = entry.directory ? Buffer.alloc(0) : entry.content;
     if (!Buffer.isBuffer(bytes) || bytes.length > MAX_FILE_BYTES) limit("Archive file is invalid or too large");
@@ -115,7 +118,7 @@ export function createWorkspaceArchive(files: readonly Pick<SnapshotFile, "path"
     const header = Buffer.alloc(BLOCK);
     const name = entry.directory ? `${entry.path}/` : entry.path;
     writeTarName(header, name);
-    writeOctal(header, 100, 8, entry.directory ? readonlyWorkspace ? 0o555 : 0o700 : readonlyWorkspace ? 0o444 : 0o600);
+    writeOctal(header, 100, 8, entry.directory ? readonlyWorkspace ? 0o555 : 0o700 : readonlyWorkspace ? entry.executable ? 0o555 : 0o444 : entry.executable ? 0o700 : 0o600);
     writeOctal(header, 108, 8, readonlyWorkspace ? 0 : 65532);
     writeOctal(header, 116, 8, readonlyWorkspace ? 0 : 65532);
     writeOctal(header, 124, 12, bytes.length);
@@ -165,7 +168,7 @@ export function parseWorkspaceArchive(archive: Buffer, stripWorkspacePrefix = tr
     else {
       const content = Buffer.from(archive.subarray(offset + BLOCK, offset + BLOCK + size));
       assertContentDoesNotContainSecrets(content);
-      files.push({ path, content, sha256: sha256(content) });
+      files.push({ path, content, sha256: sha256(content), executable: (mode & 0o100) !== 0 });
     }
     offset += BLOCK + Math.ceil(size / BLOCK) * BLOCK;
   }
@@ -230,7 +233,7 @@ export function importWorkspaceChanges(snapshot: ContainerSnapshot, output: read
     hooks.beforeWrite?.();
     hooks.onWriteIntent?.(file.path);
     inspector.writePlanned(inspector.planPath(join(snapshot.root, file.path), "write"), file.content,
-      before?.sha256, before === undefined, `.mac-operator-write-${randomBytes(16).toString("hex")}`, undefined, hooks.beforeWrite);
+      before?.sha256, before === undefined, `.mac-operator-write-${randomBytes(16).toString("hex")}`, undefined, hooks.beforeWrite, true);
     hooks.onChangedPath?.(file.path);
   }
   return changed.map(file => file.path);

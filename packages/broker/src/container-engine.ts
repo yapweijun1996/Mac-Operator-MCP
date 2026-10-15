@@ -148,7 +148,7 @@ interface EnginePins {
 }
 interface EngineResponse { status: number; bytes: Buffer; }
 interface WorkspacePhase { handle: ContainerTaskHandle; phase: "new" | "staging" | "ready" | "executing" | "exporting" | "blocked"; activeExecutions: number; }
-interface StagingChunk { path: string; offset: number; data: string; final: boolean; size: number; sha256: string; }
+interface StagingChunk { executable: boolean; path: string; offset: number; data: string; final: boolean; size: number; sha256: string; }
 interface ExportFile { path: string; size: number; dev: string; ino: string; mtime: string; ctime: string; }
 const EXPORT_TOTAL_BYTES = 32 * 1024 * 1024;
 const EXPORT_CHUNK_BYTES = 256 * 1024;
@@ -406,7 +406,7 @@ export class DockerContainerEngine {
         for (let offset = 0; offset < Math.max(1, file.content.length); offset += STAGING_CHUNK_BYTES) {
           const end = Math.min(offset + STAGING_CHUNK_BYTES, file.content.length);
           const chunk: StagingChunk = { path: file.path, offset, data: file.content.subarray(offset, end).toString("base64"),
-            final: end === file.content.length, size: file.content.length, sha256: file.sha256 };
+            final: end === file.content.length, size: file.content.length, sha256: file.sha256, executable: file.executable === true };
           if (batch.length >= 64 || Buffer.byteLength(JSON.stringify({ op: "chunks", chunks: [...batch, chunk] })) > STAGING_ARGUMENT_BYTES) await flush();
           batch.push(chunk);
         }
@@ -911,6 +911,8 @@ function denied(message: string): BrokerError { return new BrokerError("POLICY_D
 // This program receives validated regular-file chunks as data before any task
 // code exists. Guest UID0 only seals readonly snapshots; it has no host mounts,
 // no Linux capabilities, no network, and no caller-selected command or paths.
+export function workspaceStagerScriptForTesting(): string { return WORKSPACE_STAGER; }
+
 const WORKSPACE_STAGER = String.raw`
 const fs=require('fs'),path=require('path'),crypto=require('crypto'),C=fs.constants;
 const q=JSON.parse(process.argv[1]),fds=[];
@@ -927,18 +929,18 @@ if(q.readonly){if(process.getuid()!==0)fail();fs.chmodSync('/workspace',0o700);}
 if(!Array.isArray(q.chunks)||q.chunks.length>64)fail();
 for(const e of q.chunks){
 const mark=fds.length;try{
-if(!valid(e.path)||!Number.isSafeInteger(e.offset)||e.offset<0||!Number.isSafeInteger(e.size)||e.size<0||e.size>8388608||typeof e.final!=='boolean'||typeof e.data!=='string'||e.data.length>32768||!/^[a-f0-9]{64}$/.test(e.sha256))fail();
+if(!valid(e.path)||!Number.isSafeInteger(e.offset)||e.offset<0||!Number.isSafeInteger(e.size)||e.size<0||e.size>8388608||typeof e.final!=='boolean'||typeof e.executable!=='boolean'||typeof e.data!=='string'||e.data.length>32768||!/^[a-f0-9]{64}$/.test(e.sha256))fail();
 const data=Buffer.from(e.data,'base64');if(data.toString('base64')!==e.data||e.offset+data.length>e.size)fail();
 const parts=e.path.split('/'),name=parts.pop(),dir=openDir(parts),at='/proc/self/fd/'+dir+'/'+name;
 const file=fs.openSync(at,C.O_WRONLY|C.O_NOFOLLOW|(e.offset===0?C.O_CREAT|C.O_EXCL:0),0o600);fds.push(file);
 const stat=fs.fstatSync(file);if(!stat.isFile()||stat.size!==e.offset)fail();
 let n=0;while(n<data.length)n+=fs.writeSync(file,data,n,data.length-n,e.offset+n);fs.fsyncSync(file);pinned(dir);
-if(e.final){if(fs.fstatSync(file).size!==e.size)fail();const read=fs.openSync(at,C.O_RDONLY|C.O_NOFOLLOW);fds.push(read);const bytes=fs.readFileSync(read);if(bytes.length!==e.size||crypto.createHash('sha256').update(bytes).digest('hex')!==e.sha256)fail();}
+if(e.final){if(fs.fstatSync(file).size!==e.size)fail();const read=fs.openSync(at,C.O_RDONLY|C.O_NOFOLLOW);fds.push(read);const bytes=fs.readFileSync(read);if(bytes.length!==e.size||crypto.createHash('sha256').update(bytes).digest('hex')!==e.sha256)fail();fs.fchmodSync(file,e.executable?0o700:0o600);fs.fsyncSync(file);}
 }finally{release(mark);}
 }
 }else if(q.op==='seal'){
 if(typeof q.readonly!=='boolean')fail();
-if(q.readonly){if(process.getuid()!==0)fail();let count=0;const seal=p=>{if(++count>10001)fail();const mark=fds.length;try{const dir=openDir(p?p.split('/'):[]);for(const name of fs.readdirSync('/proc/self/fd/'+dir)){const rel=p?p+'/'+name:name;if(!valid(rel))fail();const at='/proc/self/fd/'+dir+'/'+name,s=fs.lstatSync(at);if(s.isDirectory())seal(rel);else if(s.isFile()){const file=fs.openSync(at,C.O_RDONLY|C.O_NOFOLLOW);try{fs.fchmodSync(file,0o444);}finally{fs.closeSync(file);}}else fail();}pinned(dir);fs.fchmodSync(dir,0o555);}finally{release(mark);}};seal('');}
+if(q.readonly){if(process.getuid()!==0)fail();let count=0;const seal=p=>{if(++count>10001)fail();const mark=fds.length;try{const dir=openDir(p?p.split('/'):[]);for(const name of fs.readdirSync('/proc/self/fd/'+dir)){const rel=p?p+'/'+name:name;if(!valid(rel))fail();const at='/proc/self/fd/'+dir+'/'+name,s=fs.lstatSync(at);if(s.isDirectory())seal(rel);else if(s.isFile()){const file=fs.openSync(at,C.O_RDONLY|C.O_NOFOLLOW);try{fs.fchmodSync(file,(fs.fstatSync(file).mode&0o100)?0o555:0o444);}finally{fs.closeSync(file);}}else fail();}pinned(dir);fs.fchmodSync(dir,0o555);}finally{release(mark);}};seal('');}
 }else fail();
 process.stdout.write('STAGED');
 }catch{process.stderr.write('STAGING_DENIED');process.exitCode=1;}finally{for(const fd of fds.reverse())try{fs.closeSync(fd);}catch{}}

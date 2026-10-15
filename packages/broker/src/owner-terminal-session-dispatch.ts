@@ -154,7 +154,7 @@ export async function dispatchOwnerTerminalSessionIo(options: {
     options.store.requestJobCancellation(info.tag, principalId, "OWNER_TERMINAL_STOP_ESCALATED", options.now());
     await waitForEnd(5_000);
   }
-  const read = manager.read(principalId, session.sessionId, 0, 1);
+  const read = manager.describe(principalId, session.sessionId);
   return wrap({ ...base, action: "stop", state: read.finished ? read.state! : "running", finished: read.finished,
     ...(read.finished ? { exit_code: read.exitCode ?? null } : {}) },
   read.finished ? "verified" : "accepted", read.finished ? "The session ended and its process tree was drained" : "Stop was requested; the session is still draining", evidence);

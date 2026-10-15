@@ -528,7 +528,11 @@ G1 owners can select **Allow this browser until revoked** on a focus approval
 page. This permits focus, click/scroll/key and input for the same browser, owner
 account and policy version without a time or use limit. The grant survives
 service restart and owner reconnection, and is stored in the protected AuthStore.
-Existing temporary consent is not automatically upgraded.
+Existing temporary consent is not automatically upgraded. Revoked persistent
+GUI records are compacted into bounded consent tombstones; ordinary expired
+previews cannot be replayed, and default-browser revocations remain durable.
+See [consent history and capacity](gui-computer-use.md#gui-consent-history-and-capacity)
+for retention limits and Auth state compatibility during rollback.
 
 `/approval/access` provides independent owner login to view and revoke grants.
 Management login expiry does not revoke persistent browser access. OAuth

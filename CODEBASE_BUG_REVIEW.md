@@ -1,11 +1,581 @@
 # Codebase Bug Review
 
+## Current review — 2026-10-15
+
+Status: **DONE — BUG-38 through BUG-53 FIXED; all 53 recorded findings resolved locally.**
+
+Reviewed revision: `a7d599934d3def5105b24871cf5229d75fecea24` (`main`).
+The review started with a clean working tree. The subsequently authorized
+BUG-38 through BUG-53 repairs change source, tests, contract documentation and
+Markdown. The cumulative repairs are committed on `codex/fix-review-bugs-38-53`
+and integrated into local `main`. No remote push, deployment or live-service
+change is included. Earlier batch evidence retains its point-in-time status.
+
+The report now contains **53 findings: zero OPEN and 53 FIXED locally**.
+The review identified 16 individually supported P2 defects, BUG-38 through
+BUG-53; all sixteen are now repaired. No new P0/P1 was confirmed.
+The 37 historical fixes retain their original evidence below; they
+were not all independently reproduced again in this pass. Existing operational
+PREDEPLOY findings remain in their deployment evidence and were not rechecked
+against the live service.
+
+The current source-backed suite passes: **2,394 total; 2,375 passed, zero failed,
+19 skipped; 248 files**, including 15 new cases in the final batch, with four concurrent test files
+and unchanged timeouts/assertions. Build/native fault build, typecheck, style,
+docs, matrix, process-boundary and 58-contract checks pass.
+Current verification is recorded in the
+[BUG-51–53 repair evidence](evidence/2026-10-15-bugs51-53-remediation.md).
+The preceding source-backed revisions remain documented in
+[BUG-49–50 evidence](evidence/2026-10-15-bugs49-50-remediation.md),
+[BUG-47–48 evidence](evidence/2026-10-15-bugs47-48-remediation.md),
+[BUG-45–46 evidence](evidence/2026-10-15-bugs45-46-remediation.md) and
+[BUG-42–44 evidence](evidence/2026-10-15-bugs42-44-remediation.md).
+The earlier ordinary `npm test` run discovered two obsolete ignored compiled
+test files and three failures; those artifacts are preserved. The source-backed
+run includes every current source test, including newly added files, and excludes
+only artifacts without source. Original baseline details remain in
+[review evidence](evidence/2026-10-15-codebase-review.md); prior fixes remain in
+[BUG-38–41 evidence](evidence/2026-10-15-bugs38-41-remediation.md).
+All sixteen newly reviewed defects now have targeted regression coverage.
+
+This is a broad review with focused source tracing and disposable reproductions,
+not proof that every possible bug has been found. The table contains every
+supported new finding from this pass. Coverage, fixtures, exact verification
+results, and unexecuted paths are recorded in the evidence document.
+
+### Current finding status
+
+| ID | Priority | Status | Defect | Evidence |
+| --- | --- | --- | --- | --- |
+| BUG-38 | P2 | FIXED locally | A status-channel close error skips root-helper command-channel cleanup | Runtime failure fixtures; 12 new lifecycle regression cases |
+| BUG-39 | P2 | FIXED locally | Edge status read hangs after an incomplete response reaches EOF | Actual local-socket EOF/reset/drip regressions |
+| BUG-40 | P2 | FIXED locally | A crash before PID publication leaves an unrecoverable auto-deploy lock | Actual filesystem/SQLite checks and child SIGKILL recovery |
+| BUG-41 | P2 | FIXED locally | Completed worktree removal retries delete a newly recreated same-name branch | Actual Git replay, restart and archive regressions |
+| BUG-42 | P2 | FIXED locally | Container snapshots and staging discard executable permissions | Actual native snapshot and isolated staging-script fixture |
+| BUG-43 | P2 | FIXED locally | Terminal stop returns an error when unread output begins with a multibyte character | Actual terminal manager and dispatch |
+| BUG-44 | P2 | FIXED locally | Host and guest file pagination reject valid UTF-8 at a byte boundary | Actual host worker and isolated guest-script fixture |
+| BUG-45 | P2 | FIXED locally | Revoked permanent GUI grants exhaust the lifetime per-kind capacity | Actual Auth/Broker stores and GUI approvals |
+| BUG-46 | P2 | FIXED locally | Schema-valid long owner IDs silently disable default browser access | Actual configuration parser and GUI authorization |
+| BUG-47 | P2 | FIXED locally | Installed-app capacity hides running apps without reporting truncation | Actual inventory script and parser with simulated ObjC |
+| BUG-48 | P2 | FIXED locally | Standard Utilities applications are absent from inventory and cannot be opened | Actual inventory/controller with simulated app metadata |
+| BUG-49 | P2 | FIXED locally | Python dependency parsing silently drops inline array entries | Actual package inspector with temporary manifests |
+| BUG-50 | P2 | FIXED locally | Named Xcode project/workspace bundles are not recognized as Swift projects | Actual native filesystem discovery |
+| BUG-51 | P2 | FIXED locally | Paginated directory discovery emits duplicate project/type records | Actual native filesystem discovery over 502 files |
+| BUG-52 | P2 | FIXED locally | Project discovery hides its depth-limit omissions | Actual native traversal with a project at depth 17 |
+| BUG-53 | P2 | FIXED locally | Text-search policy explanation allows a root that denies content reads | Actual signed Broker explanation and execution requests |
+
+### BUG-38 through BUG-41 implementation and acceptance
+
+| Finding | Implemented behavior | Regression coverage |
+| --- | --- | --- |
+| BUG-38 | All owned server cleanup is attempted; errors are retained/aggregated and failed cleanup stays retryable with visible failed state. | Running, stopped, failed-startup and unavailable paths; status, command and both-close failures; successful cleanup retry. |
+| BUG-39 | EOF/close rejects an incomplete frame; a single absolute deadline also bounds peers sending partial data. Late connection readback cannot write after settlement. | Empty EOF, partial EOF, reset and drip; existing authenticated success/replay/denial tests remain green. |
+| BUG-40 | A separate owner-only SQLite transaction serializes the entire runner and recovery. Aged empty directories recover safely; complete PID publication is atomic and release checks ownership. | Fresh/aged unpublished locks, live/dead legacy owners, contention, stale release, changed identity, malformed/unexpected evidence, real child SIGKILL, crash-left PID hard link and redirected guard. |
+| BUG-41 | A completed removal retry only reads branch existence; retained or recreated branches require separate owner cleanup. Existing authority and project/replacement-worktree checks remain in force. | Actual branch recreation, normal/restarted/archived replay, retained unmerged branches, revoked authority and replaced projects. |
+
+The lock helper is [lock.mjs](scripts/auto-deploy/lock.mjs). It uses Node's
+existing SQLite runtime and never opens a Broker ledger. Keep its persistent
+`lock.sqlite` identity in place; the kernel releases the transaction after a
+crash. The PID directory remains for old-runner compatibility, with a 30-second
+unpublished-lock grace period. Malformed/unknown evidence fails closed.
+See [lock operations](docs/auto-deploy.md#lock-recovery) for release/rollback
+constraints. Worktree replay uses the existing record format; no migration is
+needed. `branch_deleted` on replay describes current absence, not a newly
+executed delete. A branch left by an earlier failed cleanup is now deliberately
+left for the owner rather than being deleted by a historical key.
+
+The original trigger descriptions and line references below describe the
+pre-repair review revision. This table and the repair evidence own current
+behavior. BUG-51 through BUG-53 are repaired in the acceptance section below.
+
+### BUG-38: A status close error leaves the root-helper command server open
+
+**Location:** [root-helper-snapshot-runtime.ts](packages/broker/src/root-helper-snapshot-runtime.ts),
+lines 154-158 and 169-178; command cleanup is owned by
+[root-helper-snapshot-transport.ts](packages/broker/src/root-helper-snapshot-transport.ts),
+`RootHelperSnapshotServer.close()`.
+
+**Trigger and evidence:** Start the actual runtime with the existing injectable
+server interfaces. Make status-server close throw `IPC socket ownership changed
+before close`. Runtime close rejects and reports `state: failed`, but the
+command-server close is never called and the fixture remains listening. Startup
+failure followed by the same cleanup error has the same result. An independent
+repeat confirmed the shutdown case. Socket-identity and filesystem failures in
+the real IPC close path can produce this exception.
+
+**Impact:** Failure of the diagnostic endpoint skips command-listener shutdown,
+active-request cleanup, authority-poller shutdown, and key disposal. This is a
+conditional lifecycle defect in the optional root-helper runtime, not evidence
+that the deployed service enables it or that authentication is bypassed.
+
+**Correction and verification:** Attempt every owned cleanup independently and
+aggregate errors. Test normal shutdown and failed startup with each close
+operation failing; command cleanup must always run, and unavailable cleanup
+must remain visible rather than being reported as a successful stop.
+
+### BUG-39: A truncated Edge status response can wait forever
+
+**Location:** [edge-status-ipc.ts](packages/edge/src/edge-status-ipc.ts),
+`exchangeStatusSocket()`, lines 417-450, especially 429-438.
+
+**Trigger and evidence:** A protected temporary Unix-socket peer sends partial
+JSON without its terminating newline and closes normally. The actual status
+client is configured with a 100 ms timeout; its Promise is still unsettled
+after 502 ms. No external endpoint is involved.
+
+**Cause and impact:** The client handles data, errors, connection and inactivity
+timeout, but not end/close. Once the connection closes, its socket timeout no
+longer bounds the unfinished Promise. Installation or deployment status
+readback can hang instead of returning a bounded failure.
+
+**Correction and verification:** Reject EOF/close before a complete frame and
+enforce an absolute deadline. Clean up all handlers and timers on settlement.
+Test empty EOF, partial EOF, a stalled/dripping response, and normal completion.
+
+### BUG-40: An incompletely published auto-deploy lock never recovers
+
+**Location:** [run.mjs](scripts/auto-deploy/run.mjs), `acquireLock()`, lines 58-68.
+
+**Trigger and evidence:** Stop a process after lock-directory creation but
+before its PID file is written. Running the actual extracted lock function
+twice against that disposable empty directory returns `ENOENT` both times.
+
+**Cause and impact:** The existing-directory path unconditionally reads the
+PID file. Lock acquisition occurs outside the run's cleanup `finally`, so every
+later automatic run fails and leaves the same lock behind. No live deployment
+was interrupted in this test.
+
+**Correction and verification:** Define recovery for missing/invalid owner
+publication with a bounded grace period and directory-identity checks. Preserve
+live-owner exclusion. Test interruption before/after PID publication, concurrent
+acquisition, a dead owner, and a healthy owner.
+
+### BUG-41: Removal replay deletes a newly recreated branch
+
+**Location:** [managed-worktrees.ts](packages/broker/src/managed-worktrees.ts),
+completed-removal retry at lines 262-268 and branch cleanup at 346-358.
+
+**Trigger and evidence:** Remove a managed worktree and successfully delete its
+`codex/retry` branch. Recreate that branch in the same original repository at a
+merged commit, then repeat the completed removal's key. Actual Git readback
+shows the recreated branch exists before retry and is absent afterward.
+
+**Cause and impact:** Replay reissues `git branch -d` using only the old name.
+Project-identity checks correctly preserve BUG-28's replacement-repository
+guard, but cannot distinguish the new ref inside the original repository.
+This deletes a later branch reference; the reproduction does not establish
+deletion of unmerged commits or a force-delete bypass.
+
+**Correction and verification:** Persist successful branch cleanup and replay
+that outcome without deleting again. Any pending cleanup must bind the original
+branch identity. Test same-name recreation after successful removal, pending
+cleanup, restart/archive replay, and existing project-identity guards.
+
+### BUG-42–44 repair outcome — 2026-10-15
+
+BUG-42 now carries a validated executable marker from identity-checked host
+metadata through the tar checksum and staging chunks. Files normalize to
+`0700`/`0600`, or `0555`/`0444` in read-only workspaces. Execution is granted
+only after staged size/hash verification. Guest edits retain existing owner
+execution. Host imports retain only the existing host inode's owner execution
+through the atomic native writer; guest mode cannot grant execution to a new
+or previously nonexecutable host file. Special bits are stripped. The native
+preservation capability must be version 1; older addons fail closed.
+
+BUG-43 now obtains stop state from `describe()` after authoritative completion,
+without decoding or consuming output. Existing read cursors, redaction, bounded
+reads and final-state persistence remain in force.
+
+BUG-44 shares a strict UTF-8 page decoder between host and guest. A valid partial
+last character is deferred to the next page. Invalid encoding, incomplete EOF,
+unaligned offsets and pages too small for one character still fail explicitly.
+Host `bytes_returned` and `next_offset` are additive optional result fields;
+`sha256` covers the actual returned original bytes, including any BOM. Guest
+`nextOffset` advances by the same actual byte count. Host base64/metadata behavior
+is preserved. See the [repair evidence](evidence/2026-10-15-bugs42-44-remediation.md)
+for tests, compatibility and unexecuted physical acceptance.
+
+### BUG-42: Container transfer removes executable permissions
+
+**Location:** [container-snapshot.ts](packages/broker/src/container-snapshot.ts),
+line 118; [container-engine.ts](packages/broker/src/container-engine.ts),
+lines 408-409, 933 and 941.
+
+**Trigger and evidence:** Snapshot an ordinary tracked `0755 run.sh`. The actual
+native snapshot archive records `0600`, and its file model has no mode field.
+Execute the actual staging script in an isolated filesystem fixture: begin,
+chunk and seal all return `STAGED`, but the staged file is `0600` and executing
+it fails with `EACCES`. Read-only sealing instead assigns `0444`.
+
+**Impact:** An approved manifest command such as an npm test that invokes
+`./run.sh` fails after transfer despite the source script being executable.
+Approved scripts are supported by the task-profile contract and
+[V2 runbook](docs/MAC_OPERATOR_V2_RUNBOOK.md); this does not imply every
+currently registered validation uses such a script.
+
+**Correction and verification:** Carry a restricted executable bit through the
+snapshot, digest/transport and staging contracts while stripping special
+permissions. Preserve read-only enforcement. Test an approved script invocation
+in writable and read-only profiles and verify that nonexecutables stay so.
+
+### BUG-43: Successful terminal stop can return a UTF-8 read error
+
+**Location:** [owner-terminal-session-dispatch.ts](packages/broker/src/owner-terminal-session-dispatch.ts),
+lines 147-157.
+
+**Trigger and evidence:** An actual terminal-manager session has unread output
+beginning with U+4F60 followed by a newline. Stop it through the actual dispatch
+function. The session is finished, but dispatch returns `PRECONDITION_FAILED`:
+`Terminal read size cannot fit the next UTF-8 character`.
+
+**Cause and impact:** Stop obtains final state by reading one byte of output.
+The existing UTF-8 read guard correctly refuses a page smaller than the first
+character, converting a completed stop into an apparent failure.
+
+**Correction and verification:** Obtain terminal state without consuming an
+output page, or use a character-safe state read. Test ASCII, a multibyte first
+character, drained output, and repeat stop; preserve output redaction and
+bounded ordinary reads.
+
+### BUG-44: Byte-limited UTF-8 file pages reject valid text
+
+**Location:** [filesystem-worker.ts](packages/broker/src/filesystem-worker.ts),
+lines 24-30; guest read in
+[container-task-runner.ts](packages/broker/src/container-task-runner.ts),
+lines 474-476.
+
+**Trigger and evidence:** Read a valid file containing 65,535 ASCII bytes,
+U+4F60, then `abc` through the actual host worker's default 65,536-byte UTF-8
+page. It returns `PRECONDITION_FAILED` / `Filesystem content is not valid UTF-8`;
+a 65,538-byte page succeeds. The actual guest script likewise fails on 16,383
+ASCII bytes followed by the same character at its default 16 KiB page, returning
+`ISOLATED_FILE_OPERATION_DENIED`. Guest execution used a filesystem fixture,
+not a live container.
+
+**Cause and impact:** Both readers apply a byte slice before fatal UTF-8
+decoding. A page ending inside a character makes a valid text file appear
+invalid or denied. This can prevent ordinary source inspection by clients and
+the coding controller. Base64 host reads are a workaround, not corrected UTF-8
+paging.
+
+**Correction and verification:** Define character-safe byte-page boundaries,
+accurate continuation offsets and the behavior of too-small/unaligned ranges.
+Keep strict validation for genuinely invalid text and scan every returned byte
+for secrets. Test default boundaries, 2/3/4-byte characters, continuation,
+genuinely invalid UTF-8, EOF and raw/base64 range behavior.
+
+### BUG-45–46 repair outcome — 2026-10-15
+
+BUG-45 now compacts revoked browser/desktop records transactionally into bounded
+`gui_consent_tombstone` records. Ordinary consent evidence is retained until the
+maximum Broker preview lifetime after grant creation, then removed; expired
+previews cannot be reused or renewed. Default-browser revocations have no expiry.
+Both persistent consent entry points check durable evidence across browser and
+desktop kinds. Only active grants restore into the GUI consent cache.
+
+The existing 8,000-record total and 1,000-record per-kind bounds are unchanged.
+The new marker kind shares those limits. If its 1,000 slots are full, the original
+revoked grant is retained rather than forgetting a revocation. Expired ordinary
+history can still be reclaimed. Finite capacity remains a deliberate fail-closed
+limit; indefinite default-policy history is never silently evicted.
+
+BUG-46 creates `default-browser-v2:` plus a SHA-256 digest of the JSON identity
+tuple `(principal, browser, policy)`. The marker is always 83 characters. Reads
+also check legacy concatenated markers in grants and tombstones, preserving old
+active grants and same-policy revocations. Supported long owner IDs now work;
+owner/app/policy, explicit approval and desktop isolation rules remain unchanged.
+
+No SQL table/version migration is required, but the record vocabulary expands.
+An older binary rejects compacted state as an unknown record kind. Keep matching
+Auth source and state, and preserve all revocations during rollback. Details and
+regression results: [repair evidence](evidence/2026-10-15-bugs45-46-remediation.md).
+
+### BUG-45: Revoked GUI grants permanently consume capacity
+
+**Location:** [store.ts](packages/auth/src/store.ts), lines 114-117 and 186-188;
+[gui-session-approval.ts](packages/auth/src/gui-session-approval.ts), lines
+175-182; permanent grant records in [contracts.ts](packages/auth/src/contracts.ts).
+
+**Trigger and evidence:** Populate actual protected temporary Auth state with
+1,000 schema-valid revoked browser grants and run `prune()`. With zero active
+grants, a new authorized persistent grant fails with `Auth capacity exceeded`.
+The same reproduction with 1,000 revoked desktop grants also fails.
+
+**Cause and impact:** Revocation retains the records without an expiry, pruning
+removes only expired rows, and insertion caps the entire kind at 1,000. Ordinary
+consent/revocation history eventually disables new permanent GUI grants.
+
+**Correction and verification:** Reclaim hot capacity using bounded historical
+records/tombstones while preserving revocation and old-consent replay guards.
+Test revoke/prune/reopen at capacity and ensure stale/default-browser consent
+cannot be resurrected by compaction.
+
+### BUG-46: Valid long owner IDs silently disable default browser access
+
+**Location:** [gui-session-approval.ts](packages/auth/src/gui-session-approval.ts),
+lines 150-151; accepted configuration IDs in
+[contracts.ts](packages/auth/src/contracts.ts), lines 41 and 64.
+
+**Trigger and evidence:** Parse a G1 owner configuration with
+`defaultBrowserAccess: true` and an 80-character principal ID. The actual schema
+accepts it. Identical GUI authorization succeeds for the short-ID control but
+returns false and creates no grant for the long ID: its concatenated default
+marker is 130 characters.
+
+**Cause and impact:** The marker concatenates principal, application and policy
+identities, then silently returns when their combined length exceeds 128.
+Individually supported IDs therefore produce a nonfunctional supported setting.
+
+**Correction and verification:** Derive a bounded digest from an unambiguous
+identity tuple, with compatibility for existing grants/revocations. Test maximum
+valid IDs, distinct tuples and legacy revoked defaults; do not widen consent.
+
+### BUG-47–48 repair outcome — 2026-10-15
+
+BUG-47 now reserves the 500-result budget for running apps before installed-only
+identities. Running-only requests skip installed discovery entirely; duplicate
+IDs merge metadata without consuming more capacity. The shipped adapter returns
+an internal `{apps, truncated}` envelope, validated by the parser and propagated
+through the existing public warnings/truncation fields. Capacity, depth, entry,
+directory and metadata failures report incomplete results. A complete exact-cap
+inventory is not incorrectly marked truncated. If app-open cannot find a target
+in incomplete inventory, it returns `OUTPUT_LIMIT` without launching, rather
+than asserting that the app does not exist.
+
+BUG-48 adds fixed system, shared and per-user Utilities roots and breadth-first
+ordinary-directory discovery: at most four nested directory levels, 128 scheduled
+directories and 10,000 inspected entries. Symlinks and paths resolving through
+symlinks are skipped. App bundles and other package interiors are not traversed;
+hidden entries are outside discovery scope. Every app is identified by bundle ID,
+not a returned filesystem path. Root and app metadata cannot expand GUI consent.
+
+Regression fixtures run the actual shipped JXA and the actual app controller
+with simulated Foundation/AppKit/process effects. A separate read-only macOS run
+also found Activity Monitor in standard Utilities. No actual application was
+launched, service changed or GUI consent broadened. Public result schemas and
+persistent formats are unchanged; matching adapter/parser source ships together.
+Full coverage and limits: [repair evidence](evidence/2026-10-15-bugs47-48-remediation.md).
+
+### BUG-47: App inventory capacity hides running applications
+
+**Location:** [app-inspector.ts](packages/broker/src/app-inspector.ts), lines
+59, 74-81 and 188.
+
+**Trigger and evidence:** Execute the actual inventory JXA script with simulated
+ObjC metadata for 501 installed apps and one additional running app, then use
+the actual parser. The all-app query returns 500 apps with `truncated: false`
+and no warnings. The running-only query returns zero apps with the same false
+completeness claim.
+
+**Cause and impact:** Installed entries fill the 500-slot map before running
+apps are merged. The script silently discards later entries, and the parser
+knows only transport truncation. Inventory loses active apps; dependent app
+control can also mistake an omitted app for an unknown target.
+
+**Correction and verification:** Apply requested filtering/priority before the
+cap and propagate semantic completeness. Test 500/501 installed entries, extra
+running apps, duplicates and running-only requests without invoking real apps.
+
+### BUG-48: Standard Utilities applications cannot be discovered or opened
+
+**Location:** [app-inspector.ts](packages/broker/src/app-inspector.ts), lines
+24 and 55-59; inventory-dependent open in
+[app-control.ts](packages/broker/src/app-control.ts), lines 75-79.
+
+**Trigger and evidence:** Represent an unstarted Activity Monitor bundle under
+`/System/Applications/Utilities`. The actual inventory script and controller
+with simulated ObjC/process dependencies return an empty inventory and
+`TARGET_NOT_FOUND`; the launch adapter is never called. A read-only system-file
+check confirms this is Activity Monitor's standard location and bundle ID on
+the reviewed host. No application was launched.
+
+**Cause and impact:** The fixed roots are scanned only for direct `.app`
+children. Utilities is a directory, so its installed applications are absent
+unless already running. Other nested Applications folders have the same
+limitation. Installed-app discovery and authorized opening are therefore
+incomplete even well below the inventory cap.
+
+**Correction and verification:** Include standard Utilities roots and define
+bounded, symlink-safe nested bundle discovery. Test an unstarted Utilities app,
+a direct app, ordinary nested folders, duplicate IDs and symlinks.
+
+### BUG-49–50 repair outcome — 2026-10-15
+
+BUG-49 now reads the complete supported `[project].dependencies` string array,
+including inline/multiline layouts, multiple items per line, comments, trailing
+commas, single/double quotes and supported basic-string escapes. Quoted markers
+and URL fragments inside strings are preserved. Empty arrays are valid;
+unsupported/malformed arrays return a fixed warning and contribute no partial
+array results. Poetry sections and pip/uv/poetry selection retain existing
+behavior. This is a bounded metadata extractor, not a complete TOML validator;
+multiline string literals and `\U` escapes remain explicitly unsupported in
+this field. Existing secret, symlink, 512 KiB manifest, 5,000 dependency,
+cancellation and sanitization guards remain in force. No dependency was added.
+
+BUG-50 now recognizes nonempty named directory basenames ending in `.xcodeproj`
+or `.xcworkspace`, alongside exact `Package.swift` markers. Symlinks, file
+lookalikes, bare suffix names and unrelated endings cannot create those bundle
+markers. Indicators retain the bounded suffix labels `.xcodeproj` and
+`.xcworkspace`, so even long bundle filenames satisfy the existing result schema.
+The automatic walk treats discovered Xcode bundles as opaque markers, preventing
+internal workspaces from being reported as additional source projects.
+
+Native metadata-only fixtures and signed Broker coverage verify discovery without
+content-read authority. No Xcode, Python interpreter or package manager is run.
+This is the BUG-49–50 acceptance scope. Pagination, depth reporting and policy
+diagnostics are subsequently repaired below. Earlier verification:
+[repair evidence](evidence/2026-10-15-bugs49-50-remediation.md).
+
+### BUG-49: Python inline dependency arrays are silently omitted
+
+**Location:** [package-inspector.ts](packages/broker/src/package-inspector.ts),
+`parsePythonManifest()`, lines 266-276.
+
+**Trigger and evidence:** Inspect a temporary `pyproject.toml` with
+`[project]` and `dependencies = ["requests>=2.31", "flask>=3"]`. The actual
+package inspector returns `dependencies: []`, `warnings: []`, and
+`truncated: false`. Moving the two strings onto separate lines returns both;
+keeping only the first string on the opening line loses that first dependency.
+
+**Cause and impact:** The parser skips the array's opening line and extracts
+only one quoted dependency from each later line. Equivalent valid manifest
+formatting changes the reported dependency inventory without any warning.
+
+**Correction and verification:** Parse the supported TOML array syntax across
+opening/closing lines and multiple entries, or explicitly report unsupported
+syntax. Test equivalent inline/multiline arrays, extras, comments and multiple
+strings per line, retaining existing secret and size guards.
+
+### BUG-50: Named Xcode bundles are not recognized as Swift projects
+
+**Location:** [filesystem-inspector.ts](packages/broker/src/filesystem-inspector.ts),
+Swift markers at line 313 and marker matching at 739-744.
+
+**Trigger and evidence:** Create a disposable directory containing only
+`Example.xcodeproj/`. Actual native discovery with `types: ["swift"]` returns
+`projects: []`, `truncated: false`.
+
+**Cause and impact:** `.xcodeproj` and `.xcworkspace` are tested as literal
+complete filenames rather than suffixes. Normal named Xcode bundles are never
+recognized through these advertised Swift indicators unless a separate
+`Package.swift` happens to exist.
+
+**Correction and verification:** Match named project/workspace directory
+suffixes while preserving exact manifest markers and symlink exclusions.
+Test both named bundle forms, `Package.swift`, unrelated suffixes and symlinks.
+
+### BUG-51 through BUG-53 implementation and acceptance
+
+BUG-51 aggregates only recognized marker labels across every directory page,
+then emits one canonical-root/type record with ordered, distinct indicators.
+Overlapping roots remain deduplicated. Exact result caps stay complete unless
+another distinct record or traversal omission is found.
+
+BUG-52 separates incomplete traversal from budget exhaustion. Eligible children
+omitted below depth 16 mark the result truncated without stopping later pages
+or queued siblings. Skipped folders, links and opaque Xcode bundles do not
+create depth omissions. Global directory/entry/result bounds remain enforced.
+
+BUG-53 shares the filesystem capability mapping across explanation, path/search
+planning and capability projection. Search requires content-read authority;
+metadata-only roots produce the same denial as execution. Detailed search
+explanations bind the public target to the first requested normalized path and
+authorize every additional root. Existing write/patch guards remain covered.
+No proposed tool executes during explanation.
+
+Fifteen new cases cover native pagination/depth behavior, simulated global
+budgets and signed Broker authorization. Original failing fixtures reproduced
+all three defects before repair. Scope and final verification:
+[BUG-51–53 evidence](evidence/2026-10-15-bugs51-53-remediation.md).
+
+### BUG-51: A project is emitted again on each marker-bearing directory page
+
+**Location:** [filesystem-inspector.ts](packages/broker/src/filesystem-inspector.ts),
+lines 739-751, inside the paginated directory loop.
+
+**Trigger and evidence:** Create `requirements.txt`, 500 ordered `sNNNN.txt`
+files, and `setup.py` in one directory. Actual native discovery emits two
+Python projects for that same root, one with each indicator, and reports
+`truncated: false`.
+
+**Cause and impact:** Marker aggregation is page-local and project results are
+appended without a `(root, type)` identity. Pagination duplicates logical
+projects, splits their indicators and can consume result slots that should
+have been available for other projects.
+
+**Correction and verification:** Aggregate indicators per directory/type
+across pages and apply the result cap to distinct logical results. Test markers
+on pages one/two, multiple types, overlapping input roots and exact result caps.
+
+### BUG-52: Project discovery omits deeper projects without truncation
+
+**Location:** [filesystem-inspector.ts](packages/broker/src/filesystem-inspector.ts),
+line 761 and final result at 773; `MAX_PROJECT_DEPTH` is 16.
+
+**Trigger and evidence:** Place a `package.json` beneath 17 nested directories
+and discover from the outer root. Actual native discovery returns no projects
+with `truncated: false`. Narrowing the root by one directory finds that same
+Node project.
+
+**Cause and impact:** Descending is skipped at the depth boundary without
+recording incomplete traversal. Clients cannot distinguish an empty tree from
+an unvisited subtree, unlike the existing entry/directory budget handling.
+
+**Correction and verification:** Preserve the fixed depth budget but propagate
+that eligible subdirectories were omitted. Continue other accessible roots.
+Test exact depth, depth plus one, skipped special folders and sibling roots.
+
+### BUG-53: Text-search explanation uses weaker filesystem authority
+
+**Location:** [broker.ts](packages/broker/src/broker.ts), policy explanation at
+line 2816 versus text-search planning at lines 4912-4917.
+
+**Trigger and evidence:** Configure an otherwise authorized root with
+`metadata: true`, `contentRead: false` and both required principal/target scopes.
+Send actual signed requests to a temporary Broker. A `mac_policy_explain`
+request for `mac_search_text` without `proposed_arguments` returns `allow` and
+`AUTHORIZED`; actual search returns `POLICY_DENIED` because the root does not
+grant `content_read`.
+
+**Cause and impact:** The explanation's tool-to-capability mapping defaults
+text search to metadata, while execution requires content reads. This is
+misleading diagnostics, not a content authorization bypass. BUG-34's patch
+write explanation fix remains intact.
+
+**Correction and verification:** Share the authoritative filesystem capability
+mapping with execution, retaining side-effect-free explanations. Test metadata
+and content roots, with/without proposed arguments and the actual corresponding
+read decision.
+
+### Review method and repair order
+
+KB-MCP recall and Skill Registry reads supplied
+`engineering:scmc-review` v1.0.0 and
+`project:code-docs-source-of-truth-sync` v1.0.1. Current source and reproduced
+behavior take precedence over recalled historical repair states.
+
+Original-review SCMC scope was the lifecycle, inventory, transfer and diagnostic paths:
+Simple **PASS** (no speculative replacement required), Clear **WARN** (silent
+omissions), Modular **PASS** (repairs fit existing owners), Consistent **FAIL**
+(Medium: page-local project identity, divergent content-authority mapping, and
+lost file-mode semantics produced inconsistent observable behavior). BUG-38–44
+now correct the repaired lifecycle and transfer paths. BUG-45–53 also repair
+the confirmed inventory, discovery and diagnostic defects. Correctness and security
+guards must be preserved. These ratings do not replace bug priorities or
+establish a whole-system architecture verdict.
+
+BUG-38 through BUG-53 now have local fixes and regression evidence. This closes
+all supported findings from this review; it does not establish exhaustive
+whole-system defect freedom.
+
+## Historical review and remediation — 2026-10-13
+
 Review date: 2026-10-13 (Asia/Kuala_Lumpur)
 Reviewed revision: `09dd85b99b7ffc0246a14f85959a7b49473d7abc` (`main`)
 Remediation date: 2026-10-13
 Status: **DONE — all nine new findings FIXED locally and regression-verified.**
 
-This report records **37 findings, all FIXED in the current working tree**:
+This historical review records **37 findings, all FIXED in repair revision `a7f2450`**:
 28 historical repairs are in the reviewed revision, and BUG-29 through BUG-37
 are nine additional P2 repairs implemented after the user authorized option A.
 The historical findings comprise 8 P1 and 20 P2 defects. This pass adds no

@@ -1781,8 +1781,8 @@ test("mac_app_list binds app-set authority and returns sanitized metadata", asyn
         assert.equal(control.shouldCancel(), false);
         return {
           apps: [{ appId: "bundle:com.example.App", bundleId: "com.example.App", name: "Example", running: true, version: "1.0" }],
-          warnings: [],
-          truncated: false
+          warnings: ["App inventory is incomplete"],
+          truncated: true
         };
       }
     },
@@ -1799,6 +1799,8 @@ test("mac_app_list binds app-set authority and returns sanitized metadata", asyn
     assert.equal(result.ok, true, JSON.stringify(result));
     assert.deepEqual(observed, { runningOnly: true, includeInstalled: false });
     if (result.ok) {
+      assert.equal(result.truncated, true);
+      assert.deepEqual(result.warnings, ["App inventory is incomplete"]);
       assert.deepEqual(result.data, {
         apps: [{ app_id: "bundle:com.example.App", bundle_id: "com.example.App", name: "Example", running: true, version: "1.0" }]
       });
@@ -4168,13 +4170,15 @@ test("mac_read_file returns a bounded descriptor-backed range", async () => {
     const result = await broker.handle(signRequest(request, key));
     assert.equal(result.ok, true);
     if (result.ok) {
-      const data = result.data as { path: string; encoding: string; content: string; size_bytes: number; sha256: string; truncated: boolean };
+      const data = result.data as { path: string; encoding: string; content: string; size_bytes: number; sha256: string; truncated: boolean; bytes_returned: number; next_offset: number | null };
       assert.equal(data.path, await realpath(path));
       assert.equal(data.encoding, "utf8");
       assert.equal(data.content, "wor");
       assert.equal(data.size_bytes, 11);
       assert.match(data.sha256, /^[a-f0-9]{64}$/u);
       assert.equal(data.truncated, true);
+      assert.equal(data.bytes_returned, 3);
+      assert.equal(data.next_offset, 9);
       assert.equal(result.truncated, true);
       assert.ok(result.warnings.some((warning) => /sha256 covers only the 3 returned bytes \(offset 6\) of this 11-byte file/u.test(warning)));
       assert.equal(result.verification.status, "verified");
@@ -4533,6 +4537,97 @@ test("mac_search_text denies metadata-only roots before content execution", asyn
   }
 });
 
+for (const contentRead of [false, true]) {
+  test(`text-search policy explanation agrees with execution for contentRead=${contentRead}`, async () => {
+    const parent = await mkdtemp(join(tmpdir(), "mac-operator-search-explain-"));
+    const directory = await realpath(parent);
+    await writeFile(join(directory, "notes.txt"), "hello");
+    const store = new BrokerStore(join(parent, "broker.sqlite"));
+    const key = randomBytes(32);
+    const scopes: Scope[] = ["mac.files.search", "mac.policy.explain"];
+    const root = { rootId: "test-root", path: directory, metadata: true, contentRead, denyRelativePaths: [] };
+    const broker = new Broker({ store, policy: createDefaultPolicy("edge-1", true, scopes, ["edge-key-1"], [root]),
+      edgeAuthenticationKeys: testKeyring(key), now: () => NOW });
+    try {
+      const explanation = await broker.handle(signRequest(unsigned({
+        requestId: "search-explanation", nonce: "search-explanation-nonce", tool: "mac_policy_explain",
+        arguments: { proposed_tool: "mac_search_text", target: { kind: "path", reference: directory } }
+      }, scopes), key));
+      assert.ok(explanation.ok, JSON.stringify(explanation));
+      const data = explanation.data as { decision: string; reason_codes: string[] };
+      assert.equal(data.decision, contentRead ? "allow" : "deny");
+      assert.deepEqual(data.reason_codes, contentRead ? ["AUTHORIZED"] : ["POLICY_DENIED", "ROOT_CAPABILITY_NOT_GRANTED"]);
+      const execution = await broker.handle(signRequest(unsigned({
+        requestId: "search-execution", nonce: "search-execution-nonce", tool: "mac_search_text",
+        arguments: { roots: [directory], query: "hello", glob: "notes.txt" }
+      }, scopes), key));
+      assert.equal(execution.ok, contentRead);
+      if (!contentRead) {
+        assert.equal(execution.result_class, "POLICY_DENIED");
+      }
+      const detailed = await broker.handle(signRequest(unsigned({
+        requestId: "search-detailed-explanation", nonce: "search-detailed-explanation-nonce", tool: "mac_policy_explain",
+        arguments: { proposed_tool: "mac_search_text", target: { kind: "path", reference: directory },
+          proposed_arguments: { roots: [directory], query: "hello" } }
+      }, scopes), key));
+      assert.ok(detailed.ok);
+      const detailedData = detailed.data as { decision: string; reason_codes: string[] };
+      assert.equal(detailedData.decision, contentRead ? "allow" : "deny");
+      assert.deepEqual(detailedData.reason_codes, contentRead ? ["AUTHORIZED"] : ["POLICY_DENIED", "ROOT_CAPABILITY_NOT_GRANTED"]);
+      if (contentRead) {
+        await mkdir(join(directory, "other"));
+        const mismatch = await broker.handle(signRequest(unsigned({
+          requestId: "search-mismatch-explanation", nonce: "search-mismatch-explanation-nonce", tool: "mac_policy_explain",
+          arguments: { proposed_tool: "mac_search_text", target: { kind: "path", reference: directory },
+            proposed_arguments: { roots: [join(directory, "other")], query: "hello" } }
+        }, scopes), key));
+        assert.ok(mismatch.ok);
+        assert.equal((mismatch.data as { decision: string }).decision, "deny");
+        assert.deepEqual((mismatch.data as { reason_codes: string[] }).reason_codes, ["PRECONDITION_FAILED"]);
+      }
+    } finally {
+      store.close();
+      await rm(parent, { recursive: true, force: true });
+    }
+  });
+}
+
+for (const secondRootContentRead of [false, true]) {
+  test(`search explanation checks the second root capability and target grant: contentRead=${secondRootContentRead}`, async () => {
+    const parent = await realpath(await mkdtemp(join(tmpdir(), "mac-operator-search-explain-roots-")));
+    const first = join(parent, "first");
+    const second = join(parent, "second");
+    await mkdir(first);
+    await mkdir(second);
+    const store = new BrokerStore(join(parent, "broker.sqlite"));
+    const key = randomBytes(32);
+    const scopes: Scope[] = ["mac.files.search", "mac.policy.explain"];
+    const roots = [
+      { rootId: "first-root", path: first, metadata: true, contentRead: true, denyRelativePaths: [] },
+      { rootId: "second-root", path: second, metadata: true, contentRead: secondRootContentRead, denyRelativePaths: [] }
+    ];
+    const base = createDefaultPolicy("edge-1", true, scopes, ["edge-key-1"], roots);
+    const policy = { ...base, targetRules: base.targetRules.filter(rule => rule.target.reference !== "second-root") };
+    const broker = new Broker({ store, policy, edgeAuthenticationKeys: testKeyring(key), now: () => NOW });
+    try {
+      const result = await broker.handle(signRequest(unsigned({ tool: "mac_policy_explain",
+        arguments: { proposed_tool: "mac_search_text", target: { kind: "path", reference: first },
+          proposed_arguments: { roots: [first, second], query: "hello" } }
+      }, scopes), key));
+      assert.ok(result.ok);
+      assert.equal((result.data as { decision: string }).decision, "deny");
+      const execution = await broker.handle(signRequest(unsigned({ requestId: "multi-search", nonce: "multi-search-nonce",
+        tool: "mac_search_text", arguments: { roots: [first, second], query: "hello" }
+      }, scopes), key));
+      assert.equal(execution.ok, false);
+      assert.equal(execution.result_class, "POLICY_DENIED");
+    } finally {
+      store.close();
+      await rm(parent, { recursive: true, force: true });
+    }
+  });
+}
+
 test("mac_project_discover reports safe project markers from metadata-only roots", async () => {
   const parent = await mkdtemp(join(tmpdir(), "mac-operator-broker-project-discover-"));
   const directory = join(parent, "workspace");
@@ -4540,6 +4635,7 @@ test("mac_project_discover reports safe project markers from metadata-only roots
   await mkdir(join(directory, ".git"), { recursive: true });
   await mkdir(nested, { recursive: true });
   await writeFile(join(directory, "package.json"), "{\"name\":\"safe\"}");
+  await mkdir(join(directory, "Example.xcodeproj"));
   await writeFile(join(nested, "pyproject.toml"), "[project]\nname='safe'\n");
   await mkdir(join(directory, ".ssh"), { recursive: true });
   await writeFile(join(directory, ".ssh", "id_rsa"), "PRIVATE-KEY-MATERIAL");
@@ -4557,7 +4653,7 @@ test("mac_project_discover reports safe project markers from metadata-only roots
       requestId: "project-discover-request",
       nonce: "project-discover-nonce",
       tool: "mac_project_discover",
-      arguments: { roots: [directory], types: ["git", "node", "python"], max_results: 10 }
+      arguments: { roots: [directory], types: ["git", "node", "python", "swift"], max_results: 10 }
     }, ["mac.project.read"]);
     const result = await broker.handle(signRequest(request, key));
     assert.equal(result.ok, true, JSON.stringify(result));
@@ -4566,6 +4662,7 @@ test("mac_project_discover reports safe project markers from metadata-only roots
     assert.deepEqual(data.projects, [
       { root: await realpath(directory), type: "git", indicators: [".git"] },
       { root: await realpath(directory), type: "node", indicators: ["package.json"] },
+      { root: await realpath(directory), type: "swift", indicators: [".xcodeproj"] },
       { root: await realpath(nested), type: "python", indicators: ["pyproject.toml"] }
     ]);
     assert.equal(data.truncated, false);

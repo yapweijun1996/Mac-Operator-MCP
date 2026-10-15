@@ -261,11 +261,14 @@ export class ManagedWorktrees {
     return this.serialize(async () => {
       const done = this.completedRemoval(projectRoot, worktree, owner, taskId, idempotencyKey);
       if (done) {
-        // A retry only re-attempts branch cleanup, and only against the project this removal was recorded for; an
-        // old idempotency key must not reach a repository that has since replaced it, nor outlive revoked authority.
+        // Completed removal keys own no later branch incarnation. Read back its
+        // current state, but never repeat a deletion after removal was recorded.
         assertAuthority();
         this.verifyProjectIdentity(done);
-        return this.deleteTaskBranch(done, control);
+        const present = (await this.branchRefs(done.projectRoot, done.branchName, control)).exact;
+        return { branchName: done.branchName, branchDeleted: !present, ...(present ? {
+          branchNote: `Worktree was already removed; branch ${done.branchName} was left alone. Any remaining branch requires separate owner cleanup`
+        } : {}) };
       }
       const record = this.require(worktree, projectRoot, owner, taskId);
       if (worktree === projectRoot) throw new BrokerError("CONFLICT", "Worktree is the primary checkout and cannot be removed");

@@ -1,9 +1,10 @@
 import assert from "node:assert/strict";
-import { connect } from "node:net";
+import { connect, createServer, type Socket } from "node:net";
 import { chmod, lstat, mkdtemp, mkdir, realpath, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
+import { BrokerError } from "@mac-operator/contracts";
 import {
   EdgeStatusIpcServer,
   authenticateEdgeStatusResponse,
@@ -116,5 +117,44 @@ async function send(socketPath: string, value: unknown): Promise<EdgeStatusRespo
       try { resolve(JSON.parse(combined.subarray(0, newline).toString("utf8")) as EdgeStatusResponse); }
       catch (error) { reject(error); }
     });
+  });
+}
+
+for (const response of ["empty", "partial", "reset", "drip"] as const) {
+  test(`Edge status read terminates after ${response} response without a complete frame`, async () => {
+    const root = await realpath(await mkdtemp(join(tmpdir(), "e-eof-")));
+    await chmod(root, 0o700);
+    const socketPath = join(root, "status.sock");
+    const sockets = new Set<Socket>();
+    const server = createServer((socket) => {
+      sockets.add(socket);
+      socket.once("close", () => sockets.delete(socket));
+      socket.once("data", () => {
+        if (response === "empty") socket.end();
+        else if (response === "partial") socket.end('{"ok":');
+        else if (response === "reset") socket.destroy();
+        else {
+          socket.write("{");
+          const interval = setInterval(() => socket.write(" "), 15);
+          socket.once("close", () => clearInterval(interval));
+        }
+      });
+    });
+    let watchdog: ReturnType<typeof setTimeout> | undefined;
+    try {
+      await new Promise<void>((resolve, reject) => { server.once("error", reject); server.listen(socketPath, resolve); });
+      await chmod(socketPath, 0o600);
+      const read = readEdgeStatus({ socketPath, authenticationKey: Buffer.alloc(32, 0x53), timeoutMs: 100 });
+      const bounded = Promise.race([read, new Promise<never>((_resolve, reject) => {
+        watchdog = setTimeout(() => reject(new Error("Status read exceeded regression watchdog")), 2_000);
+      })]);
+      await assert.rejects(bounded, (error: unknown) => error instanceof BrokerError &&
+        error.errorClass === (response === "drip" ? "TIMEOUT" : "EXECUTION_FAILED"));
+    } finally {
+      clearTimeout(watchdog);
+      for (const socket of sockets) socket.destroy();
+      await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+      await rm(root, { recursive: true, force: true });
+    }
   });
 }

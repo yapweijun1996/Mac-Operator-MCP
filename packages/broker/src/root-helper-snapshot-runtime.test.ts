@@ -12,7 +12,8 @@ import { writePrivilegedHelperKeyConfig, type PrivilegedHelperKeyConfig } from "
 import {
   createRootHelperSnapshotRuntimeFromKeyMaterial,
   RootHelperSnapshotRuntime,
-  RootHelperSnapshotRuntimeStartupError
+  RootHelperSnapshotRuntimeStartupError,
+  type RootHelperSnapshotRuntimeState
 } from "./root-helper-snapshot-runtime.js";
 import type { RootHelperSnapshotServer } from "./root-helper-snapshot-transport.js";
 import type { RootHelperSnapshotStatusIpcServer } from "./root-helper-snapshot-status-ipc.js";
@@ -226,6 +227,59 @@ function fakeRuntimeServer(events: string[]): RootHelperSnapshotServer {
     async listen() { events.push("server-listen"); },
     async close() { events.push("server-close"); }
   } as unknown as RootHelperSnapshotServer;
+}
+
+for (const phase of ["running", "stopped", "startup-failed", "unavailable"] as const) {
+  for (const failing of ["status", "command", "both"] as const) {
+    test(`root-helper ${phase} cleanup attempts both servers when ${failing} close fails`, async () => {
+      const events: string[] = [];
+      const commandError = new Error("Command cleanup failed");
+      const statusError = new Error("IPC socket ownership changed before close");
+      const startupError = new Error("Status listen failed");
+      let fail = true;
+      const server = {
+        available: phase !== "unavailable",
+        async listen() { events.push("server-listen"); },
+        async close() {
+          events.push("server-close");
+          if (fail && failing !== "status") throw commandError;
+        }
+      } as unknown as RootHelperSnapshotServer;
+      const statusServer = {
+        async listen() {
+          events.push("status-listen");
+          if (phase === "startup-failed") throw startupError;
+        },
+        async close() {
+          events.push("status-close");
+          if (fail && failing !== "command") throw statusError;
+        }
+      } as unknown as RootHelperSnapshotStatusIpcServer;
+      const state = { value: "stopped" as RootHelperSnapshotRuntimeState };
+      const runtime = new RootHelperSnapshotRuntime(server, statusServer, state, {
+        value: { sourceRevision: "a".repeat(40), contractVersion: "0.1", evidenceRef: "test://cleanup" }
+      });
+      if (phase === "running") await runtime.start();
+      const operation = phase === "startup-failed" || phase === "unavailable" ? runtime.start() : runtime.close();
+      await assert.rejects(operation, (error: unknown) => {
+        if (phase === "startup-failed") {
+          assert.ok(error instanceof AggregateError);
+          assert.equal(error.errors[0], startupError);
+        } else if (failing === "both") {
+          assert.ok(error instanceof AggregateError);
+          assert.deepEqual(error.errors, [statusError, commandError]);
+        } else assert.equal(error, failing === "status" ? statusError : commandError);
+        return true;
+      });
+      assert.deepEqual(events.slice(-2), ["status-close", "server-close"]);
+      assert.equal(runtime.state, "failed");
+      assert.equal(state.value, "failed");
+      fail = false;
+      await runtime.close();
+      assert.equal(runtime.state, "stopped");
+      assert.equal(state.value, "stopped");
+    });
+  }
 }
 
 function fakeStatusServer(events: string[]): RootHelperSnapshotStatusIpcServer {

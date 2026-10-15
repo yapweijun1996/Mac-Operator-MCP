@@ -31,6 +31,7 @@ const ALLOWED_SCRIPT_FILES = new Set([
   "scripts/gui-transport.test.mjs",
   "scripts/auto-deploy/preflight.mjs",
   "scripts/auto-deploy/run.mjs",
+  "scripts/auto-deploy.test.mjs",
   "scripts/deployment-recovery.test.mjs",
   "scripts/gui-desktop-app.test.mjs",
   "scripts/gui-focus-regression.test.mjs",
@@ -56,6 +57,7 @@ const PRODUCTION_BOUNDARY_REQUIREMENTS = new Map([
 const SCRIPT_BOUNDARY_REQUIREMENTS = new Map([
   ["scripts/auto-deploy/preflight.mjs", [/\bcwd\s*:/u, /\benv\s*:/u, /\bmaxBuffer\s*:/u, /\btimeout\s*:/u, /killSignal/u]],
   ["scripts/auto-deploy/run.mjs", [/\bcwd\s*:/u, /\benv\s*(?::|,)/u, /\bmaxBuffer\s*:/u, /\btimeout\s*:/u]],
+  ["scripts/auto-deploy.test.mjs", [/\bcwd\s*:/u, /\benv\s*:/u, /\bmaxBuffer\s*:/u, /\btimeout\s*:/u]],
   ["scripts/deployment-recovery.test.mjs", [/\bcwd\s*:/u, /\benv\s*:/u, /\bmaxBuffer\s*:/u, /\btimeout\s*:/u]],
   ["scripts/gui-desktop-app.test.mjs", [/\bcwd\s*:/u, /\benv\s*:/u, /\bmaxBuffer\s*:/u, /\btimeout\s*:/u]],
   ["scripts/gui-focus-regression.test.mjs", [/\bcwd\s*:/u, /\benv\s*:/u, /\bmaxBuffer\s*:/u, /\btimeout\s*:/u]],

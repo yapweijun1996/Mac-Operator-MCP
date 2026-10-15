@@ -1,3 +1,4 @@
+import { decodeUtf8Page } from "./utf8-page.js";
 import { createHash } from "node:crypto";
 import { parentPort, workerData } from "node:worker_threads";
 import { BrokerError } from "@mac-operator/contracts";
@@ -23,11 +24,11 @@ try {
   } else if (command.operation === "read") {
     const read = inspector.readPlanned(command.plan, command.offset, command.maxBytes);
     assertContentDoesNotContainSecrets(read.content);
-    const sha256 = createHash("sha256").update(read.content).digest("hex");
+    let bytesReturned = read.content.length;
     let content: string | undefined;
     if (command.encoding === "utf8") {
-      try { content = new TextDecoder("utf-8", { fatal: true }).decode(read.content); }
-      catch { throw new BrokerError("PRECONDITION_FAILED", "Filesystem content is not valid UTF-8"); }
+      try { ({ content, bytesReturned } = decodeUtf8Page(read.content, read.truncated)); }
+      catch (error) { throw new BrokerError("PRECONDITION_FAILED", error instanceof RangeError ? error.message : "Filesystem content is not valid UTF-8"); }
     } else if (command.encoding === "base64") content = read.content.toString("base64");
     value = {
       operation: "read",
@@ -35,13 +36,13 @@ try {
       encoding: command.encoding,
       ...(content !== undefined ? { content } : {}),
       sizeBytes: read.sizeBytes,
-      sha256,
+      sha256: createHash("sha256").update(read.content.subarray(0, bytesReturned)).digest("hex"),
       // Metadata mode requests zero bytes by design; there is no cut-off content to flag.
       truncated: command.encoding === "metadata" ? false : read.truncated,
       rootId: read.rootId,
       device: read.device,
       inode: read.inode,
-      bytesReturned: read.content.length
+      bytesReturned
     };
   } else if (command.operation === "hash") {
     const hash = inspector.hashPlanned(command.plan, command.algorithm);

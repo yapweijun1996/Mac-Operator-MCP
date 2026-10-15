@@ -533,8 +533,14 @@ Unchanged limits: operations with `requiresExplicitApproval` (web form submissio
 named sensitive controls), credentials, passkeys and secure fields still need the independent
 attended approval or the owner's own action. Other principals, non-browser apps and desktop
 authority are never created by this flag. A revocation at the same policy version is not undone
-automatically. Rollback: remove the key (older readers reject unknown config keys), restart, and
-revoke the `default-browser:` grants if desired.
+automatically. New grants use an 83-character `default-browser-v2:` digest of the
+JSON `(owner principal, browser bundle, policy version)` tuple, so supported long
+IDs remain usable. Legacy `default-browser:` grants and revocations are still
+recognized; changing marker formats never re-enables a revoked default.
+
+To disable automatic creation, remove the key and revoke existing browser grants
+at `/approval/access` if desired. For binary rollback, also follow the
+[consent-history compatibility constraints](#gui-consent-history-and-capacity).
 
 ## Persistent browser access
 
@@ -700,3 +706,34 @@ remain mandatory for both paths.
 A returned input success currently verifies dispatch and focus, not
 exact field value; use a fresh screenshot/readback for acceptance. Safari,
 maximum-length input and every OS-level workflow were not covered by this test.
+
+## GUI consent history and capacity
+
+Auth pruning transactionally replaces revoked browser/desktop grants with compact
+`gui_consent_tombstone` records. It never compacts active grants. Both browser and
+desktop consent entry points check these markers before accepting a previously
+used preview, including after restart. Marker creation and original-row removal
+commit together; failed writes preserve the original revoked authority record.
+Only active grants restore into the in-memory consent cache.
+
+Ordinary consent markers expire no earlier than the maximum Broker preview
+lifetime (currently ten minutes) after grant creation. Broker previews are not
+renewable; once expired or archived they cannot authorize a reused consent ID.
+Default-browser revocation markers have no expiry and the schema forbids adding
+one. Both old and new default-marker formats are retained. An explicit new policy
+is a separate default identity, matching the existing configuration behavior.
+
+Capacity remains 8,000 records total, 1,000 per kind, 16 active GUI sessions and
+4,096 in-memory consent mappings. Tombstones occupy their own bounded kind and
+count toward the total. If that kind is full, pruning retains additional revoked
+grant rows; it never evicts a default revocation to free space. Expired ordinary
+history is still reclaimable. A genuinely full persistent history requires owner
+investigation rather than deletion of security evidence or wider authorization.
+
+The SQL table layout and `user_version` remain unchanged, but old Auth readers do
+not recognize the new record kind and reject state containing tombstones. Take a
+consistent stopped-service backup before an upgrade and deploy matching Auth
+code/state. Do not delete tombstones or restore stale data to make an older binary
+start: that can lose later revocations. A downgrade needs a reviewed conversion
+that carries every still-relevant revocation, or continued use of compatible
+code. Disabling the configuration flag alone does not convert persisted history.

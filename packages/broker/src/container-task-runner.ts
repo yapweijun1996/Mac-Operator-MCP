@@ -1,3 +1,4 @@
+import { decodeUtf8Page } from "./utf8-page.js";
 import { randomBytes } from "node:crypto";
 import { isAbsolute, resolve } from "node:path";
 import { BrokerError, parseJsonUtf8Strict } from "@mac-operator/contracts";
@@ -452,7 +453,10 @@ async function raceAbort<T>(pending: Promise<T>, signal: AbortSignal): Promise<T
 
 // Descriptor paths pin every directory to this process's own Linux fd table.
 // Source operations never follow user-created links, and output is one bounded JSON object.
+export function guestFileScriptForTesting(): string { return GUEST_FILE_SCRIPT; }
+
 const GUEST_FILE_SCRIPT = String.raw`
+const decodePage=${decodeUtf8Page.toString()};
 const fs=require('fs'),path=require('path'),crypto=require('crypto');
 const q=JSON.parse(process.argv[1]),C=fs.constants,fds=[];
 const fail=()=>{throw Error('ISOLATED_FILE_OPERATION_DENIED')};
@@ -473,16 +477,16 @@ const parts=q.path.split('/'),name=parts.pop(),fd=openDir(parts,q.op==='write'),
 if(q.op==='read'){
 const offset=q.offset??0,max=q.maxBytes??16384;if(!Number.isSafeInteger(offset)||offset<0||offset>8388608||!Number.isSafeInteger(max)||max<1||max>16384)fail();
 const file=fs.openSync(target,C.O_RDONLY|C.O_NOFOLLOW);fds.push(file);const stat=fs.fstatSync(file);if(!stat.isFile()||stat.size>8388608)fail();
-const bytes=Buffer.alloc(max),n=fs.readSync(file,bytes,0,max,offset);pinned(fd);result={path:q.path,content:new TextDecoder('utf-8',{fatal:true}).decode(bytes.subarray(0,n)),nextOffset:offset+n<stat.size?offset+n:null};
+const bytes=Buffer.alloc(max),n=fs.readSync(file,bytes,0,max,offset);pinned(fd);const page=decodePage(bytes.subarray(0,n),offset+n<stat.size);result={path:q.path,content:page.content,nextOffset:offset+page.bytesReturned<stat.size?offset+page.bytesReturned:null};
 }else if(q.op==='write'||q.op==='edit'){
 let content=q.content;
 if(q.op==='edit'){
 if(typeof q.oldText!=='string'||!q.oldText||typeof q.newText!=='string')fail();const file=fs.openSync(target,C.O_RDONLY|C.O_NOFOLLOW);fds.push(file);const stat=fs.fstatSync(file);if(!stat.isFile()||stat.size>8388608)fail();
 const bytes=Buffer.alloc(stat.size+1),n=fs.readSync(file,bytes,0,bytes.length,0);if(n!==stat.size)fail();const before=new TextDecoder('utf-8',{fatal:true}).decode(bytes.subarray(0,n));const at=before.indexOf(q.oldText);if(at<0||before.indexOf(q.oldText,at+1)>=0)fail();content=before.slice(0,at)+q.newText+before.slice(at+q.oldText.length);
 }
-if(typeof content!=='string'||Buffer.byteLength(content)>8388608)fail();try{const s=fs.lstatSync(target);if(!s.isFile()||s.isSymbolicLink())fail();}catch(e){if(e.code!=='ENOENT')throw e;}
+let mode=0o600;if(typeof content!=='string'||Buffer.byteLength(content)>8388608)fail();try{const s=fs.lstatSync(target);if(!s.isFile()||s.isSymbolicLink())fail();if(s.mode&0o100)mode=0o700;}catch(e){if(e.code!=='ENOENT')throw e;}
 pinned(fd);const temp='/proc/self/fd/'+fd+'/.mops-edit-'+crypto.randomBytes(16).toString('hex');let file;
-try{file=fs.openSync(temp,C.O_WRONLY|C.O_CREAT|C.O_EXCL|C.O_NOFOLLOW,0o600);fs.writeFileSync(file,content);fs.fsyncSync(file);pinned(fd);fs.renameSync(temp,target);fs.fsyncSync(fd);pinned(fd);}finally{if(file!==undefined)fs.closeSync(file);try{fs.unlinkSync(temp);}catch(e){if(e.code!=='ENOENT')throw e;}}
+try{file=fs.openSync(temp,C.O_WRONLY|C.O_CREAT|C.O_EXCL|C.O_NOFOLLOW,0o600);fs.writeFileSync(file,content);fs.fchmodSync(file,mode);fs.fsyncSync(file);pinned(fd);fs.renameSync(temp,target);fs.fsyncSync(fd);pinned(fd);}finally{if(file!==undefined)fs.closeSync(file);try{fs.unlinkSync(temp);}catch(e){if(e.code!=='ENOENT')throw e;}}
 result={path:q.path,writtenBytes:Buffer.byteLength(content)};
 }else fail();
 }

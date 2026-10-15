@@ -1,3 +1,4 @@
+import { existsSync } from "node:fs";
 import assert from "node:assert/strict";
 import test from "node:test";
 import { AppInventoryInspectorImpl, parseAppInventoryResult, validateAppListRequest } from "./app-inspector.js";
@@ -79,3 +80,29 @@ test("app inventory returns bounded running apps from the real macOS host", asyn
   assert.equal(result.apps.every((app) => /^[A-Za-z0-9][A-Za-z0-9._:@+\-]{0,255}$/u.test(app.bundleId)), true);
   assert.equal(result.apps.every((app) => app.running), true);
 });
+
+test("the actual macOS inventory finds standard Utilities metadata without opening an app", {
+  skip: process.platform !== "darwin" || !existsSync("/System/Applications/Utilities/Activity Monitor.app")
+}, async () => {
+  const result = await new AppInventoryInspectorImpl().list(false, true, { timeoutMs: 10000, shouldCancel: () => false });
+  assert.ok(result.apps.some(app => app.bundleId === "com.apple.ActivityMonitor"));
+  assert.ok(result.apps.length <= 500);
+});
+
+for (const truncated of [false, true]) {
+  test(`inventory parser preserves semantic and transport incompleteness (${truncated})`, () => {
+    const envelope = { apps: [{ app_id: "bundle:com.example.App", bundle_id: "com.example.App", name: "Example", running: true }], truncated };
+    const result = parseAppInventoryResult(success(JSON.stringify(envelope)));
+    assert.equal(result.truncated, truncated);
+    assert.equal(result.warnings.length > 0, truncated);
+    assert.equal(result.apps.length, 1);
+    assert.equal(parseAppInventoryResult({ ...success(JSON.stringify(envelope)), truncated: true }).truncated, true);
+  });
+}
+
+for (const malformed of [{ apps: [], truncated: "yes" }, { apps: [], truncated: false, extra: true },
+  { apps: {}, truncated: false }, { apps: Array.from({ length: 501 }, () => ({})), truncated: true }]) {
+  test(`inventory parser rejects malformed completeness framing ${JSON.stringify(malformed).slice(0, 65)}`, () => {
+    assert.throws(() => parseAppInventoryResult(success(JSON.stringify(malformed))));
+  });
+}

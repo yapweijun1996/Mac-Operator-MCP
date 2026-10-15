@@ -85,7 +85,9 @@
       "tool": {
         "const": "mac_read_file"
       },
-      "result_class": { "const": "SUCCEEDED" },
+      "result_class": {
+        "const": "SUCCEEDED"
+      },
       "data": {
         "type": "object",
         "additionalProperties": false,
@@ -122,6 +124,21 @@
           },
           "truncated": {
             "type": "boolean"
+          },
+          "bytes_returned": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 1048576,
+            "description": "Number of original file bytes represented by this page."
+          },
+          "next_offset": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 0,
+            "maximum": 1000000000,
+            "description": "Pass this byte offset to continue reading; null means EOF or metadata mode."
           }
         },
         "required": [

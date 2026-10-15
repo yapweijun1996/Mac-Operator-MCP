@@ -1,8 +1,10 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, mkdirSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, statSync, mkdtempSync, mkdirSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
+import { FilesystemInspector, type FilesystemNativeAdapter } from "./filesystem-inspector.js";
+import { loadNativePeerAdapter } from "./peer-credentials.js";
 import { sha256 } from "@mac-operator/contracts";
 import { createWorkspaceArchive, importWorkspaceChanges, parseWorkspaceArchive, safeSnapshotPath, snapshotWorktree, snapshotWorktreeAsync } from "./container-snapshot.js";
 
@@ -109,5 +111,60 @@ test("asynchronous snapshot permits authority heartbeats and preserves the synch
     } finally { clearInterval(timer); }
     await assert.rejects(snapshotWorktreeAsync(root, false, [], () => { throw new Error("authority revoked"); }), /authority revoked/u);
     assert.equal(readFileSync(join(root, "source-0.txt"), "utf8"), "public source\n");
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+for (const readonly of [false, true]) {
+  test(`snapshot preserves normalized executable permissions (readonly=${readonly})`, { skip: process.platform !== "darwin" }, () => {
+    const root = realpathSync(mkdtempSync(join(tmpdir(), "container-mode-")));
+    try {
+      writeFileSync(join(root, "run.sh"), "#!/bin/sh\necho before\n");
+      chmodSync(join(root, "run.sh"), 0o755);
+      writeFileSync(join(root, "plain.txt"), "plain");
+      chmodSync(join(root, "plain.txt"), 0o644);
+      const snapshot = snapshotWorktree(root, readonly);
+      const parsed = parseWorkspaceArchive(snapshot.archive, false);
+      const executableArchive = createWorkspaceArchive([parsed.find(file => file.path === "run.sh")!], [], readonly);
+      assert.equal(Number.parseInt(executableArchive.subarray(100, 108).toString("ascii"), 8), readonly ? 0o555 : 0o700);
+      const plainArchive = createWorkspaceArchive([parsed.find(file => file.path === "plain.txt")!], [], readonly);
+      assert.equal(Number.parseInt(plainArchive.subarray(100, 108).toString("ascii"), 8), readonly ? 0o444 : 0o600);
+      const output = parsed.map(file => { const content = Buffer.from("changed"); return { ...file, content, sha256: sha256(content) }; });
+      importWorkspaceChanges(snapshot, output);
+      assert.equal(statSync(join(root, "run.sh")).mode & 0o7777, 0o700);
+      assert.equal(statSync(join(root, "plain.txt")).mode & 0o7777, 0o600);
+    } finally { rmSync(root, { recursive: true, force: true }); }
+  });
+}
+
+test("container output cannot grant host execution or preserve special permission bits", { skip: process.platform !== "darwin" }, () => {
+  const root = realpathSync(mkdtempSync(join(tmpdir(), "container-mode-boundary-")));
+  try {
+    writeFileSync(join(root, "script.sh"), "before");
+    chmodSync(join(root, "script.sh"), 0o4700);
+    writeFileSync(join(root, "plain.txt"), "before");
+    chmodSync(join(root, "plain.txt"), 0o600);
+    const snapshot = snapshotWorktree(root);
+    const content = Buffer.from("after");
+    const output = [...snapshot.files.map(file => ({ ...file, content, sha256: sha256(content), executable: true })),
+      { path: "new.sh", content, sha256: sha256(content), executable: true }];
+    importWorkspaceChanges(snapshot, output);
+    assert.equal(statSync(join(root, "script.sh")).mode & 0o7777, 0o700);
+    assert.equal(statSync(join(root, "plain.txt")).mode & 0o7777, 0o600);
+    assert.equal(statSync(join(root, "new.sh")).mode & 0o7777, 0o600);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("source execution preservation fails closed on an older native adapter", { skip: process.platform !== "darwin" }, () => {
+  const root = realpathSync(mkdtempSync(join(tmpdir(), "container-old-native-")));
+  try {
+    writeFileSync(join(root, "run.sh"), "before");
+    const native = loadNativePeerAdapter() as unknown as FilesystemNativeAdapter;
+    const older = { ...native };
+    delete older.nativeSourceExecutablePreservationVersion;
+    const inspector = new FilesystemInspector([{ rootId: "source", path: root, metadata: true, contentRead: true,
+      write: true, denyRelativePaths: [] }], older);
+    assert.throws(() => inspector.writePlanned(inspector.planPath(join(root, "run.sh"), "write"), Buffer.from("after"),
+      undefined, false, ".mac-operator-write-test", undefined, undefined, true), /preservation is unavailable/u);
+    assert.equal(readFileSync(join(root, "run.sh"), "utf8"), "before");
   } finally { rmSync(root, { recursive: true, force: true }); }
 });

@@ -2474,9 +2474,9 @@ napi_value CreateDirectoryWithinRoot(napi_env env, napi_callback_info info) {
 }
 
 napi_value WriteFileAtomicWithinRoot(napi_env env, napi_callback_info info) {
-  size_t argc = 9;
-  napi_value args[9];
-  if (napi_get_cb_info(env, info, &argc, args, nullptr, nullptr) != napi_ok || argc != 9) {
+  size_t argc = 10;
+  napi_value args[10];
+  if (napi_get_cb_info(env, info, &argc, args, nullptr, nullptr) != napi_ok || (argc != 9 && argc != 10)) {
     napi_throw_type_error(env, nullptr, "writeFileAtomicWithinRoot requires root, target, content, createOnly, expectedPresent, expectedDevice, expectedInode, temporaryName, and authorizer");
     return nullptr;
   }
@@ -2487,6 +2487,7 @@ napi_value WriteFileAtomicWithinRoot(napi_env env, napi_callback_info info) {
   char expected_inode[64];
   char temporary_name[128];
   bool create_only = false;
+  bool preserve_executable = false;
   bool expected_present = false;
   bool is_buffer = false;
   napi_valuetype authorizer_type;
@@ -2494,6 +2495,7 @@ napi_value WriteFileAtomicWithinRoot(napi_env env, napi_callback_info info) {
       !ReadString(env, args[1], requested_target, sizeof(requested_target)) ||
       napi_is_buffer(env, args[2], &is_buffer) != napi_ok || !is_buffer ||
       napi_get_value_bool(env, args[3], &create_only) != napi_ok ||
+      (argc == 10 && napi_get_value_bool(env, args[9], &preserve_executable) != napi_ok) ||
       napi_get_value_bool(env, args[4], &expected_present) != napi_ok ||
       !ReadComponent(env, args[5], expected_device, sizeof(expected_device)) ||
       !ReadComponent(env, args[6], expected_inode, sizeof(expected_inode)) ||
@@ -2659,6 +2661,15 @@ napi_value WriteFileAtomicWithinRoot(napi_env env, napi_callback_info info) {
       return nullptr;
     }
     written += static_cast<size_t>(result);
+  }
+  // Only retain owner execution from the existing host inode, never guest permissions.
+  if (preserve_executable && fchmod(temporary_descriptor, 0600 | (existing && (existing_stat.st_mode & S_IXUSR) ? S_IXUSR : 0)) != 0) {
+    close(temporary_descriptor);
+    unlinkat(parent_descriptor, temporary_name, 0);
+    close(parent_descriptor);
+    close(root_descriptor);
+    ThrowSystemError(env, "Source executable permissions could not be preserved");
+    return nullptr;
   }
   MaybeInjectWriteCrash("after_temp_write");
   if (MaybeInjectWriteError("before_temp_fsync")) {
@@ -3973,6 +3984,7 @@ napi_value Initialize(napi_env env, napi_value exports) {
   napi_create_string_utf8(env, kNativeArch, NAPI_AUTO_LENGTH, &native_arch);
   napi_set_named_property(env, exports, "nativeArch", native_arch);
   SetNumber(env, exports, "nativeCanonicalWriteAuthorizationVersion", 1);
+  SetNumber(env, exports, "nativeSourceExecutablePreservationVersion", 1);
   napi_create_function(env, "sha256Utf8", NAPI_AUTO_LENGTH, Sha256Utf8, nullptr, &function);
   napi_set_named_property(env, exports, "sha256Utf8", function);
   napi_create_function(env, "getPeerCredentials", NAPI_AUTO_LENGTH, GetPeerCredentials, nullptr, &function);

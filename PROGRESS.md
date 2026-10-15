@@ -1,5 +1,188 @@
 # Mac-Operator-MCP Progress
 
+## Current BUG-51 through BUG-53 remediation and Git integration: DONE — 2026-10-15
+
+Project discovery now merges directory pages by canonical root/type before
+applying result limits. Depth omissions set `truncated` while later pages and
+siblings continue; ignored folders, symlinks and Xcode interiors stay excluded.
+Text-search explanations share execution's content-read capability mapping,
+bind detailed requests to the first search path, and authorize every extra root.
+
+Verification: **2,394 total; 2,375 PASS, 0 FAIL, 19 SKIP** across 248 source-backed
+files, including 15 new cases in this batch. Focused suites: 140 PASS, 0 FAIL,
+6 existing skips. Original triggers failed before repair and pass afterward.
+Build/native fault build, typecheck, style, docs, matrix, process-boundary and
+58-contract checks pass. Full-suite concurrency is four, with unchanged timeouts
+and assertions; obsolete compiled artifacts without source remain excluded and
+preserved.
+
+The report contains **53 findings: all 53 fixed locally, zero open**. The
+cumulative BUG-38–53 repairs, regression tests and documentation are committed on
+`codex/fix-review-bugs-38-53` and fast-forwarded into local `main`, as requested.
+No remote push, deployment or live-service change occurred. Earlier progress and
+batch evidence below describe historical states before this integration.
+
+Details: [repair and integration evidence](evidence/2026-10-15-bugs51-53-remediation.md).
+Node 24 runtime acceptance, existing opt-in/platform/integration skips and live
+production/release acceptance remain outside this verification. Next step:
+review or publish the verified local commit when remote delivery is wanted.
+
+## BUG-49 through BUG-50 remediation (historical): DONE locally — 2026-10-15
+
+Python project dependency arrays now handle supported inline/multiline string
+layouts, comments, quoted markers and escapes without silently dropping items.
+Unsupported/malformed arrays return warnings. Existing metadata/security limits
+and Poetry behavior are preserved; no parser dependency or package execution was
+introduced. Named Xcode project/workspace directories now identify their parent
+Swift project using existing bounded marker labels. Automatic discovery excludes
+links, lookalike files and traversal into discovered bundle internals.
+
+Verification: **2,379 total; 2,360 PASS, 0 FAIL, 19 SKIP** across 247 files,
+including 31 new cases. Focused suites pass 36 tests. Build/native fault build,
+typecheck, style, docs, matrix, process-boundary and 58-contract checks pass.
+The single full run used four concurrent files and unchanged timeouts/assertions.
+
+The report contains **53 findings: 50 fixed locally and three open**
+(BUG-51 through BUG-53). Scope, regression details and verification:
+[repair evidence](evidence/2026-10-15-bugs49-50-remediation.md).
+Supported formats and discovery behavior:
+[Python/Xcode metadata](docs/mba-operational-tools.md#python-and-xcode-project-metadata).
+
+Source/tests/docs remain uncommitted. No commit, push, deployment or live-service
+change occurred. Node 24, actual Python dependency resolution/Xcode execution and
+the existing 19 opt-in/platform/integration skips remain unverified. Next priority:
+BUG-51–53; pagination identity and depth completeness are not claimed repaired.
+
+## BUG-47 through BUG-48 remediation (historical): DONE locally — 2026-10-15
+
+Application inventory now prioritizes running apps and reports incomplete results
+at capacity or discovery limits. Running-only queries skip installed discovery.
+Standard Utilities apps and bounded ordinary nested app folders are discoverable;
+symlinks and bundle/package interiors are excluded. App-open returns an incomplete-
+inventory error before launching when it cannot establish target presence.
+
+Verification: **2,348 total; 2,329 PASS, 0 FAIL, 19 SKIP** across 246 files,
+including 24 new cases. Focused suites pass 36 tests. The final isolated suite
+used four concurrent files; earlier Git-clone fixture timeouts were rechecked
+successfully without relaxing assertions/timeouts. Build/native fault build,
+typecheck, style, docs, matrix, process-boundary and 58-contract checks pass.
+
+The report contains **53 findings: 48 fixed locally and five open**
+(BUG-49 through BUG-53). Regression details and verification:
+[repair evidence](evidence/2026-10-15-bugs47-48-remediation.md).
+Operational scope and limits:
+[application discovery](docs/mba-operational-tools.md#application-discovery).
+
+Read-only host inventory verified Activity Monitor's Utilities metadata. App-open
+execution was tested with simulated process effects; no real app was launched.
+Source/tests/docs remain uncommitted. No commit, push, deployment or live-service
+change occurred. Node 24, physical app launch/GUI authorization and the existing
+19 opt-in/platform/integration skips remained unverified. At that revision, the next priority was BUG-49/50.
+
+## BUG-45 through BUG-46 remediation (historical): DONE locally — 2026-10-15
+
+Revoked GUI grants now release hot capacity through transactional, bounded
+consent tombstones. Ordinary history expires only after the maximum Broker
+preview lifetime; default-browser revocations remain durable. A full history
+kind retains the original revoked record rather than dropping replay evidence.
+The existing total/per-kind and active-session limits remain in force.
+
+Default-browser identity now uses an unambiguous fixed-length digest and
+recognizes both legacy active grants and revocations. Long schema-valid owner
+IDs work without expanding browser, desktop or explicit-approval authority.
+The report contains **53 findings: 46 fixed locally and seven open**
+(BUG-47 through BUG-53).
+
+Verification: **2,324 total; 2,305 PASS, 0 FAIL, 19 SKIP** across 245 files,
+including 18 new cases. Focused suites pass 45 tests. Build/native fault build,
+typecheck, style, docs, matrix, process-boundary and 58-contract checks pass.
+
+Verification and compatibility details:
+[repair evidence](evidence/2026-10-15-bugs45-46-remediation.md).
+Operations and rollback constraints:
+[GUI consent history](docs/gui-computer-use.md#gui-consent-history-and-capacity).
+Source/tests/docs remain uncommitted; no commit, push, deployment or live-state
+change occurred. Node 24, live OAuth/GUI acceptance and the existing 19 opt-in/
+platform/integration skips remained unverified. At that revision, the next priority was BUG-47/48.
+
+## BUG-42 through BUG-44 remediation (historical): DONE locally — 2026-10-15
+
+Executable source files now retain normalized execution permission through
+snapshot, writable/read-only staging, guest edits and host import. Host imports
+never accept guest-requested execution for new/nonexecutable files. Terminal
+stop reads committed state without decoding output. Host and guest UTF-8 reads
+return complete characters with accurate byte continuation and returned-byte
+hashes; invalid encodings and too-small/unaligned ranges still fail explicitly.
+
+Verification: **2,306 total; 2,287 PASS, 0 FAIL, 19 SKIP** across 244 test
+files, including 34 new regression cases. Build/native fault build, typecheck,
+style, docs, matrix, process-boundary and 58-contract checks pass.
+
+The report contains **53 findings: 44 fixed locally and nine open**
+(BUG-45 through BUG-53). Regression and verification details:
+[repair evidence](evidence/2026-10-15-bugs42-44-remediation.md).
+Read behavior: [operational guide](docs/mba-operational-tools.md#file-read-pagination).
+Permission/upgrade constraints: [V2 runbook](docs/MAC_OPERATOR_V2_RUNBOOK.md#workspace-execution-permissions).
+
+Source/tests/docs remain uncommitted. No commit, push, deployment or live-service
+change occurred. The native addon must be rebuilt alongside the source release;
+Node 24, live Docker/VM acceptance and the existing 19 opt-in/platform/integration
+skips remained unverified. At that revision, the next priority was BUG-45/46.
+
+## BUG-38 through BUG-41 remediation (historical): DONE locally — 2026-10-15
+
+The four authorized fixes are implemented with 26 new regression cases:
+root-helper cleanup always attempts both endpoints, Edge status reads settle
+on incomplete EOF or an absolute deadline, auto-deploy recovery is serialized
+by an owner-only SQLite kernel lock, and completed worktree removal retries
+never delete a kept/recreated branch. The report now contains **53 findings:
+41 fixed locally and 12 open** (BUG-42 through BUG-53).
+
+Repair-revision current-source suite: **2,253 PASS, 0 FAIL, 19 SKIP** across
+242 files (2,272 tests). Build/native fault build, typecheck, style, docs,
+matrix, process-boundary and 58-contract checks pass. The earlier three stale
+compiled-test failures remain outside the source-backed suite; the ignored
+artifacts were preserved. Original triggers and current status:
+[bug report](CODEBASE_BUG_REVIEW.md). Exact verification, compatibility and
+limits: [repair evidence](evidence/2026-10-15-bugs38-41-remediation.md).
+
+No new dependency or worktree format migration is required. Auto-deploy adds
+an independent persistent `lock.sqlite`; preserve its identity while in use.
+Completed removal replay reports current branch existence and leaves any
+remaining branch for separate owner cleanup. Operations are updated in the
+[lock guide](docs/auto-deploy.md#lock-recovery) and
+[worktree runbook](docs/MAC_OPERATOR_V2_RUNBOOK.md#inventory-reconciliation-and-removal).
+
+Source/tests/docs are uncommitted in this checkout. No push, deployment or live
+state change occurred. Node 24, real privileged/root-helper deployment and the
+19 opt-in/platform/integration skips remain unverified. At that revision, the next implementation priority was BUG-42 through BUG-44.
+
+## Initial codebase review: DONE; 16 P2 defects OPEN at review time — 2026-10-15 (historical)
+
+Reviewed clean `main` at `a7d599934d3def5105b24871cf5229d75fecea24` using
+KB-MCP project recall, the SCMC and code/documentation-sync skills, independent
+module reviews, and disposable reproductions. BUG-38 through BUG-53 are 16 new
+confirmed P2 findings; no new P0/P1 was confirmed. The report now retains
+53 findings: 16 open and 37 historically fixed. Source remains unchanged.
+
+Prioritize root-helper cleanup, bounded Edge status completion, auto-deploy lock
+recovery and worktree-removal replay, then script/UTF-8/terminal behavior and
+grant/inventory/parser/diagnostic defects. Exact triggers, impact and repair
+verification criteria: [bug report](CODEBASE_BUG_REVIEW.md).
+
+Current-source verification: **2,227 PASS, 0 FAIL, 19 SKIP** across 242 test files
+(2,246 tests), plus build/native fault build, typecheck, style, docs/matrix/
+process-boundary and 58-contract checks. The ordinary `npm test` glob separately
+reports three failures from two obsolete ignored compiled files; the passing
+run enumerated only tests with current tracked source. Those artifacts were
+preserved. Reproduction methods, coverage and exact result distinction:
+[review evidence](evidence/2026-10-15-codebase-review.md).
+
+Only Markdown changed. No source repair, commit, push, service mutation or
+deployment occurred. Live OAuth/GUI/Docker/root/VM paths, Node 24 and the 19
+skipped cases were not newly verified. Earlier live-service and PREDEPLOY
+records below remain dated historical observations, not fresh runtime checks.
+
 ## Current service: AVAILABLE; authenticated MCP verified; deployment acceptance PARTIAL — 2026-10-13
 
 Follow-up at 15:41 UTC found another deployment workflow had installed

@@ -98,6 +98,8 @@ export const recordSchemas = {
     consentRequestId: id, createdAt: time, revoked: z.boolean() }).strict(),
   desktop_grant: z.object({ id: z.string().regex(/^gui-session:[a-f0-9-]{36}$/u), principalId: id,
     policyVersion: id, consentRequestId: id, createdAt: time, revoked: z.boolean() }).strict(),
+  gui_consent_tombstone: z.object({ consentRequestId: id, expiresAt: time.optional() }).strict().refine(value =>
+    !(value.consentRequestId.startsWith("default-browser:") || value.consentRequestId.startsWith("default-browser-v2:")) || value.expiresAt === undefined),
   code: z.object({ clientId: id, redirectUri: redirectUrl, challenge: z.string(), scopes, grantId: id, principalId: id, expiresAt: time, resource: httpsUrl.optional() }).strict(),
   grant: z.object({ clientId: id, principalId: id, scopes, expiresAt: time, revoked: z.boolean(), resource: httpsUrl.optional() }).strict(),
   refresh: z.object({ clientId: id, grantId: id, expiresAt: time, consumed: z.boolean() }).strict()

@@ -424,3 +424,140 @@ test("defaultBrowserAccess config is limited to GUI grant profiles", () => {
   assert.equal(configSchema.safeParse({ ...base, grantProfile: "g1", defaultBrowserAccess: true }).success, true);
   assert.equal(configSchema.safeParse({ ...base, grantProfile: "r1", defaultBrowserAccess: true }).success, false);
 });
+
+for (const length of [80, 128]) {
+  test(`default browser access accepts a schema-valid ${length}-character owner and maximum Broker policy`, async t => {
+    const f = await fixture(t);
+    const principalId = "o".repeat(length);
+    const policyVersion = "policy-" + "p".repeat(120);
+    const config = configSchema.parse({ version: 1, issuer: "https://mcp.example.com/", resource: "https://mcp.example.com/mcp",
+      issuerId: "mac-operator-auth", principalId, keyId: "key-1", port: 3444,
+      allowedRedirectUris: ["https://client.example/callback"], grantProfile: "g1", defaultBrowserAccess: true });
+    const make = () => new GuiSessionApprovals(f.store, async approval => {
+      f.store.issueApproval({ ...approval, approverPrincipalId: "browser-owner" });
+    }, () => NOW, f.auth(), { defaultBrowserPrincipalId: config.principalId });
+    const operation = { ...f.operation, principalId, policyVersion };
+    const sessions = make();
+    assert.equal(await sessions.authorize(operation), true);
+    const [grant] = f.auth().browserGrants();
+    assert.ok(grant);
+    assert.ok(grant.consentRequestId.length <= 128);
+    assert.equal(await sessions.authorize({ ...operation, requestId: "long-owner-retry" }), true);
+    assert.equal(f.auth().browserGrants().length, 1);
+    sessions.revoke(grant.id);
+    f.auth().prune();
+    sessions.close();
+    f.reopen();
+    assert.equal(await make().authorize({ ...operation, requestId: "long-owner-reopened" }), false);
+  });
+}
+
+for (const kind of ["browser_grant", "desktop_grant"] as const) {
+  test(`${kind} history at capacity permits new consent without replaying revoked consent`, async t => {
+    const f = await fixture(t);
+    f.pending("revoked-preview");
+    f.auth().transaction(() => {
+      for (let index = 0; index < 1000; index++) {
+        const id = `gui-session:00000000-0000-4000-8000-${index.toString(16).padStart(12, "0")}`;
+        const record = { id, principalId: "owner-1", policyVersion: "policy-1", consentRequestId: index === 0 ? "revoked-preview" : `used-${index}`,
+          createdAt: NOW, revoked: true };
+        if (kind === "browser_grant") f.auth().put(kind, id, { ...record, sessionId: "session-1", appId: "bundle:com.google.Chrome" });
+        else f.auth().put(kind, id, record);
+      }
+    });
+    f.auth().prune(NOW);
+    f.reopen();
+    f.pending("fresh-preview");
+    const sessions = kind === "browser_grant" ? f.persistent() : f.desktop();
+    const fresh = kind === "browser_grant" ? sessions.start("fresh-preview", true) : sessions.startDesktop("fresh-preview");
+    assert.equal(fresh.persistent, true);
+    assert.throws(() => kind === "browser_grant" ? sessions.start("revoked-preview", true) : sessions.startDesktop("revoked-preview"));
+    assert.equal(sessions.list("owner-1").length, 1);
+  });
+}
+
+test("legacy revoked default browser access survives compaction, restart and the new marker", async t => {
+  const f = await fixture(t);
+  const id = "gui-session:00000000-0000-4000-8000-000000000001";
+  f.auth().put("browser_grant", id, { id, principalId: "owner-1", sessionId: "session-1", appId: "bundle:com.google.Chrome",
+    policyVersion: "policy-1", consentRequestId: "default-browser:owner-1:bundle:com.google.Chrome:policy-1", createdAt: NOW, revoked: true });
+  f.auth().prune(NOW);
+  f.reopen();
+  const sessions = new GuiSessionApprovals(f.store, async approval => {
+    f.store.issueApproval({ ...approval, approverPrincipalId: "browser-owner" });
+  }, () => NOW, f.auth(), { defaultBrowserPrincipalId: "owner-1" });
+  assert.equal(await sessions.authorize(f.operation), false);
+  assert.equal(await sessions.authorize({ ...f.operation, requestId: "new-policy", policyVersion: "policy-2" }), true);
+});
+
+test("default marker digest separates tuples that collide under legacy concatenation", async t => {
+  const f = await fixture(t);
+  const tuples = [
+    { principalId: "owner", policyVersion: "policy-x:bundle:com.google.Chrome:policy-next" },
+    { principalId: "owner:bundle:com.google.Chrome:policy-x", policyVersion: "policy-next" }
+  ];
+  assert.equal(`default-browser:${tuples[0]!.principalId}:${f.operation.appId}:${tuples[0]!.policyVersion}`,
+    `default-browser:${tuples[1]!.principalId}:${f.operation.appId}:${tuples[1]!.policyVersion}`);
+  for (const [index, tuple] of tuples.entries()) {
+    const sessions = new GuiSessionApprovals(f.store, async approval => {
+      f.store.issueApproval({ ...approval, approverPrincipalId: "browser-owner" });
+    }, () => NOW, f.auth(), { defaultBrowserPrincipalId: tuple.principalId });
+    assert.equal(await sessions.authorize({ ...f.operation, ...tuple, requestId: `tuple-${index}` }), true);
+  }
+  const grants = f.auth().browserGrants();
+  assert.equal(grants.length, 2);
+  assert.notEqual(grants[0]!.consentRequestId, grants[1]!.consentRequestId);
+});
+
+test("an active legacy default remains reusable without a duplicate grant", async t => {
+  const f = await fixture(t);
+  const id = "gui-session:00000000-0000-4000-8000-000000000010";
+  f.auth().put("browser_grant", id, { id, principalId: "owner-1", sessionId: "session-1", appId: "bundle:com.google.Chrome",
+    policyVersion: "policy-1", consentRequestId: "default-browser:owner-1:bundle:com.google.Chrome:policy-1", createdAt: NOW, revoked: false });
+  const sessions = new GuiSessionApprovals(f.store, async approval => {
+    f.store.issueApproval({ ...approval, approverPrincipalId: "browser-owner" });
+  }, () => NOW, f.auth(), { defaultBrowserPrincipalId: "owner-1" });
+  assert.equal(await sessions.authorize(f.operation), true);
+  assert.equal(f.auth().browserGrants().length, 1);
+  assert.equal(f.auth().browserGrants()[0]!.id, id);
+});
+
+for (const desktop of [false, true]) {
+  test(`compacted ${desktop ? "desktop" : "browser"} consent cannot authorize either persistent grant kind`, async t => {
+    const f = await fixture(t);
+    f.pending("used-preview");
+    const before = f.desktop();
+    const grant = desktop ? before.startDesktop("used-preview") : before.start("used-preview", true);
+    before.revoke(grant.id);
+    f.auth().prune(NOW);
+    before.close();
+    f.reopen();
+    const after = f.desktop();
+    assert.throws(() => after.start("used-preview", true), /already been used/u);
+    assert.throws(() => after.startDesktop("used-preview"), /already been used/u);
+    assert.equal(after.list("owner-1").length, 0);
+  });
+}
+
+test("a full legacy default revocation history permits a new policy while preserving every old policy denial", async t => {
+  const f = await fixture(t);
+  f.auth().transaction(() => {
+    for (let index = 0; index < 1000; index++) {
+      const id = `gui-session:00000000-0000-4000-8000-${index.toString(16).padStart(12, "0")}`;
+      f.auth().put("browser_grant", id, { id, principalId: "owner-1", sessionId: "session-1", appId: "bundle:com.google.Chrome",
+        policyVersion: `policy-${index}`, consentRequestId: `default-browser:owner-1:bundle:com.google.Chrome:policy-${index}`,
+        createdAt: NOW, revoked: true });
+    }
+  });
+  f.auth().prune(NOW);
+  f.reopen();
+  const sessions = new GuiSessionApprovals(f.store, async approval => {
+    f.store.issueApproval({ ...approval, approverPrincipalId: "browser-owner" });
+  }, () => NOW, f.auth(), { defaultBrowserPrincipalId: "owner-1" });
+  for (const index of [0, 500, 999]) {
+    assert.equal(await sessions.authorize({ ...f.operation, requestId: `old-${index}`, policyVersion: `policy-${index}` }), false);
+  }
+  assert.equal(await sessions.authorize({ ...f.operation, requestId: "fresh-policy", policyVersion: "policy-new" }), true);
+  assert.equal(f.auth().browserGrants().length, 1);
+  assert.equal(sessions.list("owner-1").length, 1);
+});

@@ -25,7 +25,7 @@
   "implementation_status": "planned",
   "purpose": "return installed/running app inventory with bundle identifiers and safe state.",
   "input_summary": "running_only?:boolean, include_installed?:boolean.",
-  "output_summary": "allowlist-relevant app metadata.",
+  "output_summary": "Up to 500 distinct app identities, prioritizing running apps; warnings and truncated flag report capacity, traversal or metadata limits.",
   "input_schema": {
     "$schema": "https://json-schema.org/draft/2020-12/schema",
     "title": "mac_app_list input",
@@ -33,9 +33,11 @@
     "additionalProperties": false,
     "properties": {
       "running_only": {
+        "description": "Return running applications only; installed discovery is skipped.",
         "type": "boolean"
       },
       "include_installed": {
+        "description": "Include installed apps when running_only is false; false returns running apps without scanning installation roots.",
         "type": "boolean"
       }
     },

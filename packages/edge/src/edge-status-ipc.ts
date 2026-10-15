@@ -423,10 +423,15 @@ function exchangeStatusSocket(socketPath: string, body: string, timeoutMs: numbe
     const finish = (error?: Error, value?: unknown) => {
       if (settled) return;
       settled = true;
+      clearTimeout(deadline);
       socket.destroy();
       if (error) rejectPromise(error); else resolvePromise(value);
     };
-    socket.setTimeout(timeoutMs, () => finish(new BrokerError("TIMEOUT", "Edge status readback timed out", true)));
+    // An absolute deadline also bounds peers that keep sending partial frames.
+    const deadline = setTimeout(() => finish(new BrokerError("TIMEOUT", "Edge status readback timed out", true)), timeoutMs);
+    const incomplete = () => finish(new BrokerError("EXECUTION_FAILED", "Edge status response closed before a complete frame", true));
+    socket.once("end", incomplete);
+    socket.once("close", incomplete);
     socket.once("error", () => finish(new BrokerError("EXECUTION_FAILED", "Edge status transport failed", true)));
     socket.on("data", (chunk: Buffer) => {
       if (settled) return;
@@ -442,6 +447,7 @@ function exchangeStatusSocket(socketPath: string, body: string, timeoutMs: numbe
     });
     socket.once("connect", () => {
       void lstat(socketPath).then((after) => {
+        if (settled) return;
         if (!after.isSocket() || after.isSymbolicLink()) { finish(new BrokerError("AUTH_INVALID", "Edge status socket target changed while connecting")); return; }
         socket.write(body);
       }).catch(() => finish(new BrokerError("AUTH_INVALID", "Edge status socket target could not be revalidated")));

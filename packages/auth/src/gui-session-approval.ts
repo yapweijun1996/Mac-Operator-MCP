@@ -1,10 +1,16 @@
 import type { AuthStore } from "./store.js";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { guiSessionApprovalId, validateSensitiveUiTarget, validateUiObserveRequest, type BrokerStore, type GuiSessionOperation, type IssueApprovalInput } from "@mac-operator/broker";
 
 export const GUI_SESSION_MS = 30 * 60_000;
 const MAX_OPERATIONS = 500;
 const APPS = ["bundle:com.google.Chrome", "bundle:com.apple.Safari"];
+function defaultBrowserConsentId(operation: GuiSessionOperation): string {
+  return `default-browser-v2:${createHash("sha256").update(JSON.stringify([
+    operation.principalId, operation.appId, operation.policyVersion
+  ])).digest("hex")}`;
+}
+
 const TOOLS = ["mac_app_open", "mac_app_focus", "mac_ui_action", "mac_ui_type"];
 
 export function browserConsentApp(preview: { tool: string; approvalClass: string; unattended: boolean; targetKind: string; targetRef: string }): string | undefined {
@@ -49,7 +55,7 @@ export class GuiSessionApprovals {
 
   private restore(): void {
     for (const record of this.authStore?.browserGrants() ?? []) {
-      this.requestGrants.set(record.consentRequestId, record.id);
+      if (!record.revoked) this.requestGrants.set(record.consentRequestId, record.id);
       if (!record.revoked && !this.grants.has(record.id)) this.grants.set(record.id, {
         id: record.id, principalId: record.principalId, sessionId: record.sessionId,
         appId: record.appId, policyVersion: record.policyVersion, persistent: true,
@@ -57,7 +63,7 @@ export class GuiSessionApprovals {
       });
     }
     if (this.allowDesktop) for (const record of this.authStore?.desktopGrants() ?? []) {
-      this.requestGrants.set(record.consentRequestId, record.id);
+      if (!record.revoked) this.requestGrants.set(record.consentRequestId, record.id);
       if (!record.revoked && !this.grants.has(record.id)) this.grants.set(record.id, {
         id: record.id, principalId: record.principalId, policyVersion: record.policyVersion,
         appId: "desktop", desktop: true, persistent: true,
@@ -80,6 +86,7 @@ export class GuiSessionApprovals {
       if (active && !active.desktop && Boolean(active.persistent) === persistent) return active;
       throw new Error("Session consent has already been used");
     }
+    if (this.authStore?.hasGuiConsent(requestId)) throw new Error("Session consent has already been used");
     const preview = this.store.approvalPreview(requestId, this.now());
     const request = this.store.requestRecord(requestId);
     const appId = preview && browserConsentApp(preview);
@@ -113,6 +120,7 @@ export class GuiSessionApprovals {
       if (active?.desktop) return active;
       throw new Error("Session consent has already been used");
     }
+    if (this.authStore.hasGuiConsent(requestId)) throw new Error("Session consent has already been used");
     const preview = this.store.approvalPreview(requestId, this.now());
     const request = this.store.requestRecord(requestId);
     const appId = preview?.tool === "mac_app_focus" && preview.targetKind === "app_window"
@@ -147,8 +155,9 @@ export class GuiSessionApprovals {
   private ensureDefaultBrowserGrant(operation: GuiSessionOperation): void {
     if (this.defaultBrowserPrincipalId === undefined || !this.authStore ||
         operation.principalId !== this.defaultBrowserPrincipalId || !APPS.includes(operation.appId)) return;
-    const consentRequestId = `default-browser:${operation.principalId}:${operation.appId}:${operation.policyVersion}`;
-    if (consentRequestId.length > 128 || this.requestGrants.has(consentRequestId)) return;
+    const consentRequestId = defaultBrowserConsentId(operation);
+    const legacyConsentId = `default-browser:${operation.principalId}:${operation.appId}:${operation.policyVersion}`;
+    if (this.requestGrants.has(consentRequestId) || this.authStore.hasGuiConsent(consentRequestId) || this.authStore.hasGuiConsent(legacyConsentId)) return;
     if (this.store.isRevoked("principal", operation.principalId)) return;
     this.prune();
     if (this.grants.size >= 16 || this.requestGrants.size >= 4096) return;
@@ -250,6 +259,7 @@ export class GuiSessionApprovals {
       this.authorityActive(grant);
   }
   private prune(): void {
+    this.authStore?.prune(this.now());
     for (const [id, grant] of this.grants) if (!this.active(grant)) this.revoke(id);
     // Consent previews expire before their session; bound replay markers as well.
     for (const [requestId, id] of this.requestGrants) if (!this.grants.has(id) && !this.store.approvalPreview(requestId, this.now())) this.requestGrants.delete(requestId);

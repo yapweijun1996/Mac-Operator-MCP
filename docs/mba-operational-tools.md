@@ -138,7 +138,9 @@ Behaviour observed in MBA probes that the tool schemas alone do not show.
   into the primary checkout's HEAD is kept: the result has `branch_deleted: false` and a warning. Merge it, or
   delete it from the owner terminal with `git branch -d <branch>` once merged. Do not use `git branch -D` for
   unmerged work unless the owner has decided to discard it. Retrying a completed removal with the same key
-  re-attempts only the branch cleanup and needs its own owner approval.
+  only reads current branch existence and still needs its own owner approval. It never deletes a branch again:
+  a kept or subsequently recreated branch requires separate owner cleanup. The result reports
+  `branch_deleted: false` with a warning when that branch currently exists.
 
 ### Jobs
 
@@ -208,3 +210,100 @@ Commit uses a private snapshot while holding the shared index lock, then compare
 approved content. Concurrent changes to the shared index are preserved and make an inconsistent readback UNKNOWN;
 the Broker never resets a created commit automatically. Another process's index lock returns CONFLICT before
 mutation. An unobserved Git process or changed cleanup identity leaves the snapshot/lock for operator reconciliation.
+
+## File read pagination
+
+`mac_read_file` returns `bytes_returned` and `next_offset`. Continue using the
+returned byte offset until it is `null`; do not derive byte offsets from JavaScript
+string length. UTF-8 pages stop before a partial final character, so a page may
+contain fewer bytes than `max_bytes`. The cap must fit at least the next complete
+character; too-small caps, offsets inside a character, invalid UTF-8 and incomplete
+EOF are rejected. Base64 reads retain exact byte ranges. Metadata reads return no
+content, zero returned bytes and `next_offset: null`.
+
+`sha256` hashes only the original bytes represented by this page, including a BOM
+if present, rather than the whole file unless the entire file was returned.
+Use `mac_hash_file` for a whole-file digest when authorized. Secret checks still
+cover the captured host byte window. Isolated guest file reads use the same UTF-8
+boundary behavior and return their existing `nextOffset` field.
+
+## Application discovery
+
+`mac_app_list` returns at most 500 distinct bundle identities. Running apps have
+priority over installed-only entries. Either `running_only: true` or
+`include_installed: false` skips installed discovery, so a large installation
+list cannot hide an otherwise eligible running app. More than 500 running apps
+can still produce a partial running inventory. Duplicate identities share one
+slot and preserve running state and any discovered version metadata.
+
+Installed metadata is discovered beneath `/Applications`, `/System/Applications`,
+`/System/Library/CoreServices`, and the owner's `~/Applications`, including the
+fixed shared/system/user `Utilities` directories. Ordinary directories are walked
+breadth first, with at most four nested directory levels per root, 128 scheduled
+directories across roots and 10,000 inspected entries. Utilities roots are reserved
+before other nested directories. Hidden entries, symbolic links, paths resolving
+through symbolic links, and bundle/package interiors are outside traversal scope.
+The adapter returns bundle identities and sanitized metadata, never bundle paths.
+
+Check `truncated` and `warnings` before treating absence as definitive. The adapter
+marks capacity/depth/directory/entry limits and unavailable metadata as incomplete;
+missing optional roots are ignored. An exactly full result is complete only when
+no other budget or metadata limitation was observed. Fixed timeout, output cap,
+secret redaction and caller authority checks still apply.
+
+`mac_app_open` still requires an exact authorized bundle identity and verifies its
+running state after the fixed `/usr/bin/open -b` command. If the target is absent
+from incomplete inventory, it returns `OUTPUT_LIMIT` before launching. It returns
+`TARGET_NOT_FOUND` only when the bounded discovery scope is complete and contains
+no such identity. There is no fallback to a caller-supplied path or command.
+
+## Python and Xcode project metadata
+
+`mac_package_inspect` reads the existing supported manifests without executing
+Python, a package manager or project setup code. Under a bare `[project]` table,
+`dependencies` (including its quoted-key form) supports an array of single-line
+quoted strings, with inline or multiline array layout, multiple entries per
+line, comments outside strings and an optional trailing comma. Single-quoted
+literal strings and double-quoted basic strings with common escapes or `\uXXXX`
+are supported. Extras are separated from package names according to the existing
+requirement representation; version/marker text and URL fragments are retained.
+Poetry dependency sections remain supported by the existing metadata parser.
+
+This is a limited metadata extractor, not a TOML/PEP-508 validator or dependency
+resolver. Within the recognized project dependency field, multiline/triple-quoted
+string literals, `\UXXXXXXXX` escapes, non-string members and malformed array
+syntax are omitted with a fixed warning. A malformed array contributes no partial
+array entries. It may still return independently supported Poetry metadata.
+Check warnings before treating dependency metadata as complete. An empty array
+is valid. Manifest size remains at most 512 KiB and dependency output at most
+5,000 entries; truncation reports that output bound. Secret-content checks,
+manifest/root symlink denial, cancellation and sanitization remain unchanged.
+
+`mac_project_discover` recognizes Swift projects from exact `Package.swift` or
+nonempty named `.xcodeproj` / `.xcworkspace` directories. File lookalikes,
+symlinked bundles and unrelated suffixes are excluded. Swift indicators use the
+existing short marker labels (`Package.swift`, `.xcodeproj`, `.xcworkspace`),
+not potentially long bundle filenames. Discovery requires metadata permission
+only and does not read project contents. The automatic walk does not descend
+into a discovered Xcode bundle; internal workspace metadata therefore does not
+become another source project. Explicitly selected roots retain ordinary metadata
+inspection behavior. Public schemas and persistence formats are unchanged.
+
+Project discovery merges all directory pages into one result per canonical
+root and project type. Indicators are distinct and follow the existing marker
+order; repeated or overlapping input roots do not duplicate projects. The result
+limit counts those distinct records. Reaching the limit exactly is complete
+unless another project or a traversal omission is found.
+
+The walk visits directories through depth 16. Eligible child directories omitted
+at that boundary set `truncated: true`, while later pages and queued siblings
+remain searchable. Ignored directories, symlinks and opaque Xcode bundles do not
+create depth omissions. Global limits remain 10,000 directories and 50,000
+entries. `truncated` means bounded or incomplete discovery; narrow the input roots
+before treating an empty result as definitive.
+
+Text-search policy explanations require `content_read`, using the same capability
+mapping as execution. Metadata-only roots return `ROOT_CAPABILITY_NOT_GRANTED`.
+With `proposed_arguments`, the target path must match the first normalized search
+root, and all additional roots must pass capability and target authorization.
+Explanation validates the plan without searching or executing the proposed tool.

@@ -725,7 +725,7 @@ test("Workspace staging is once-only, precedes normal execution and never allows
     assert.ok(staging.every(value => value.User === "0:0" && value.Privileged === false && value.Cmd[0] === "/usr/local/bin/node"));
     assert.ok(staging.every(value => value.Cmd[2].includes("STAGING_DENIED") && value.Cmd[2].includes("C.O_NOFOLLOW")));
     for (const value of staging) new Function(value.Cmd[2]);
-    assert.ok(staging[2]!.Cmd[2].includes("fs.fchmodSync(file,0o444)"));
+    assert.ok(staging[2]!.Cmd[2].includes("fs.fchmodSync(file,(fs.fstatSync(file).mode&0o100)?0o555:0o444)"));
     assert.ok(staging[2]!.Cmd[2].includes("fs.fchmodSync(dir,0o555)"));
     assert.equal(f.createConfig!.HostConfig.ReadonlyRootfs, true);
     await assert.rejects(f.engine.uploadArchive(handle, createWorkspaceArchive([])), /exactly once/u);

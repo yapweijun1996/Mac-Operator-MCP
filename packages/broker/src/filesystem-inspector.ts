@@ -225,6 +225,7 @@ interface NativeStorageVolume extends SafeStorageVolume {
 
 export interface FilesystemNativeAdapter {
   readonly nativeCanonicalWriteAuthorizationVersion?: number;
+  readonly nativeSourceExecutablePreservationVersion?: number;
   statPathWithinRoot(rootPath: string, targetPath: string, followSymlink: boolean): unknown;
   statStorageVolumeWithinRoot(rootPath: string): unknown;
   listDirectoryWithinRoot(
@@ -257,7 +258,8 @@ export interface FilesystemNativeAdapter {
     expectedDevice: string,
     expectedInode: string,
     temporaryName: string,
-    authorizeCanonicalPath: (path: string) => void
+    authorizeCanonicalPath: (path: string) => void,
+    preserveExecutable?: boolean
   ): unknown;
   unlinkFileWithinRoot(
     rootPath: string,
@@ -305,12 +307,13 @@ const PROJECT_SUMMARY_MANIFESTS = new Set([
   "compose.yml", "compose.yaml", "Package.swift", "Cargo.toml", "go.mod", "Gemfile", "pom.xml", "build.gradle",
   "build.gradle.kts", "settings.gradle", "settings.gradle.kts"
 ]);
+const XCODE_BUNDLE_SUFFIXES = [".xcodeproj", ".xcworkspace"];
 const PROJECT_MARKERS: Readonly<Record<string, readonly string[]>> = {
   git: [".git"],
   node: ["package.json"],
   python: ["pyproject.toml", "setup.py", "requirements.txt", "Pipfile"],
   docker: ["Dockerfile", "docker-compose.yml", "docker-compose.yaml", "compose.yml", "compose.yaml"],
-  swift: ["Package.swift", ".xcodeproj", ".xcworkspace"],
+  swift: ["Package.swift", ...XCODE_BUNDLE_SUFFIXES],
   rust: ["Cargo.toml"],
   go: ["go.mod"],
   ruby: ["Gemfile"],
@@ -714,18 +717,22 @@ export class FilesystemInspector {
       throw new BrokerError("PRECONDITION_FAILED", "Project discovery requires between 1 and 32 roots");
     }
     const requestedTypes = normalizeProjectTypes(types);
-    const typeSet = new Set(requestedTypes);
+    const selectedTypes = requestedTypes.length > 0 ? requestedTypes : Object.keys(PROJECT_MARKERS);
     const projects: SafeProject[] = [];
     const visitedDirectories = new Set<string>();
     const pending: Array<{ plan: FilesystemPathPlan; depth: number }> = plans.map((plan) => ({ plan, depth: 0 }));
     let visitedEntries = 0;
     let visitedDirectoriesCount = 0;
     let truncated = false;
+    let exhausted = false;
 
-    while (pending.length > 0 && !truncated) {
+    while (pending.length > 0 && !exhausted) {
       const current = pending.shift()!;
       let cursor: string | undefined;
-      while (!truncated) {
+      let canonicalPath: string | undefined;
+      // Retain only known marker labels, not every filename in a large directory.
+      const markers = new Map<string, Set<string>>();
+      while (!exhausted) {
         const listing = this.listPlanned(current.plan, cursor, 500, true);
         if (visitedDirectories.has(listing.path) && cursor === undefined) break;
         if (!visitedDirectories.has(listing.path)) {
@@ -733,41 +740,54 @@ export class FilesystemInspector {
           visitedDirectoriesCount += 1;
           if (visitedDirectoriesCount > MAX_PROJECT_DIRECTORIES) {
             truncated = true;
+            exhausted = true;
             break;
           }
         }
-        const markerNames = new Set(listing.entries
-          .filter((entry) => entry.type !== "symlink")
-          .map((entry) => entry.name));
-        const foundTypes = (requestedTypes.length > 0 ? requestedTypes : Object.keys(PROJECT_MARKERS))
-          .map((type) => ({ type, indicators: (PROJECT_MARKERS[type] ?? []).filter((marker) => markerNames.has(marker)) }))
-          .filter((candidate) => candidate.indicators.length > 0);
-        if (foundTypes.length > 0) {
-          for (const found of foundTypes) {
-            if (projects.length >= maxResults) {
-              truncated = true;
-              break;
-            }
-            projects.push({ root: listing.path, type: found.type, indicators: found.indicators });
-          }
-        }
-        if (truncated) break;
+        canonicalPath = listing.path;
         for (const entry of listing.entries) {
           visitedEntries += 1;
           if (visitedEntries > MAX_PROJECT_ENTRIES) {
             truncated = true;
+            exhausted = true;
             break;
           }
-          if (entry.type !== "directory" || current.depth >= MAX_PROJECT_DEPTH || PROJECT_SKIP_DIRECTORIES.has(entry.name)) continue;
+          if (entry.type !== "symlink") {
+            for (const type of selectedTypes) {
+              const marker = type === "swift" ? (entry.name === "Package.swift" ? entry.name : xcodeBundleMarker(entry)) : entry.name;
+              if (marker !== undefined && PROJECT_MARKERS[type]?.includes(marker)) {
+                const found = markers.get(type) ?? new Set<string>();
+                found.add(marker);
+                markers.set(type, found);
+              }
+            }
+          }
+          if (entry.type !== "directory" || PROJECT_SKIP_DIRECTORIES.has(entry.name) || xcodeBundleMarker(entry) !== undefined) continue;
+          if (current.depth >= MAX_PROJECT_DEPTH) {
+            truncated = true;
+            continue;
+          }
           const childPath = join(listing.path, entry.name);
           if (!isAbsolute(childPath) || childPath.length > 4096) {
             truncated = true;
-            break;
+            continue;
           }
           pending.push({ plan: { ...current.plan, requestedPath: childPath }, depth: current.depth + 1 });
         }
-        if (truncated || listing.nextCursor === null) break;
+        if (exhausted || listing.nextCursor === null) break;
         cursor = listing.nextCursor;
+      }
+      if (canonicalPath !== undefined) {
+        for (const type of selectedTypes) {
+          const found = markers.get(type);
+          if (!found?.size) continue;
+          if (projects.length >= maxResults) {
+            truncated = true;
+            exhausted = true;
+            break;
+          }
+          projects.push({ root: canonicalPath, type, indicators: PROJECT_MARKERS[type]!.filter(marker => found.has(marker)) });
+        }
       }
     }
     return { projects, truncated };
@@ -1182,7 +1202,8 @@ export class FilesystemInspector {
     createOnly: boolean,
     temporaryName: string,
     expectedIdentity?: FilesystemIdentityPrecondition,
-    beforeMutation?: () => void
+    beforeMutation?: () => void,
+    preserveExecutable = false
   ): {
     path: string;
     bytesWritten: number;
@@ -1195,6 +1216,9 @@ export class FilesystemInspector {
   } {
     if (this.native.nativeCanonicalWriteAuthorizationVersion !== 1) {
       throw new BrokerError("POLICY_DENIED", "Filesystem canonical write authorization is unavailable");
+    }
+    if (preserveExecutable && this.native.nativeSourceExecutablePreservationVersion !== 1) {
+      throw new BrokerError("POLICY_DENIED", "Source executable preservation is unavailable");
     }
     assertSourceWritePathAllowed(plan.requestedPath);
     assertContentDoesNotContainSecrets(content);
@@ -1245,7 +1269,8 @@ export class FilesystemInspector {
               plan.root.denyRelativePaths.some((denied) => isRelativeContained(denied, canonicalRelative))) {
             throw new BrokerError("POLICY_DENIED", "Filesystem write target is inside a denied zone", false, "DENIED_ZONE");
           }
-        }
+        },
+        ...(preserveExecutable ? [true] : [])
       );
     } catch {
       throw new BrokerError("POLICY_DENIED", "Filesystem write target escaped its authorized root or changed during the write");
@@ -1689,6 +1714,11 @@ function freezeFilesystemSnapshot<T>(value: T): T {
   };
   freeze(value);
   return value;
+}
+
+function xcodeBundleMarker(entry: SafeDirectoryEntry): string | undefined {
+  if (entry.type !== "directory") return undefined;
+  return XCODE_BUNDLE_SUFFIXES.find(suffix => entry.name.length > suffix.length && entry.name.endsWith(suffix));
 }
 
 export function normalizeProjectTypes(types: readonly string[]): string[] {

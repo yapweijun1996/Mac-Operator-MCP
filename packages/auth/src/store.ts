@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+import { GUI_SESSION_PREVIEW_TTL_MS } from "@mac-operator/broker";
 import { DatabaseSync } from "node:sqlite";
 import { closeSync, constants, lstatSync, openSync, realpathSync } from "node:fs";
 import { isAbsolute, join } from "node:path";
@@ -5,6 +7,10 @@ import { recordSchemas, type Kind, type RecordValue } from "./contracts.js";
 
 const MAX_AUTH_RECORDS = 8_000;
 const MAX_AUTH_RECORDS_PER_KIND = 1_000;
+
+function consentKey(requestId: string): string {
+  return createHash("sha256").update(requestId).digest("hex");
+}
 
 export interface GrantRevocationNotice {
   grantId: string;
@@ -66,7 +72,12 @@ export class AuthStore {
       for (const row of rows) {
         if (typeof row.kind !== "string" || !Object.hasOwn(recordSchemas, row.kind) || typeof row.id !== "string" ||
             !/^[A-Za-z0-9._:-]{1,128}$/u.test(row.id) || typeof row.payload !== "string" || row.payload.length > 8192) throw new Error("Invalid auth state");
-        try { recordSchemas[row.kind as Kind].parse(JSON.parse(row.payload)); }
+        try {
+          const value = recordSchemas[row.kind as Kind].parse(JSON.parse(row.payload));
+          if (row.kind === "gui_consent_tombstone" && consentKey((value as RecordValue<"gui_consent_tombstone">).consentRequestId) !== row.id) {
+            throw new Error("Consent marker identity mismatch");
+          }
+        }
         catch (error) { throw new AuthRecordError(row.kind, error); }
       }
     } catch (error) {
@@ -81,7 +92,13 @@ export class AuthStore {
     try { row = this.db.prepare("SELECT payload FROM records WHERE kind=? AND id=?").get(kind, key); }
     catch { this.sealed = true; throw new Error("Auth state unavailable"); }
     if (row === undefined) return undefined;
-    try { return recordSchemas[kind].parse(JSON.parse(String(row.payload))) as RecordValue<K>; }
+    try {
+      const value = recordSchemas[kind].parse(JSON.parse(String(row.payload))) as RecordValue<K>;
+      if (kind === "gui_consent_tombstone" && consentKey((value as RecordValue<"gui_consent_tombstone">).consentRequestId) !== key) {
+        throw new Error("Consent marker identity mismatch");
+      }
+      return value;
+    }
     catch (error) { this.sealed = true; throw new AuthRecordError(kind, error); }
   }
 
@@ -107,9 +124,19 @@ export class AuthStore {
     } catch { this.sealed = true; throw new Error("Auth state unavailable"); }
   }
 
+  /** Check durable consent use without loading historical markers into the GUI session cache. */
+  hasGuiConsent(requestId: string): boolean {
+    if (this.get("gui_consent_tombstone", consentKey(requestId))) return true;
+    const row = this.write(() => this.db.prepare("SELECT kind,id FROM records WHERE kind IN ('browser_grant','desktop_grant') AND json_extract(payload,'$.consentRequestId')=? LIMIT 1").get(requestId));
+    return row !== undefined && this.get(row.kind as "browser_grant" | "desktop_grant", String(row.id)) !== undefined;
+  }
+
   put<K extends Kind>(kind: K, key: string, value: RecordValue<K>): void {
     this.assertAvailable();
     const payload = JSON.stringify(recordSchemas[kind].parse(value));
+    if (kind === "gui_consent_tombstone" && consentKey((value as RecordValue<"gui_consent_tombstone">).consentRequestId) !== key) {
+      throw new Error("Invalid consent marker identity");
+    }
     if (!/^[A-Za-z0-9._:-]{1,128}$/u.test(key) || payload.length > 8192) throw new Error("Invalid auth record");
     if (!this.get(kind, key)) {
       const total = Number(this.db.prepare("SELECT count(*) AS n FROM records").get()?.n);
@@ -183,9 +210,35 @@ export class AuthStore {
     ).run(keep).changes));
   }
 
-  prune(): void {
+  prune(now = Date.now()): void {
     this.assertAvailable();
-    this.write(() => this.db.prepare("DELETE FROM records WHERE kind != 'account' AND json_extract(payload,'$.expiresAt') <= ?").run(Date.now()));
+    if (!Number.isSafeInteger(now) || now < 0) throw new Error("Invalid pruning time");
+    this.transaction(() => {
+      this.write(() => this.db.prepare("DELETE FROM records WHERE kind != 'account' AND json_extract(payload,'$.expiresAt') <= ?").run(now));
+      let markers = Number(this.db.prepare("SELECT count(*) AS n FROM records WHERE kind='gui_consent_tombstone'").get()?.n);
+      for (const kind of ["browser_grant", "desktop_grant"] as const) {
+        const rows = kind === "browser_grant" ? this.browserGrants() : this.desktopGrants();
+        for (const grant of rows) {
+          if (!grant.revoked) continue;
+          // Ordinary consent cannot outlive its Broker preview. Defaults have no preview
+          // and their revocation must remain durable until an explicitly different policy.
+          const isDefault = grant.consentRequestId.startsWith("default-browser:") || grant.consentRequestId.startsWith("default-browser-v2:");
+          const expiresAt = isDefault ? undefined : Math.min(Number.MAX_SAFE_INTEGER, grant.createdAt + GUI_SESSION_PREVIEW_TTL_MS);
+          if (expiresAt !== undefined && expiresAt <= now) { this.delete(kind, grant.id); continue; }
+          const key = consentKey(grant.consentRequestId);
+          const previous = this.get("gui_consent_tombstone", key);
+          // Never forget a revocation to make space. A full marker kind retains the
+          // original revoked row, which still denies replay and grants no authority.
+          if (!previous && markers >= MAX_AUTH_RECORDS_PER_KIND) continue;
+          const retainedExpiry = previous && (previous.expiresAt === undefined || expiresAt === undefined)
+            ? undefined : Math.max(previous?.expiresAt ?? 0, expiresAt ?? 0);
+          this.delete(kind, grant.id);
+          this.put("gui_consent_tombstone", key, { consentRequestId: grant.consentRequestId,
+            ...(retainedExpiry !== undefined && !isDefault ? { expiresAt: retainedExpiry } : {}) });
+          if (!previous) markers++;
+        }
+      }
+    });
   }
 
   revoke(grantId: string, clientId?: string): void {

@@ -2804,8 +2804,15 @@ export class Broker {
             }
             const proposed = { ...request, tool: candidate, arguments: request.arguments.proposed_arguments };
             const planned = this.planExecution(proposed, policy, tool);
-            if (planned.target.kind !== target.kind || planned.target.reference !== target.reference) {
+            // Search plans authorize root IDs; the public explanation target is the requested path.
+            const proposedTarget = planned.searchText
+              ? { kind: "path", reference: planned.searchText.plans[0]!.requestedPath }
+              : planned.target;
+            if (proposedTarget.kind !== target.kind || proposedTarget.reference !== target.reference) {
               throw new BrokerError("PRECONDITION_FAILED", "Proposed arguments and target differ");
+            }
+            for (const additionalTarget of planned.additionalTargets ?? []) {
+              authorizeTarget(policy, request.principal.principalId, tool.requiredScopes, additionalTarget);
             }
             authorizationTarget = planned.target;
             reportedTarget = planned.target;
@@ -2813,7 +2820,7 @@ export class Broker {
 
           if (tool.targetType === "path" || tool.targetType === "filesystem_roots") {
             if (target.kind !== "path") throw new BrokerError("PRECONDITION_FAILED", "Filesystem policy query requires a path target");
-            const capability = candidate === "mac_read_file" || candidate === "mac_list_directory" || candidate === "mac_directory_tree" ? "content_read" : candidate === "mac_write_file_atomic" ? "write" : "metadata";
+            const capability = filesystemCapability(candidate);
             const plan = this.planFilesystemPath(new FilesystemInspector(policy.filesystemRoots), target.reference, capability, request.principal.principalId);
             authorizationTarget = { kind: "path", reference: plan.rootId };
             reportedTarget = { kind: "path", reference: plan.requestedPath };
@@ -2827,7 +2834,7 @@ export class Broker {
             if (target.kind !== "project") throw new BrokerError("PRECONDITION_FAILED", "Project policy query requires a project target");
             validateGitStatusRequest(target.reference, true);
             if (candidate === "mac_apply_patch") {
-              this.planFilesystemPath(new FilesystemInspector(policy.filesystemRoots), target.reference, "write", request.principal.principalId);
+              this.planFilesystemPath(new FilesystemInspector(policy.filesystemRoots), target.reference, filesystemCapability(candidate), request.principal.principalId);
             }
           }
           authorizeTarget(policy, request.principal.principalId, tool.requiredScopes, authorizationTarget);
@@ -2901,6 +2908,8 @@ export class Broker {
             encoding: workerResult.encoding,
             ...(workerResult.content !== undefined ? { content: workerResult.content } : {}),
             size_bytes: workerResult.sizeBytes,
+            bytes_returned: workerResult.bytesReturned,
+            next_offset: workerResult.encoding !== "metadata" && offset + workerResult.bytesReturned < workerResult.sizeBytes ? offset + workerResult.bytesReturned : null,
             sha256: workerResult.sha256,
             truncated: workerResult.truncated
           },
@@ -4914,7 +4923,7 @@ export class Broker {
       validateSearchTextArguments(request.arguments);
       const inspector = new FilesystemInspector(policy.filesystemRoots);
       const roots = request.arguments.roots as string[];
-      const plans = roots.map((root) => this.planFilesystemPath(inspector, root, "content_read", request.principal.principalId));
+      const plans = roots.map((root) => this.planFilesystemPath(inspector, root, filesystemCapability(request.tool), request.principal.principalId));
       const targets = plans.map((plan) => ({ kind: "path" as const, reference: plan.rootId }));
       return {
         target: targets[0]!,
@@ -4998,7 +5007,7 @@ export class Broker {
       const expectedBaseHash = request.arguments.expected_base_hash;
       validateApplyPatchArguments(projectRoot, patchText, expectedBaseHash);
       const inspector = new FilesystemInspector(policy.filesystemRoots);
-      const plan = this.planFilesystemPath(inspector, projectRoot as string, "write", request.principal.principalId);
+      const plan = this.planFilesystemPath(inspector, projectRoot as string, filesystemCapability(request.tool), request.principal.principalId);
       return {
         target: { kind: "project", reference: projectRoot as string },
         auditTarget: `project:${projectRoot as string}`,
@@ -5242,7 +5251,7 @@ export class Broker {
     const plan = this.planFilesystemPath(
       inspector,
       request.arguments.path,
-      request.tool === "mac_read_file" || request.tool === "mac_list_directory" || request.tool === "mac_directory_tree" ? "content_read" : request.tool === "mac_write_file_atomic" ? "write" : "metadata",
+      filesystemCapability(request.tool),
       request.principal.principalId
     );
     return {
@@ -5287,7 +5296,7 @@ export class Broker {
       return;
     }
     if (tool.targetType === "filesystem_roots") {
-      const requiresContent = tool.tool === "mac_search_text";
+      const requiresContent = filesystemCapability(tool.tool) === "content_read";
       for (const root of policy.filesystemRoots.filter((candidate) => requiresContent ? candidate.contentRead === true : candidate.metadata === true)) {
         try {
           authorizeTarget(policy, principalId, tool.requiredScopes, { kind: "path", reference: root.rootId });
@@ -6808,6 +6817,12 @@ function decodeWriteContent(argumentsValue: Readonly<Record<string, unknown>>): 
     throw new BrokerError("PRECONDITION_FAILED", "base64 content is malformed");
   }
   return bytes;
+}
+
+function filesystemCapability(tool: string): "metadata" | "content_read" | "write" {
+  if (tool === "mac_read_file" || tool === "mac_list_directory" || tool === "mac_directory_tree" || tool === "mac_search_text") return "content_read";
+  if (tool === "mac_write_file_atomic" || tool === "mac_apply_patch") return "write";
+  return "metadata";
 }
 
 /**

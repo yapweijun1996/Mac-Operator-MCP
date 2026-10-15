@@ -311,6 +311,14 @@ test("completed worktrees release inventory capacity while archived retries surv
     const revoked = () => { throw new BrokerError("POLICY_DENIED", "Authority was revoked"); };
     await assert.rejects(registry.remove(f.project, removed.worktree, "owner", "task-1", control, revoked, () => false, "rm-1"), /revoked/u);
     assert.equal((await registry.remove(f.project, removed.worktree, "owner", "task-1", control, authority, () => false, "rm-1")).branchDeleted, true);
+    git(f.project, ["branch", removed.branchName]);
+    const recreatedTip = git(f.project, ["rev-parse", removed.branchName]);
+    assert.equal((await registry.remove(f.project, removed.worktree, "owner", "task-1", control, authority, () => false, "rm-1")).branchDeleted, false);
+    assert.equal(git(f.project, ["rev-parse", removed.branchName]), recreatedTip, "archived retries cannot delete a later branch");
+    await registry.close();
+    registry = new ManagedWorktrees(f.state, f.trees);
+    assert.equal((await registry.remove(f.project, removed.worktree, "owner", "task-1", control, authority, () => false, "rm-1")).branchDeleted, false);
+    assert.equal(git(f.project, ["rev-parse", removed.branchName]), recreatedTip);
     await registry.close();
     await rename(f.project, join(f.root, "retired-project"));
     registry = new ManagedWorktrees(f.state, f.trees);
@@ -375,7 +383,7 @@ test("a task re-created after removal is removable again and stale removal keys 
     const remove = (worktree: string, key: string) => f.registry.remove(f.project, worktree, "owner", "task-1", control, authority, () => false, key);
     const first = await f.create("task-1");
     assert.deepEqual(await remove(first.record.worktree, "rm-1"), { branchName: "codex/task-1", branchDeleted: true });
-    // Before any re-create, a retry of the completed removal only re-attempts the branch cleanup.
+    // Before any re-create, a completed removal retry only reads the absent branch.
     assert.deepEqual(await remove(first.record.worktree, "rm-1"), { branchName: "codex/task-1", branchDeleted: true });
     const second = await f.create("task-1", { idempotencyKey: "key-task-1-again" });
     assert.equal(second.reused, false);
@@ -424,7 +432,7 @@ test("a completed removal retry never mutates a replacement project", async () =
   } finally { await f.cleanup(); }
 });
 
-test("a completed removal retry needs live authority before any branch cleanup", async () => {
+test("a completed removal retry needs live authority before branch readback", async () => {
   const f = await worktreeFixture();
   try {
     const created = await f.create("task-1");
@@ -434,6 +442,27 @@ test("a completed removal retry needs live authority before any branch cleanup",
     const revoked = () => { throw new BrokerError("POLICY_DENIED", "Authority was revoked"); };
     await assert.rejects(remove(revoked), brokerFailure("POLICY_DENIED", /revoked/u));
     assert.equal(git(f.project, ["branch", "--list", "codex/task-1"]).trim(), "codex/task-1", "a revoked caller must not delete the branch");
+  } finally { await f.cleanup(); }
+});
+
+test("completed removal retries preserve a recreated branch before and after restart", async () => {
+  const f = await worktreeFixture();
+  try {
+    const { record } = await f.create();
+    const remove = () => f.registry.remove(f.project, record.worktree, "owner", record.taskId, control, authority, () => false, "remove-replay");
+    assert.equal((await remove()).branchDeleted, true);
+    git(f.project, ["branch", record.branchName]);
+    const tip = git(f.project, ["rev-parse", record.branchName]);
+    assert.equal((await remove()).branchDeleted, false);
+    assert.equal(git(f.project, ["rev-parse", record.branchName]), tip);
+    await f.registry.close();
+    const reopened = new ManagedWorktrees(f.state, f.trees);
+    try {
+      const replay = await reopened.remove(f.project, record.worktree, "owner", record.taskId, control, authority, () => false, "remove-replay");
+      assert.equal(replay.branchDeleted, false);
+      assert.match(replay.branchNote ?? "", /already removed/u);
+      assert.equal(git(f.project, ["rev-parse", record.branchName]), tip);
+    } finally { await reopened.close(); }
   } finally { await f.cleanup(); }
 });
 

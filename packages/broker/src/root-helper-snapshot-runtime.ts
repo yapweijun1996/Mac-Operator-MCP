@@ -136,8 +136,7 @@ export class RootHelperSnapshotRuntime {
       throw new RootHelperSnapshotRuntimeStartupError("SERVER_UNAVAILABLE", `Root-helper snapshot runtime cannot start from ${this.stateValue}`);
     }
     if (!this.server.available) {
-      await this.server.close();
-      await this.statusServer?.close();
+      await this.closeInternal();
       throw new BrokerError("POLICY_DENIED", "Root-helper snapshot runtime is unavailable on this host");
     }
     this.stateValue = "starting";
@@ -152,10 +151,7 @@ export class RootHelperSnapshotRuntime {
       if (this.statusStateRef) this.statusStateRef.value = this.stateValue;
     } catch (error) {
       try {
-        await this.statusServer?.close();
-        await this.server.close();
-        this.stateValue = "stopped";
-        if (this.statusStateRef) this.statusStateRef.value = this.stateValue;
+        await this.closeInternal();
       } catch (cleanupError) {
         this.stateValue = "failed";
         if (this.statusStateRef) this.statusStateRef.value = this.stateValue;
@@ -166,23 +162,17 @@ export class RootHelperSnapshotRuntime {
   }
 
   private async closeInternal(): Promise<void> {
-    if (this.stateValue === "stopped") {
-      await this.statusServer?.close();
-      await this.server.close();
-      return;
-    }
     this.stateValue = "stopping";
     if (this.statusStateRef) this.statusStateRef.value = this.stateValue;
-    try {
-      await this.statusServer?.close();
-      await this.server.close();
-      this.stateValue = "stopped";
-      if (this.statusStateRef) this.statusStateRef.value = this.stateValue;
-    } catch (error) {
-      this.stateValue = "failed";
-      if (this.statusStateRef) this.statusStateRef.value = this.stateValue;
-      throw error;
-    }
+    const errors: unknown[] = [];
+    try { await this.statusServer?.close(); } catch (error) { errors.push(error); }
+    // Command cleanup owns active requests, authority polling and key disposal.
+    // A diagnostic socket failure must never prevent that cleanup attempt.
+    try { await this.server.close(); } catch (error) { errors.push(error); }
+    this.stateValue = errors.length === 0 ? "stopped" : "failed";
+    if (this.statusStateRef) this.statusStateRef.value = this.stateValue;
+    if (errors.length === 1) throw errors[0];
+    if (errors.length > 1) throw new AggregateError(errors, "Root-helper snapshot cleanup failed");
   }
 
   private enqueue(operation: () => Promise<void>): Promise<void> {

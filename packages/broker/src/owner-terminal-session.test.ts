@@ -3,6 +3,9 @@ import { mkdtemp, realpath, rm } from "node:fs/promises";
 import { homedir } from "node:os";
 import { setTimeout as delay } from "node:timers/promises";
 import test from "node:test";
+import { dispatchOwnerTerminalSessionIo } from "./owner-terminal-session-dispatch.js";
+import type { BrokerStore } from "./persistence.js";
+import type { BrokerRequest } from "@mac-operator/contracts";
 import { BrokerError } from "@mac-operator/contracts";
 import { OwnerTerminalSessionManager } from "./owner-terminal-session.js";
 import type { ProcessExecutionRequest, ProcessExecutionResult } from "./process-supervisor.js";
@@ -289,5 +292,53 @@ test("session shell PATH ends with the owner's user bin directory", { skip: !sup
     assert.ok(path.startsWith("/opt/homebrew/bin:"), path);
     assert.ok(path.endsWith(`${homedir()}/.local/bin`), path);
     manager.stop("owner", sessionId);
+  } finally { await manager.close(); }
+});
+
+for (const output of ["", "ascii", "é", "你", "😀"]) {
+  test(`stop reads committed state without consuming output ${JSON.stringify(output)}`, { skip: !supported }, async () => {
+    const controlled = controlledSupervisor();
+    const manager = new OwnerTerminalSessionManager({ enabled: true, supervisor: controlled.supervisor });
+    try {
+      const start = manager.start("owner", { ...base, cwd: "/tmp" });
+      await waitFor(() => controlled.started);
+      controlled.ready();
+      const { sessionId } = await start;
+      controlled.output(Buffer.from(output));
+      controlled.finish();
+      await waitFor(() => manager.describe("owner", sessionId).finished);
+      for (let attempt = 0; attempt < 2; attempt++) {
+        const result = await dispatchOwnerTerminalSessionIo({ manager, store: {} as BrokerStore, now: Date.now,
+          request: { principal: { principalId: "owner" } } as BrokerRequest,
+          session: { action: "stop", sessionId }, assertAuthority: () => undefined });
+        assert.equal(result.data.finished, true);
+        assert.equal(result.data.state, "completed");
+        assert.equal(result.data.exit_code, 0);
+      }
+      assert.equal(manager.read("owner", sessionId, 0).data, output);
+    } finally { await manager.close(); }
+  });
+}
+
+test("stop waits for final state with unread multibyte output and also accepts drained output", { skip: !supported }, async () => {
+  const controlled = controlledSupervisor();
+  const manager = new OwnerTerminalSessionManager({ enabled: true, supervisor: controlled.supervisor });
+  try {
+    const start = manager.start("owner", { ...base, cwd: "/tmp" });
+    await waitFor(() => controlled.started);
+    controlled.ready();
+    const { sessionId } = await start;
+    controlled.output(Buffer.from("你😀"));
+    const stop = () => dispatchOwnerTerminalSessionIo({ manager, store: {} as BrokerStore, now: Date.now,
+      request: { principal: { principalId: "owner" } } as BrokerRequest,
+      session: { action: "stop", sessionId }, assertAuthority: () => undefined });
+    const pending = stop();
+    assert.equal(manager.describe("owner", sessionId).finished, false);
+    controlled.finish({ ...completed, state: "cancelled", resultClass: "CANCELLED", exitCode: null });
+    assert.equal((await pending).data.state, "cancelled");
+    const output = manager.read("owner", sessionId, 0);
+    assert.equal(output.data, "你😀");
+    assert.equal(manager.read("owner", sessionId, output.nextCursor).data, "");
+    assert.equal((await stop()).data.finished, true);
   } finally { await manager.close(); }
 });

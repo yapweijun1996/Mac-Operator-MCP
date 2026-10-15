@@ -10,6 +10,7 @@ import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { preflightState } from "./preflight.mjs";
 import { cutoverRelease } from "./cutover.mjs";
+import { acquireDeploymentLock } from "./lock.mjs";
 import { setTimeout as delay } from "node:timers/promises";
 import {
   classifyRelation, decideAction, isHealthy, parseFailedTestFiles, parsePm2Service, pm2Ecosystem, releaseName, selectPrunable
@@ -53,20 +54,6 @@ const writeState = (state) => writeFileSync(STATE_FILE, `${JSON.stringify(state,
 function service() {
   const result = run("pm2", ["jlist"], { timeout: 30_000 });
   return result.ok ? parsePm2Service(result.stdout.slice(result.stdout.indexOf("[")), SERVICE) : undefined;
-}
-
-function acquireLock() {
-  mkdirSync(ROOT, { recursive: true, mode: 0o700 });
-  try { mkdirSync(LOCK_DIR); } catch {
-    const holder = Number(readFileSync(join(LOCK_DIR, "pid"), "utf8").trim());
-    let alive = true;
-    try { process.kill(holder, 0); } catch { alive = false; }
-    if (alive) return false;
-    rmSync(LOCK_DIR, { recursive: true, force: true });
-    mkdirSync(LOCK_DIR);
-  }
-  writeFileSync(join(LOCK_DIR, "pid"), String(process.pid));
-  return true;
 }
 
 /** Queued or running Jobs mean a restart could interrupt work, so the cutover waits for the next poll. */
@@ -202,7 +189,8 @@ function prune(keepPaths) {
 
 async function once({ dryRun }) {
   if (existsSync(PAUSE_FILE)) return log("paused", { file: PAUSE_FILE });
-  if (!acquireLock()) return log("busy", { reason: "another run holds the lock" });
+  const releaseLock = acquireDeploymentLock(LOCK_DIR);
+  if (releaseLock === null) return log("busy", { reason: "another run holds or is publishing the lock" });
   try {
     const live = service();
     if (live === undefined || live.status !== "online") return notify("Auto-deploy skipped", `${SERVICE} is not online; fix it by hand first`);
@@ -248,7 +236,7 @@ async function once({ dryRun }) {
       log("cutover-failed", { target, error: outcome.error, recoveryError: outcome.recoveryError, restored: outcome.restored });
       notify("Auto-deploy failed", `${short}: previous release ${outcome.restored ? "restored" : "COULD NOT BE RESTORED - check pm2"}`);
     }
-  } finally { rmSync(LOCK_DIR, { recursive: true, force: true }); }
+  } finally { releaseLock(); }
 }
 
 function install() {

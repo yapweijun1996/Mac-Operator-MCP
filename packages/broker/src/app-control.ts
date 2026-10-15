@@ -74,7 +74,10 @@ export class AppControlInspectorImpl implements AppControlInspector {
     if (Date.now() >= deadlineMs) throw new BrokerError("TIMEOUT", "App launch timed out");
     const before = await this.inventory.list(false, true, boundedControl());
     const installed = before.apps.find((app) => app.appId === appId);
-    if (!installed) throw new BrokerError("TARGET_NOT_FOUND", "App identity was not found in the bounded inventory");
+    if (!installed) {
+      if (before.truncated) throw new BrokerError("OUTPUT_LIMIT", "App inventory is incomplete; target presence could not be established");
+      throw new BrokerError("TARGET_NOT_FOUND", "App identity was not found in the bounded inventory");
+    }
     const alreadyRunning = installed.running;
     const bundleId = appId.slice("bundle:".length);
     if (Date.now() >= deadlineMs) throw new BrokerError("TIMEOUT", "App launch timed out");

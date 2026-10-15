@@ -1,11 +1,137 @@
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import test from "node:test";
+import { linkSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, renameSync, rmSync, statSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
+import { acquireDeploymentLock } from "./auto-deploy/lock.mjs";
 import {
   PM2_RESTART_POLICY, classifyRelation, decideAction, isHealthy, isRuntimeRelevant, parseFailedTestFiles, parsePm2Service, patchEdgeConfig, pm2Ecosystem,
   releaseName, selectPrunable
 } from "./auto-deploy/lib.mjs";
 
 const REV = "a".repeat(40);
+
+function lockFixture() {
+  const root = realpathSync(mkdtempSync(join(tmpdir(), "mop-auto-lock-")));
+  return { root, path: join(root, "lock"), cleanup: () => rmSync(root, { recursive: true, force: true }) };
+}
+
+for (const aged of [false, true]) {
+  test(`auto-deploy ${aged ? "recovers an old" : "preserves a fresh"} unpublished lock`, () => {
+    const f = lockFixture();
+    let release;
+    try {
+      mkdirSync(f.path, { mode: 0o700 });
+      if (aged) { const old = new Date(Date.now() - 60_000); utimesSync(f.path, old, old); }
+      release = acquireDeploymentLock(f.path);
+      if (aged) {
+        assert.equal(typeof release, "function");
+        assert.equal(readFileSync(join(f.path, "pid"), "utf8"), String(process.pid));
+      } else assert.equal(release, null);
+    } finally { release?.(); f.cleanup(); }
+  });
+}
+
+test("auto-deploy excludes another owner and releases only its own generation", () => {
+  const f = lockFixture();
+  let first;
+  let second;
+  try {
+    first = acquireDeploymentLock(f.path);
+    assert.equal(typeof first, "function");
+    assert.equal(acquireDeploymentLock(f.path), null);
+    first();
+    second = acquireDeploymentLock(f.path);
+    assert.equal(typeof second, "function");
+    first();
+    assert.equal(acquireDeploymentLock(f.path), null, "an old release must not unlock its successor");
+  } finally { second?.(); f.cleanup(); }
+});
+
+test("auto-deploy reclaims a dead legacy PID but preserves a live legacy owner", () => {
+  const f = lockFixture();
+  let release;
+  try {
+    mkdirSync(f.path, { mode: 0o700 });
+    writeFileSync(join(f.path, "pid"), String(process.pid));
+    assert.equal(acquireDeploymentLock(f.path), null);
+    writeFileSync(join(f.path, "pid"), "2147483647");
+    release = acquireDeploymentLock(f.path);
+    assert.equal(typeof release, "function");
+    assert.equal(statSync(f.path).mode & 0o777, 0o700);
+  } finally { release?.(); f.cleanup(); }
+});
+
+test("auto-deploy preserves malformed or unexpected lock evidence", () => {
+  const f = lockFixture();
+  try {
+    mkdirSync(f.path, { mode: 0o700 });
+    writeFileSync(join(f.path, "pid"), "not-a-pid");
+    assert.throws(() => acquireDeploymentLock(f.path), /invalid|malformed/u);
+    assert.equal(readFileSync(join(f.path, "pid"), "utf8"), "not-a-pid");
+    writeFileSync(join(f.path, "pid"), "2147483647");
+    writeFileSync(join(f.path, "unexpected"), "preserve");
+    assert.throws(() => acquireDeploymentLock(f.path), /unexpected evidence/u);
+    assert.equal(readFileSync(join(f.path, "unexpected"), "utf8"), "preserve");
+  } finally { f.cleanup(); }
+});
+
+test("auto-deploy release preserves a replacement lock directory and frees its kernel lock", () => {
+  const f = lockFixture();
+  const release = acquireDeploymentLock(f.path);
+  try {
+    renameSync(f.path, join(f.root, "original"));
+    mkdirSync(f.path, { mode: 0o700 });
+    writeFileSync(join(f.path, "pid"), String(process.pid));
+    assert.throws(release, /ownership|changed/u);
+    assert.equal(readFileSync(join(f.path, "pid"), "utf8"), String(process.pid));
+    rmSync(f.path, { recursive: true });
+    const next = acquireDeploymentLock(f.path);
+    assert.equal(typeof next, "function");
+    next();
+  } finally { f.cleanup(); }
+});
+
+test("auto-deploy recovers the kernel lock after its actual owner is killed", () => {
+  const f = lockFixture();
+  let release;
+  try {
+    const source = `import { acquireDeploymentLock } from ${JSON.stringify(new URL("./auto-deploy/lock.mjs", import.meta.url).href)};
+      if (!acquireDeploymentLock(process.argv[1])) throw new Error("Child could not acquire lock");
+      process.kill(process.pid, "SIGKILL");`;
+    assert.throws(() => execFileSync(process.execPath, ["--input-type=module", "--eval", source, f.path], {
+      cwd: f.root, env: { PATH: "/usr/bin:/bin" }, shell: false, timeout: 5_000, maxBuffer: 8_192, stdio: "pipe"
+    }), (error) => error.signal === "SIGKILL");
+    release = acquireDeploymentLock(f.path);
+    assert.equal(typeof release, "function");
+  } finally { release?.(); f.cleanup(); }
+});
+
+test("auto-deploy reclaims a complete dead PID published before temporary-link cleanup", () => {
+  const f = lockFixture();
+  let release;
+  try {
+    mkdirSync(f.path, { mode: 0o700 });
+    const retained = join(f.root, ".auto-deploy-pid-crash");
+    writeFileSync(retained, "2147483647", { mode: 0o600 });
+    linkSync(retained, join(f.path, "pid"));
+    release = acquireDeploymentLock(f.path);
+    assert.equal(typeof release, "function");
+    assert.equal(readFileSync(retained, "utf8"), "2147483647");
+  } finally { release?.(); f.cleanup(); }
+});
+
+test("auto-deploy refuses a redirected kernel lock without changing its target", () => {
+  const f = lockFixture();
+  try {
+    const target = join(f.root, "unrelated");
+    writeFileSync(target, "preserve", { mode: 0o600 });
+    symlinkSync(target, `${f.path}.sqlite`);
+    assert.throws(() => acquireDeploymentLock(f.path), /protected regular file/u);
+    assert.equal(readFileSync(target, "utf8"), "preserve");
+  } finally { f.cleanup(); }
+});
 
 test("patchEdgeConfig rebinds exactly packageRoot, contractsDirectory and sourceRevision", () => {
   const before = { packageRoot: "/old", contractsDirectory: "/old/tool-contracts", sourceRevision: "b".repeat(40), bindPort: 3443, oauthScopes: ["x"] };

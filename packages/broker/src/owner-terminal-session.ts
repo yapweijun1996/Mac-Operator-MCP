@@ -343,9 +343,10 @@ export class OwnerTerminalSessionManager {
     return session.result === undefined ? base : { ...base, state: session.result.state, exitCode: session.result.exitCode };
   }
 
-  describe(ownerId: string, sessionId: string): { tag: string; finished: boolean } {
+  describe(ownerId: string, sessionId: string): { tag: string; finished: boolean; state?: ProcessExecutionResult["state"]; exitCode?: number | null } {
     const session = this.owned(ownerId, sessionId);
-    return { tag: session.tag, finished: session.result !== undefined };
+    return { tag: session.tag, finished: session.result !== undefined,
+      ...(session.result ? { state: session.result.state, exitCode: session.result.exitCode } : {}) };
   }
 
   /**

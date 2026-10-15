@@ -267,8 +267,8 @@ Legacy array inventories remain readable. First compaction durably publishes
 the archive before atomically writing a `{schemaVersion: "0.2", records: [...]}`
 manifest. An interruption before manifest publication can repeat compaction
 without dropping retry evidence. Removed records require syntactically valid
-historical paths, not a still-existing original repository; operations that
-retry branch cleanup still require current authority and the recorded project
+historical paths, not a still-existing original repository; completed removal
+retries still require current authority and the recorded project
 identity. Active/unresolved records retain live project validation.
 
 Back up the whole protected inventory directory, including its archive, before
@@ -304,7 +304,11 @@ paths remain absent. Branch history is deleted conservatively: after the worktre
 `git branch -d` on the managed task branch, so a branch with unmerged commits is kept and
 reported with `branch_deleted: false`. The owner deletes such a branch from the owner
 terminal with `git branch -d <name>` once merged (never `git worktree prune`). A removal
-retry with the completing key only re-attempts that cleanup. A refused removal lists
+retry with the completing key only reads branch existence; it cannot delete a kept
+or later recreated branch. Such a branch requires separate owner cleanup, and
+`branch_deleted` reports its current absence rather than repeating a deletion.
+This behavior also applies to archived removal records and requires no inventory
+format migration. A refused removal lists
 status counts (never file names): commit changes with `mac_git_stage` and `mac_git_commit`,
 because ignored files cannot be removed by any tool. A task id can be created again after
 removal with a new idempotency key. Cancelling blocking queued or running jobs needs an
@@ -391,3 +395,22 @@ The script stages an immutable release, proves it opens a private copy of the li
 queued or running, stops the service, takes a full state backup (`backups/project-add-before-<stamp>`), runs the
 migration, restarts under PM2, checks health, restarts once more to prove persistence and restores the backup and
 previous release on any failure.
+
+## Workspace execution permissions
+
+Snapshots carry only a validated owner-execution marker from identity-checked
+host metadata. Writable guest files normalize to `0700` for executables and
+`0600` otherwise. Read-only sealing uses `0555` and `0444`; it grants no write
+permission. The fixed stager validates complete file size and SHA-256 before
+granting execution. Guest edits preserve existing owner execution, and new guest
+files begin nonexecutable. Special permission bits are never transferred.
+
+Host imports preserve only the existing host file's owner-execution bit during
+atomic replacement. Guest permissions cannot add execution to a new or previously
+nonexecutable host file. Other write APIs retain their existing mode behavior.
+The native addon must advertise `nativeSourceExecutablePreservationVersion: 1`;
+rebuild it with the matching release. Older addons deny the import rather than
+silently dropping execution permission. There is no persistent-format migration.
+Deploy or roll back source and native artifacts together through the existing
+acceptance workflow. Filesystem-fixture tests do not replace live image/Engine,
+readonly enforcement or registered-profile acceptance evidence.

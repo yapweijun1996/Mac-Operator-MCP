@@ -45,6 +45,32 @@ Mac; keep push access to `main` limited to the owner.
 `MOP_AUTODEPLOY_TEST_UNHEALTHY_ONCE=1` is a test-only switch that fails the first
 health check so the rollback path can be rehearsed; leave it unset in normal use.
 
+### Lock recovery
+
+`scripts/auto-deploy/lock.mjs` holds a SQLite write transaction in the private
+`auto-deploy/lock.sqlite` file for the entire run. It uses the existing Node
+SQLite runtime, without a new dependency. Concurrent runs return busy; the
+operating system releases the transaction when the process exits or is killed.
+Keep the database file in place even when idle: unlinking it while a process
+holds it can create two different lock identities.
+
+The original `auto-deploy/lock/pid` layout is retained for compatibility with
+older running scripts. A live or uninspectable PID is busy. Recovery of a dead
+PID is serialized behind the SQLite transaction. An empty directory younger
+than 30 seconds is treated as an initializer; an older empty directory is
+removed only with `rmdir`, which refuses newly published contents. New PID
+records are fully written to a private temporary file and then linked into
+place atomically. A crash cannot publish a partial PID. A rare crash may leave
+a small `.auto-deploy-pid-*` scratch file; it does not block the next run.
+
+Malformed PID records, redirected paths, unexpected directory contents and
+changed cleanup identities are preserved and reported for owner investigation.
+Release checks the exact directory/PID identity and is idempotent. This change
+does not modify service state, OAuth configuration or Broker ledgers. It needs
+the lock helper beside `run.mjs`; no inventory or service-state migration is
+required. On rollback, stop/quiesce the auto-deploy runner before switching
+versions and preserve the idle lock database rather than deleting a live lock.
+
 The agent never runs the policy upgrade commands. A release that needs a new
 signed tool (for example `V2 tool set mismatch` at startup) is rolled back and
 needs the documented manual `personal-service.js <mode> ... --enable` upgrade.

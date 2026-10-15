@@ -251,29 +251,84 @@ function parseRequirements(text: string, source: string, context: PackageParseCo
   }
 }
 
+/** Read only a TOML array of single-line quoted strings, never executable project code. */
+function readPythonDependencyArray(text: string, start: number, check: () => void): { values: string[]; end: number } | undefined {
+  let cursor = start;
+  while (text[cursor] === " " || text[cursor] === "\t") cursor++;
+  if (text[cursor++] !== "[") return undefined;
+  const values: string[] = [];
+  const skip = (): void => {
+    while (cursor < text.length) {
+      if ((cursor & 255) === 0) check();
+      if (/[ \t\r\n]/u.test(text[cursor]!)) cursor++;
+      else if (text[cursor] === "#") {
+        const newline = text.indexOf("\n", cursor);
+        cursor = newline < 0 ? text.length : newline;
+        check();
+      } else break;
+    }
+  };
+  const finish = (): { values: string[]; end: number } | undefined => {
+    cursor++;
+    while (text[cursor] === " " || text[cursor] === "\t" || text[cursor] === "\r") cursor++;
+    return cursor === text.length || text[cursor] === "\n" || text[cursor] === "#" ? { values, end: cursor } : undefined;
+  };
+  while (cursor < text.length) {
+    check();
+    skip();
+    if (text[cursor] === "]") return finish();
+    const quote = text[cursor];
+    if (quote !== '"' && quote !== "'") return undefined;
+    if (text.slice(cursor, cursor + 3) === quote.repeat(3)) return undefined;
+    const begin = cursor++;
+    while (cursor < text.length && text[cursor] !== quote) {
+      if ((cursor & 255) === 0) check();
+      if (text[cursor] === "\n" || text[cursor] === "\r") return undefined;
+      if (quote === '"' && text[cursor] === "\\") {
+        const escape = text[++cursor];
+        if (escape === undefined || !['"', "\\", "b", "t", "n", "f", "r", "u"].includes(escape)) return undefined;
+      }
+      cursor++;
+    }
+    if (text[cursor] !== quote) return undefined;
+    const literal = text.slice(begin, ++cursor);
+    let value: string;
+    try { value = quote === '"' ? JSON.parse(literal) as string : literal.slice(1, -1); }
+    catch { return undefined; }
+    if (/[\uD800-\uDFFF]/u.test(value)) return undefined;
+    values.push(value);
+    skip();
+    if (text[cursor] === "]") return finish();
+    if (text[cursor++] !== ",") return undefined;
+  }
+  return undefined;
+}
+
 function parsePythonManifest(text: string, manager: PackageManager, context: PackageParseContext): void {
+  const lines = text.split("\n");
   let section = "";
-  let inProjectDependencies = false;
-  for (const rawLine of text.split(/\r?\n/u)) {
+  let lineStart = 0;
+  for (let index = 0; index < lines.length; index++) {
     context.check();
+    const rawLine = lines[index]!;
+    const start = lineStart;
+    lineStart += rawLine.length + 1;
     const line = rawLine.trim();
-    const sectionMatch = /^\[([^\]]+)\]$/u.exec(line);
-    if (sectionMatch) {
-      section = sectionMatch[1]!;
-      inProjectDependencies = false;
-      continue;
-    }
-    if (section === "project" && /^dependencies\s*=\s*\[/u.test(line)) {
-      inProjectDependencies = true;
-      continue;
-    }
-    if (inProjectDependencies) {
-      if (line.startsWith("]")) {
-        inProjectDependencies = false;
+    const sectionMatch = /^\[([^\]]+)\]\s*(?:#.*)?$/u.exec(line);
+    if (sectionMatch) { section = sectionMatch[1]!; continue; }
+    if (section === "project" && /^(?:dependencies|"dependencies"|'dependencies')\s*=/u.test(line)) {
+      const array = readPythonDependencyArray(text, start + rawLine.indexOf("=") + 1, context.check);
+      if (!array) {
+        addWarning(context.warnings, "The Python dependency array uses unsupported or malformed syntax and was omitted");
         continue;
       }
-      const quoted = /["']([A-Za-z0-9][A-Za-z0-9._-]{0,255})(?:\[[^\]]+\])?\s*([^"']*)["']/u.exec(line);
-      if (quoted) addDependency(context, quoted[1]!, quoted[2]!.trim(), "pyproject.toml");
+      for (const value of array.values) {
+        context.check();
+        const requirement = /^([A-Za-z0-9][A-Za-z0-9._-]{0,255})(?:\[[^\]\r\n]+\])?\s*(.*)$/u.exec(value);
+        if (requirement) addDependency(context, requirement[1]!, requirement[2]!.trim(), "pyproject.toml");
+        else addWarning(context.warnings, "Some Python dependency strings were omitted as malformed");
+      }
+      while (index + 1 < lines.length && lineStart <= array.end) lineStart += lines[++index]!.length + 1;
       continue;
     }
     if (section === "tool.poetry.dependencies" || section === "tool.poetry.group.main.dependencies") {
